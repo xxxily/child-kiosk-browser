@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 锁定与开机自启动所需权限 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@android:drawable/sym_def_app_icon"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+
+        <!-- MainActivity: 桌面 Launcher，必须是单实例且能响应 HOME 键 -->
+        <activity
+            android:name=".MainActivity"
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- WebView 独立进程 Activity，保障 OOM 时主进程不挂 -->
+        <activity
+            android:name=".WebViewActivity"
+            android:process=":webview"
+            android:hardwareAccelerated="true"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false" />
+
+        <!-- 接收设备管理器指令的广播接收器 -->
+        <receiver
+            android:name=".MyDeviceAdminReceiver"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin_policies" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+                <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+
+</manifest>
