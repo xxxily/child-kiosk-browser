@@ -388,7 +388,8 @@ fun AddEditWebAppDialog(
     
     var isCheckingUrl by remember { mutableStateOf(false) }
     var urlError by remember { mutableStateOf<String?>(null) }
-    
+    var pingFailedOnce by remember { mutableStateOf(false) }
+
     val scope = rememberCoroutineScope()
     
     fun isValidUrl(url: String): Boolean {
@@ -455,8 +456,8 @@ fun AddEditWebAppDialog(
                 if (urlError != null) {
                     Text(
                         text = urlError ?: "",
-                        color = MaterialTheme.colorScheme.error,
-                        fontSize = 12.dp.value.sp
+                        color = if (pingFailedOnce) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
+                        fontSize = 12.sp
                     )
                 }
 
@@ -520,8 +521,15 @@ fun AddEditWebAppDialog(
                                 urlError = "请输入合法的 URL 格式"
                                 return@Button
                             }
-                            
+
                             val formattedUrl = formatUrl(urlInput)
+
+                            if (pingFailedOnce) {
+                                // 第二次点击：强行保存
+                                onSave(title, formattedUrl, selectedIcon)
+                                return@Button
+                            }
+
                             isCheckingUrl = true
                             urlError = "正在检测网络连通性..."
 
@@ -529,8 +537,8 @@ fun AddEditWebAppDialog(
                                 val isOk = pingUrl(formattedUrl)
                                 isCheckingUrl = false
                                 if (!isOk) {
-                                    urlError = "警告：目标链接可能无法访问。是否继续添加？"
-                                    // 允许家长在第二次点击时强行保存
+                                    pingFailedOnce = true
+                                    urlError = "警告：目标链接可能无法访问，再次点击将直接保存。"
                                 } else {
                                     onSave(title, formattedUrl, selectedIcon)
                                 }
@@ -540,7 +548,7 @@ fun AddEditWebAppDialog(
                         shape = RoundedCornerShape(12.dp),
                         enabled = !isCheckingUrl
                     ) {
-                        Text(if (urlError?.contains("警告") == true) "强行保存" else "保存")
+                        Text(if (pingFailedOnce) "强行保存" else "保存")
                     }
                 }
             }

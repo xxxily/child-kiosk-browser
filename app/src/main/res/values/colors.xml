@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="kiosk_yellow">#FFEE58</color>
+    <color name="kiosk_yellow_deep">#FDD835</color>
+    <color name="kiosk_brown">#4E342E</color>
+    <color name="kiosk_blue">#1976D2</color>
+    <color name="kiosk_blue_deep">#0D47A1</color>
+    <color name="kiosk_red">#FF4D4D</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="black">#FF000000</color>
+</resources>
