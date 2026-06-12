@@ -17,3 +17,6 @@
 *.keystore
 *.jks
 keystore.properties
+
+# Local Claude Code state
+.claude/
