@@ -15,8 +15,6 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -43,14 +41,11 @@ import com.example.childkiosk.data.WebAppEntity
 
 @Composable
 fun KioskMainScreen(
-    isDeviceOwner: Boolean,
     config: SystemConfigEntity?,
     onEnterAdmin: () -> Unit,
-    onExitKiosk: () -> Unit,
-    onGoToHomeSettings: () -> Unit
+    onExitKiosk: () -> Unit
 ) {
     val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
     val db = remember { AppDatabase.getInstance(context) }
     
     var webApps by remember { mutableStateOf<List<WebAppEntity>>(emptyList()) }
@@ -78,65 +73,54 @@ fun KioskMainScreen(
                 )
             )
     ) {
-        if (!isDeviceOwner) {
-            // 未激活 Device Owner，展示引导台
-            DeviceOwnerGuideView(
-                onCopyScript = {
-                    clipboardManager.setText(
-                        AnnotatedString("adb shell dpm set-device-owner com.example.childkiosk/.MyDeviceAdminReceiver")
-                    )
-                    Toast.makeText(context, "ADB 激活脚本已复制到剪贴板！", Toast.LENGTH_SHORT).show()
-                },
-                onGoToHomeSettings = onGoToHomeSettings
+        // 无论是否为 Device Owner，主网格始终可用。
+        // 系统级锁定强度由 MainActivity 按防护等级（Device Owner / 屏幕固定 / 无）自动决定，
+        // 不再以是否取得 Device Owner 作为「能否使用应用」的前提。
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // 顶部 Title
+            Text(
+                text = "🌟 我的游戏乐园 🌟",
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Black,
+                color = Color(0xFF4E342E),
+                modifier = Modifier.padding(top = 16.dp, bottom = 24.dp)
             )
-        } else {
-            // 已激活：全屏网格列表
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // 顶部 Title
-                Text(
-                    text = "🌟 我的游戏乐园 🌟",
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFF4E342E),
-                    modifier = Modifier.padding(top = 16.dp, bottom = 24.dp)
-                )
 
-                if (webApps.isEmpty()) {
-                    Box(
-                        modifier = Modifier.weight(1f),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "这里空空如也，请联系家长在管理后台添加游戏！",
-                            fontSize = 18.sp,
-                            color = Color(0xFF8D6E63),
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                } else {
-                    LazyVerticalGrid(
-                        columns = GridCells.Adaptive(minSize = 160.dp),
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(24.dp),
-                        verticalArrangement = Arrangement.spacedBy(24.dp)
-                    ) {
-                        items(webApps) { app ->
-                            AppGridItem(
-                                app = app,
-                                onClick = {
-                                    val intent = Intent(context, WebViewActivity::class.java).apply {
-                                        putExtra("WEB_APP_ID", app.id)
-                                    }
-                                    context.startActivity(intent)
+            if (webApps.isEmpty()) {
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "这里空空如也，请联系家长在管理后台添加游戏！",
+                        fontSize = 18.sp,
+                        color = Color(0xFF8D6E63),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 160.dp),
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(24.dp)
+                ) {
+                    items(webApps) { app ->
+                        AppGridItem(
+                            app = app,
+                            onClick = {
+                                val intent = Intent(context, WebViewActivity::class.java).apply {
+                                    putExtra("WEB_APP_ID", app.id)
                                 }
-                            )
-                        }
+                                context.startActivity(intent)
+                            }
+                        )
                     }
                 }
             }
@@ -196,90 +180,6 @@ fun KioskMainScreen(
                     onExitKiosk()
                 }
             )
-        }
-    }
-}
-
-@Composable
-fun DeviceOwnerGuideView(
-    onCopyScript: () -> Unit,
-    onGoToHomeSettings: () -> Unit
-) {
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.Info,
-                contentDescription = "未激活",
-                tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(72.dp)
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "系统未完全锁死 (缺少所有者权限)",
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "为防止儿童通过重启、下拉状态栏或按键逃逸，请通过 USB 连接电脑执行以下脚本激活 Device Owner 企业锁定级别：",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // 可复制的 ADB 命令展示区
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(16.dp)
-            ) {
-                Text(
-                    text = "adb shell dpm set-device-owner com.example.childkiosk/.MyDeviceAdminReceiver",
-                    fontSize = 13.sp,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Button(
-                    onClick = onCopyScript,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.sizeIn(minWidth = 72.dp, minHeight = 72.dp)
-                ) {
-                    Text("复制激活脚本")
-                }
-                
-                Button(
-                    onClick = onGoToHomeSettings,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
-                    modifier = Modifier.sizeIn(minWidth = 72.dp, minHeight = 72.dp)
-                ) {
-                    Text("设置本应用为默认主屏幕")
-                }
-            }
         }
     }
 }

@@ -28,6 +28,7 @@ import com.example.childkiosk.data.AppDatabase
 import com.example.childkiosk.ui.AdminConsoleScreen
 import com.example.childkiosk.ui.KioskMainScreen
 import com.example.childkiosk.ui.theme.ChildKioskTheme
+import com.example.childkiosk.util.KioskPrefs
 import com.example.childkiosk.util.SystemUiHelper
 
 class MainActivity : ComponentActivity() {
@@ -64,15 +65,16 @@ class MainActivity : ComponentActivity() {
 
                     when (currentScreen) {
                         "MAIN" -> KioskMainScreen(
-                            isDeviceOwner = dpm.isDeviceOwnerApp(packageName),
                             config = systemConfig,
                             onEnterAdmin = { currentScreen = "ADMIN" },
-                            onExitKiosk = { stopLockTaskMode() },
-                            onGoToHomeSettings = { openHomeSettings() }
+                            onExitKiosk = { stopLockTaskMode() }
                         )
                         "ADMIN" -> AdminConsoleScreen(
                             config = systemConfig,
-                            onBack = { currentScreen = "MAIN" }
+                            isDeviceOwner = dpm.isDeviceOwnerApp(packageName),
+                            onBack = { currentScreen = "MAIN" },
+                            onExitKiosk = { stopLockTaskMode() },
+                            onGoToHomeSettings = { openHomeSettings() }
                         )
                     }
                 }
@@ -83,8 +85,13 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         SystemUiHelper.enterImmersive(this)
-        if (dpm.isDeviceOwnerApp(packageName)) {
-            setupAndStartKiosk()
+        when {
+            // Tier 1：Device Owner，企业级完全锁定
+            dpm.isDeviceOwnerApp(packageName) -> setupAndStartKiosk()
+            // Tier 2：无 Device Owner，按家长配置进入屏幕固定软锁
+            KioskPrefs.getProtectionMode(this) == KioskPrefs.MODE_SOFT_LOCK -> startSoftLock()
+            // Tier 3：纯沉浸式，无系统级锁定
+            else -> { /* 仅依赖沉浸式全屏 + 自定义 Launcher + 家长验证退出 */ }
         }
     }
 
@@ -152,20 +159,42 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 退出 Kiosk 模式并重置限制，使家长能够切回原生桌面
+     * Tier 2：非 Device Owner 时的「屏幕固定」软锁。
+     *
+     * 普通应用调用 [startLockTask] 会触发系统级 Screen Pinning（屏幕固定），
+     * 拦截 Home / 最近任务键。首次在部分 OEM 上可能弹出系统确认框，这是预期行为。
+     * 软锁可被「长按 返回+最近任务」等系统手势解除，因此防护强度低于 Device Owner，
+     * 但无需恢复出厂即可让普通侧载用户开箱使用。
+     */
+    private fun startSoftLock() {
+        try {
+            startLockTask()
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "已处于屏幕固定状态，无需重复启动: ${e.message}")
+        } catch (e: Exception) {
+            Log.w(TAG, "屏幕固定软锁启动失败（设备可能不支持）: ${e.message}")
+        }
+    }
+
+    /**
+     * 退出锁定并重置限制，使家长能够切回原生桌面。
+     * Device Owner 与屏幕固定软锁两种场景统一走此流程；非 Device Owner 时
+     * 用户限制相关调用会因无权限被 runCatching 静默忽略。
      */
     private fun stopLockTaskMode() {
         try {
-            stopLockTask()
+            runCatching { stopLockTask() }
 
-            runCatching { dpm.clearUserRestriction(adminComponent, "no_voice_assistants") }
-            runCatching { dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_DEBUGGING_FEATURES) }
-            runCatching { dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_USB_FILE_TRANSFER) }
-            runCatching { dpm.setScreenCaptureDisabled(adminComponent, false) }
-            runCatching { dpm.setStatusBarDisabled(adminComponent, false) }
-            runCatching { dpm.setKeyguardDisabled(adminComponent, false) }
+            if (dpm.isDeviceOwnerApp(packageName)) {
+                runCatching { dpm.clearUserRestriction(adminComponent, "no_voice_assistants") }
+                runCatching { dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_DEBUGGING_FEATURES) }
+                runCatching { dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_USB_FILE_TRANSFER) }
+                runCatching { dpm.setScreenCaptureDisabled(adminComponent, false) }
+                runCatching { dpm.setStatusBarDisabled(adminComponent, false) }
+                runCatching { dpm.setKeyguardDisabled(adminComponent, false) }
+            }
 
-            Toast.makeText(this, "Kiosk 锁定已安全解除", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "锁定已安全解除", Toast.LENGTH_SHORT).show()
 
             val intent = Intent(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_HOME)

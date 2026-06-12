@@ -19,10 +19,10 @@ val releaseKeystoreProps = Properties().apply {
     }
 }
 
+// 说明：PKCS12 keystore 的密钥密码恒等于 store 密码，故 CI 不需要独立的 KEY_PWD。
 val ciKeystoreBase64: String? = System.getenv("KEYSTORE_BASE64")
 val ciKeystorePwd: String? = System.getenv("KEYSTORE_PWD")
 val ciKeyAlias: String? = System.getenv("KEY_ALIAS")
-val ciKeyPwd: String? = System.getenv("KEY_PWD")
 
 val resolvedKeystoreFile: File? = when {
     releaseKeystoreProps.getProperty("storeFile") != null ->
@@ -56,10 +56,14 @@ android {
     signingConfigs {
         if (resolvedKeystoreFile != null) {
             create("release") {
+                val resolvedStorePwd = releaseKeystoreProps.getProperty("storePassword") ?: ciKeystorePwd
                 storeFile = resolvedKeystoreFile
-                storePassword = releaseKeystoreProps.getProperty("storePassword") ?: ciKeystorePwd
+                storePassword = resolvedStorePwd
                 keyAlias = releaseKeystoreProps.getProperty("keyAlias") ?: ciKeyAlias
-                keyPassword = releaseKeystoreProps.getProperty("keyPassword") ?: ciKeyPwd
+                // 本项目签名库为 PKCS12 格式，密钥密码必须与 store 密码一致。
+                // 仅本地 keystore.properties 可显式覆盖 keyPassword；CI 一律回退到 store 密码，
+                // 避免误配独立 KEY_PWD 导致 "Given final block not properly padded"。
+                keyPassword = releaseKeystoreProps.getProperty("keyPassword") ?: resolvedStorePwd
             }
         }
     }
