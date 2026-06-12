@@ -1,43 +1,52 @@
-## Child Kiosk Browser v0.0.1
+## Child Kiosk Browser v0.0.2
 
-首个可公开预览的版本。完整落地需求文档 `docs/child_kiosk_browser_requirements.md` 中所有 REQ-1xx ~ REQ-4xx 模块。
+引入**分级防护模型**：不再强制恢复出厂 + Device Owner。普通侧载安装即可开箱使用，应用按当前可用权限自动选择最高防护等级。
 
 > **说明**：本 APK 使用 debug 签名，仅供调试与家庭内部部署。生产/商用请自行用正式 keystore 重新签名。
 
-### 亮点功能
+### 本版本核心变化
 
-- 企业级 **Lock Task Mode** 静默锁死，物理键 + 下拉栏 + 语音助手 + 调试 + 重启全方位防逃逸
-- WebView **独立进程** + HTTPS 强制 + 同源 Host 白名单 + 50+ 广告域名拦截
-- 右上角 80dp 隐藏区域 **2 秒内连击 5 次** 触发家长验证
-- 动态口算题 / 4 位 PIN 双模式家长锁
-- 单次 + 每日双重时长限制，超时进入"小眼睛该休息啦"亲子提醒页
-- 预设 3 个安全儿童网站：Scratch、PBS Kids、NASA Kids' Club
-- 完整 Material3 儿童主题：72dp 大触控目标 + Q 弹动效 + 触觉反馈
+| 档位 | 防护等级 | 激活条件 | 适用场景 |
+| :--- | :--- | :--- | :--- |
+| **Tier 1** | 企业级完全锁定（Device Owner） | 恢复出厂 + ADB 激活 | 长期专用平板，绝对防逃逸 |
+| **Tier 2** | 屏幕固定软锁（**默认**） | 普通安装即可 | 家长普通侧载，日常防误触 + 基础防逃逸 |
+| **Tier 3** | 无系统级锁定 | 普通安装 + 后台切换 | 开发调试、临时体验、配置网站 |
+
+- 主网格**不再以 Device Owner 为使用前提**：装上即可用，无需 ADB；
+- 家长后台新增「**防护等级**」卡片，可在 Tier 2 / Tier 3 间切换，并内置 Device Owner 升级引导；
+- 沙箱安全能力（HTTPS 强制、同源白名单、广告/下载拦截、SSL 严格校验、独立进程）、家长验证、时长限制**三档完全一致**，分级只影响系统级锁定强度。
 
 ### 安装与部署
 
-请详细阅读 README 的 [快速开始](https://github.com/xxxily/child-kiosk-browser#-快速开始与部署) 章节。简要流程：
+#### 路径 A：普通侧载（推荐给大多数家长 / 开发者）
 
-1. **下载 APK**：从下方 Assets 选择 `child-kiosk-browser-0.0.1-release.apk`
-2. **平板恢复出厂设置**（关键！Device Owner 仅能在初始化的设备上激活）
-3. **跳过开机向导的 WiFi 与账号绑定**，直接进入桌面
-4. **开启开发者选项与 USB 调试**
-5. **adb install**：
-   ```bash
-   adb install child-kiosk-browser-0.0.1-release.apk
-   ```
-6. **激活 Device Owner**：
+无需恢复出厂、无需 ADB：
+
+1. 下载下方 Assets 中的 `child-kiosk-browser-0.0.2-release.apk`；
+2. 直接安装并打开，默认进入 **Tier 2 屏幕固定软锁**，主网格立即可用；
+3. （可选）家长后台 → 防护等级卡片 →「设为默认主屏幕」，重启后自动回到本应用；
+4. （可选）家长后台添加网站白名单、设置时长与 PIN 码。
+
+> 想纯净体验或调试？家长后台把防护等级切到 **Tier 3** 即可随时用 Home 键进出。
+
+#### 路径 B：Device Owner 完全锁定（要求绝对防逃逸时）
+
+1. 平板**恢复出厂设置**，跳过 WiFi 与账号绑定；
+2. 开启开发者选项与 USB 调试；
+3. `adb install child-kiosk-browser-0.0.2-release.apk`；
+4. 激活 Device Owner：
    ```bash
    adb shell dpm set-device-owner com.example.childkiosk/.MyDeviceAdminReceiver
    ```
-   返回 `Active admin set` 即成功。
-7. **设为默认主屏幕**：在系统设置 → 默认应用 → 主屏幕中选择"儿童防误触主屏"
-8. 重启平板，开机自动进入儿童沙箱
+   返回 `Active admin set` 即成功；
+5. 家长后台防护等级卡片 →「设为默认主屏幕」选择本应用；
+6. 重启平板，开机自动进入 Tier 1 完全锁定的儿童沙箱。
 
 ### 家长操作手册
 
-- **进入家长后台**：屏幕 **右上角** 80dp 区域 2 秒内连续点击 5 次 → 通过验证 → "进入系统白名单及时间配置后台"
-- **退出 Kiosk 模式**：家长控制中心 → "退出并安全解锁（返回系统桌面）"
+- **进入家长后台**：屏幕**右上角** 80dp 区域 2 秒内连续点击 5 次 → 通过验证 → "进入系统白名单及时间配置后台"
+- **切换防护等级**：管理后台顶部「防护等级」卡片
+- **退出锁定**：管理后台底部 "退出并安全解锁（返回系统桌面）"
 - **修改密码 / 切换验证方式**：管理后台 → 家长身份验证配置
 - **设置时长**：管理后台 → 儿童健康使用时长限制（拖动 Slider）
 - **添加新网站**：管理后台 → 右下角 + 按钮（仅支持 https，自动连通性检测）
@@ -45,7 +54,9 @@
 ### 已知限制
 
 - APK 使用 debug 签名，仅适用于个人测试 / 家庭部署
-- Device Owner 一旦激活无法通过卸载本应用解除，必须 `adb shell dpm remove-active-admin` 或恢复出厂设置
+- Tier 2 屏幕固定可被系统手势（长按 返回+最近任务）解除，防护强度低于 Tier 1，这是 Android 普通应用的固有限制
+- Tier 2 首次激活时部分 OEM 会弹一次系统「是否固定此应用」确认框，属预期行为
+- Tier 1 的 Device Owner 一旦激活无法通过卸载解除，必须 `adb shell dpm remove-active-admin` 或恢复出厂设置
 - 部分国产 ROM 对 Device Owner 兼容性不一致，建议使用接近原生 Android 的设备（Pixel、AOSP 平板、Lenovo M 系列等）
 
 ### 完整变更日志
