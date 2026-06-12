@@ -1,4 +1,5 @@
 import java.io.FileInputStream
+import java.util.Base64
 import java.util.Properties
 
 plugins {
@@ -27,9 +28,9 @@ val resolvedKeystoreFile: File? = when {
     releaseKeystoreProps.getProperty("storeFile") != null ->
         rootProject.file(releaseKeystoreProps.getProperty("storeFile"))
     !ciKeystoreBase64.isNullOrBlank() -> {
-        val out = File(rootProject.buildDir, "ci-release.keystore")
+        val out = rootProject.layout.buildDirectory.file("ci-release.keystore").get().asFile
         out.parentFile.mkdirs()
-        out.writeBytes(java.util.Base64.getDecoder().decode(ciKeystoreBase64))
+        out.writeBytes(Base64.getDecoder().decode(ciKeystoreBase64))
         out
     }
     else -> null
