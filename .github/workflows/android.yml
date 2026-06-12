@@ -16,6 +16,12 @@ jobs:
     name: Build Android APK
     runs-on: ubuntu-latest
 
+    env:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      KEYSTORE_PWD: ${{ secrets.KEYSTORE_PWD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KEY_PWD: ${{ secrets.KEY_PWD }}
+
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -30,19 +36,21 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build Release APK (debug-signed)
+      - name: Build Release APK
         run: ./gradlew :app:assembleRelease --stacktrace
 
       - name: Build Debug APK
         run: ./gradlew :app:assembleDebug --stacktrace
 
       - name: Rename APK files
+        id: rename
         run: |
           mkdir -p artifacts
           VERSION_NAME=$(grep -E 'versionName' app/build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
-          cp app/build/outputs/apk/release/app-release.apk artifacts/child-kiosk-browser-${VERSION_NAME}-release.apk
-          cp app/build/outputs/apk/debug/app-debug.apk artifacts/child-kiosk-browser-${VERSION_NAME}-debug.apk
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          cp app/build/outputs/apk/release/app-release.apk "artifacts/child-kiosk-browser-${VERSION_NAME}-release.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "artifacts/child-kiosk-browser-${VERSION_NAME}-debug.apk"
+          ls -lh artifacts
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4

@@ -1,7 +1,38 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.kapt)
+}
+
+// 优先级：
+// 1. 仓库根目录 keystore.properties (本地开发)
+// 2. 环境变量 KEYSTORE_BASE64 / KEYSTORE_PWD / KEY_ALIAS / KEY_PWD (CI Secrets)
+// 3. fallback 到 debug 签名 (任何人都能本地试跑)
+val releaseKeystoreProps = Properties().apply {
+    val propsFile = rootProject.file("keystore.properties")
+    if (propsFile.exists()) {
+        load(FileInputStream(propsFile))
+    }
+}
+
+val ciKeystoreBase64: String? = System.getenv("KEYSTORE_BASE64")
+val ciKeystorePwd: String? = System.getenv("KEYSTORE_PWD")
+val ciKeyAlias: String? = System.getenv("KEY_ALIAS")
+val ciKeyPwd: String? = System.getenv("KEY_PWD")
+
+val resolvedKeystoreFile: File? = when {
+    releaseKeystoreProps.getProperty("storeFile") != null ->
+        rootProject.file(releaseKeystoreProps.getProperty("storeFile"))
+    !ciKeystoreBase64.isNullOrBlank() -> {
+        val out = File(rootProject.buildDir, "ci-release.keystore")
+        out.parentFile.mkdirs()
+        out.writeBytes(java.util.Base64.getDecoder().decode(ciKeystoreBase64))
+        out
+    }
+    else -> null
 }
 
 android {
@@ -21,6 +52,17 @@ android {
         }
     }
 
+    signingConfigs {
+        if (resolvedKeystoreFile != null) {
+            create("release") {
+                storeFile = resolvedKeystoreFile
+                storePassword = releaseKeystoreProps.getProperty("storePassword") ?: ciKeystorePwd
+                keyAlias = releaseKeystoreProps.getProperty("keyAlias") ?: ciKeyAlias
+                keyPassword = releaseKeystoreProps.getProperty("keyPassword") ?: ciKeyPwd
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -29,7 +71,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (resolvedKeystoreFile != null) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
         debug {
             isMinifyEnabled = false

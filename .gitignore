@@ -11,3 +11,9 @@
 .DS_Store
 *.apk
 *.apks
+
+# Local secrets / signing material — never commit
+.secrets-local/
+*.keystore
+*.jks
+keystore.properties
