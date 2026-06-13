@@ -331,10 +331,7 @@ class MainActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
-    /** 阻断物理 Back 键，让 Compose BackHandler 接管 */
-    override fun onBackPressed() {
-        // 主屏幕禁止退出，由内部隐藏手势触发家长验证后才允许
-    }
+
 
     companion object {
         private const val TAG = "MainActivity"

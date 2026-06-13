@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,6 +79,15 @@ fun AdminConsoleScreen(
 
     // 当前二级子页面导航状态：null 代表首页目录，可选："PROTECTION", "TIME_LIMIT", "VERIFICATION", "INTERFACE", "PERFORMANCE", "WHITELIST"
     var currentSubPage by remember { mutableStateOf<String?>(null) }
+
+    // 接管返回键/手势：如果在二级子页面则返回后台主页，如果在后台主页则退出后台
+    BackHandler(enabled = true) {
+        if (currentSubPage != null) {
+            currentSubPage = null
+        } else {
+            onBack()
+        }
+    }
 
     val currentVersion = remember {
         try {

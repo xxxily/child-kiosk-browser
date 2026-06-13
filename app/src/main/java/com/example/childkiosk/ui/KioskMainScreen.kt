@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.activity.compose.BackHandler
 import android.content.res.Configuration
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -53,6 +54,11 @@ fun KioskMainScreen(
 ) {
     val context = LocalContext.current
     val db = remember { AppDatabase.getInstance(context) }
+
+    // 拦截物理 Back 键与返回手势，防止通过返回键退出主屏
+    BackHandler(enabled = true) {
+        // 空实现以阻断返回手势
+    }
     
     var webApps by remember { mutableStateOf<List<WebAppEntity>>(emptyList()) }
     var selectedCategory by remember { mutableStateOf("ALL") }
