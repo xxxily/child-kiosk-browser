@@ -52,6 +52,14 @@ class WebViewActivity : ComponentActivity() {
     private var rootWebView: WebView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 0. 早期屏幕方向设置，避免启动闪烁
+        val orientationMode = com.example.childkiosk.util.KioskPrefs.getOrientationMode(this)
+        requestedOrientation = when (orientationMode) {
+            com.example.childkiosk.util.KioskPrefs.ORIENTATION_PORTRAIT -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+            com.example.childkiosk.util.KioskPrefs.ORIENTATION_LANDSCAPE -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
+        }
+
         super.onCreate(savedInstanceState)
 
         // 防截屏逃逸
@@ -62,6 +70,33 @@ class WebViewActivity : ComponentActivity() {
 
         // 沉浸式全屏，隐藏状态栏与导航栏
         SystemUiHelper.enterImmersive(this)
+
+        // 监听 System UI / Window 边距变化，防止状态栏灰色半透明条卡死，3秒自动收回
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            window.decorView.setOnApplyWindowInsetsListener { view, insets ->
+                val isVisible = insets.isVisible(android.view.WindowInsets.Type.statusBars()) || 
+                                insets.isVisible(android.view.WindowInsets.Type.navigationBars())
+                if (isVisible) {
+                    view.postDelayed({
+                        if (!isDestroyed && !isFinishing) {
+                            SystemUiHelper.enterImmersive(this@WebViewActivity)
+                        }
+                    }, 3000)
+                }
+                view.onApplyWindowInsets(insets)
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.setOnSystemUiVisibilityChangeListener { visibility ->
+                if ((visibility and android.view.View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
+                    window.decorView.postDelayed({
+                        if (!isDestroyed && !isFinishing) {
+                            SystemUiHelper.enterImmersive(this@WebViewActivity)
+                        }
+                    }, 3000)
+                }
+            }
+        }
 
         val webAppId = intent.getIntExtra(EXTRA_WEB_APP_ID, -1)
 
@@ -214,6 +249,7 @@ fun WebViewScreen(
                 factory = { ctx ->
                     createSecureWebView(
                         ctx = ctx,
+                        targetUrl = targetUrl,
                         originalHost = originalHost,
                         onSslError = { sslErrorUrl = it },
                         onBlocked = { blockedUrl = it },
@@ -451,6 +487,7 @@ private fun FullScreenAlert(
 @SuppressLint("SetJavaScriptEnabled")
 private fun createSecureWebView(
     ctx: Context,
+    targetUrl: String,
     originalHost: String,
     onSslError: (String) -> Unit,
     onBlocked: (String) -> Unit,
@@ -476,7 +513,11 @@ private fun createSecureWebView(
             setGeolocationEnabled(false)
 
             mediaPlaybackRequiresUserGesture = false
-            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            mixedContentMode = if (targetUrl.startsWith("http://", ignoreCase = true)) {
+                WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            } else {
+                WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            }
 
             cacheMode = WebSettings.LOAD_DEFAULT
             useWideViewPort = true

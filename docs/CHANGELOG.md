@@ -6,6 +6,29 @@
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-06-13
+
+### Added — 新增
+
+- **自定义网址图标与 Favicon 自动推导**：
+  - 引入了 `Coil` 异步图片库加载 URL 自定义图标，支持网络缓存及降级回退显示内置 Star 图标。
+  * `AddEditWebAppDialog` 监听 `urlInput`，自动解析并推导出其默认 favicon 地址。
+  * 提供了自定义图标 URL 文本输入卡片与单选框，可随时与内置图标切换使用，默认自动勾选填充推导的 Favicon。
+- **屏幕显示方向配置**：
+  - 支持自适应（AUTO）、锁定横屏（LANDSCAPE）和锁定竖屏（PORTRAIT）三种方向。
+  * `MainActivity.onCreate` 和 `WebViewActivity.onCreate` 早期同步应用该配置，杜绝 Activity 旋转和闪动。
+  * 在管理后台提供了“屏幕显示方向”卡片，修改后即时旋转屏幕。
+- **首屏图标网格自适应大小**：
+  - 支持小（SMALL）、中（MEDIUM）和大（LARGE）三种图标及文字大小选项卡，自适应网格密度，适合横屏展示更多应用。
+- **下拉状态栏 3 秒自动隐藏**：
+  - 针对 `MainActivity` 和 `WebViewActivity` 增加了窗口 System UI 监听器，在下滑呼出半透明灰色块后，3秒内自动调用沉浸模式进行再次隐藏，防止其在部分 OEM 上卡死占位。
+
+### Fixed — 修复
+
+- 修复了添加/编辑应用 Dialog 在横屏模式下无法滚动的体验 Bug（在表单 Column 中引入 `verticalScroll`）。
+- 重构 `isValidUrl` 校验逻辑，利用 Android 原生 `Patterns.WEB_URL`，放行并完美兼容局域网 IP（例如 `192.168.1.1`）以及 `localhost` 的测试网络。
+- 允许添加明文 HTTP 网址（修改 `network_security_config.xml` 与 Manifest），且在输入以 `http://` 开头时提供橙色警告以提醒传输风险。
+
 ## [0.0.2] - 2026-06-13
 
 引入**分级防护模型**：不再把 Device Owner 当作「能否使用本应用」的前提，而是当作「锁得多死」的等级。普通侧载安装即可开箱使用，按当前可用权限自动选择最高防护档。
@@ -85,6 +108,7 @@
 - 调研报告 `docs/android_kiosk_research_report.md`
 - 需求规格 `docs/child_kiosk_browser_requirements.md`
 
-[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/xxxily/child-kiosk-browser/releases/tag/v0.0.1

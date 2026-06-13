@@ -8,6 +8,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -241,6 +243,130 @@ fun AdminConsoleScreen(
                                 Icon(imageVector = Icons.Default.Settings, contentDescription = "修改")
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("修改家长数字 PIN 码")
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Section 2.5: 屏幕显示方向配置
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Refresh, contentDescription = "方向", tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("屏幕显示方向", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        var orientationMode by remember { mutableStateOf(KioskPrefs.getOrientationMode(context)) }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(
+                                    selected = orientationMode == KioskPrefs.ORIENTATION_AUTO,
+                                    onClick = {
+                                        orientationMode = KioskPrefs.ORIENTATION_AUTO
+                                        KioskPrefs.setOrientationMode(context, KioskPrefs.ORIENTATION_AUTO)
+                                        (context as? android.app.Activity)?.requestedOrientation =
+                                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
+                                    }
+                                )
+                                Text("自适应")
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(
+                                    selected = orientationMode == KioskPrefs.ORIENTATION_LANDSCAPE,
+                                    onClick = {
+                                        orientationMode = KioskPrefs.ORIENTATION_LANDSCAPE
+                                        KioskPrefs.setOrientationMode(context, KioskPrefs.ORIENTATION_LANDSCAPE)
+                                        (context as? android.app.Activity)?.requestedOrientation =
+                                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                    }
+                                )
+                                Text("横屏")
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(
+                                    selected = orientationMode == KioskPrefs.ORIENTATION_PORTRAIT,
+                                    onClick = {
+                                        orientationMode = KioskPrefs.ORIENTATION_PORTRAIT
+                                        KioskPrefs.setOrientationMode(context, KioskPrefs.ORIENTATION_PORTRAIT)
+                                        (context as? android.app.Activity)?.requestedOrientation =
+                                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                                    }
+                                )
+                                Text("竖屏")
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Section 2.6: 首屏图标显示大小配置
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Menu, contentDescription = "图标", tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("首屏图标显示大小", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        var iconSizeMode by remember { mutableStateOf(KioskPrefs.getIconSizeMode(context)) }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(
+                                    selected = iconSizeMode == KioskPrefs.ICON_SIZE_SMALL,
+                                    onClick = {
+                                        iconSizeMode = KioskPrefs.ICON_SIZE_SMALL
+                                        KioskPrefs.setIconSizeMode(context, KioskPrefs.ICON_SIZE_SMALL)
+                                    }
+                                )
+                                Text("小")
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(
+                                    selected = iconSizeMode == KioskPrefs.ICON_SIZE_MEDIUM,
+                                    onClick = {
+                                        iconSizeMode = KioskPrefs.ICON_SIZE_MEDIUM
+                                        KioskPrefs.setIconSizeMode(context, KioskPrefs.ICON_SIZE_MEDIUM)
+                                    }
+                                )
+                                Text("中")
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(
+                                    selected = iconSizeMode == KioskPrefs.ICON_SIZE_LARGE,
+                                    onClick = {
+                                        iconSizeMode = KioskPrefs.ICON_SIZE_LARGE
+                                        KioskPrefs.setIconSizeMode(context, KioskPrefs.ICON_SIZE_LARGE)
+                                    }
+                                )
+                                Text("大")
                             }
                         }
                     }
@@ -518,7 +644,9 @@ fun WebAppCard(
                 modifier = Modifier.weight(1f)
             ) {
                 // 图标
-                val iconVector = getIconVector(app.iconPath)
+                val iconPath = app.iconPath ?: ""
+                val isNetworkIcon = iconPath.startsWith("http://", ignoreCase = true) || 
+                                    iconPath.startsWith("https://", ignoreCase = true)
                 Box(
                     modifier = Modifier
                         .size(56.dp)
@@ -526,12 +654,23 @@ fun WebAppCard(
                         .background(MaterialTheme.colorScheme.primaryContainer),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = iconVector,
-                        contentDescription = app.title,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(28.dp)
-                    )
+                    if (isNetworkIcon) {
+                        coil.compose.AsyncImage(
+                            model = iconPath,
+                            contentDescription = app.title,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            error = androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Default.Star)
+                        )
+                    } else {
+                        val iconVector = getIconVector(iconPath)
+                        Icon(
+                            imageVector = iconVector,
+                            contentDescription = app.title,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
                 }
                 Spacer(modifier = Modifier.width(16.dp))
 
@@ -578,6 +717,23 @@ fun getIconVector(iconName: String?): ImageVector {
     }
 }
 
+private fun isValidUrl(url: String): Boolean {
+    val trimmed = url.trim()
+    val hasProtocol = trimmed.startsWith("http://", ignoreCase = true) || 
+                      trimmed.startsWith("https://", ignoreCase = true)
+    val urlToCheck = if (hasProtocol) trimmed else "https://$trimmed"
+    return android.util.Patterns.WEB_URL.matcher(urlToCheck).matches()
+}
+
+private fun formatUrl(url: String): String {
+    val trimmed = url.trim()
+    return when {
+        trimmed.startsWith("http://", ignoreCase = true) -> trimmed
+        trimmed.startsWith("https://", ignoreCase = true) -> trimmed
+        else -> "https://$trimmed"
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddEditWebAppDialog(
@@ -587,6 +743,11 @@ fun AddEditWebAppDialog(
 ) {
     var title by remember { mutableStateOf(app?.title ?: "") }
     var urlInput by remember { mutableStateOf(app?.url ?: "") }
+    
+    // 如果已有应用且 iconPath 是网络地址，初始化 customIconUrl，否则为空
+    var customIconUrl by remember { 
+        mutableStateOf(if (app?.iconPath?.startsWith("http", ignoreCase = true) == true) app.iconPath else "") 
+    }
     var selectedIcon by remember { mutableStateOf(app?.iconPath ?: "icon_gamepad") }
     
     var isCheckingUrl by remember { mutableStateOf(false) }
@@ -594,20 +755,34 @@ fun AddEditWebAppDialog(
     var pingFailedOnce by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
-    
-    fun isValidUrl(url: String): Boolean {
-        val pattern = "^(https?://)?([a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,}(:\\d+)?(/.*)?$".toRegex()
-        return pattern.matches(url)
-    }
 
-    fun formatUrl(url: String): String {
-        val trimmed = url.trim()
-        return when {
-            trimmed.startsWith("http://", ignoreCase = true) -> trimmed.replaceFirst("http://", "https://", ignoreCase = true)
-            trimmed.startsWith("https://", ignoreCase = true) -> trimmed
-            else -> "https://$trimmed"
+    // 自动推导网站默认的 favicon.ico
+    LaunchedEffect(urlInput) {
+        val trimmed = urlInput.trim()
+        if (trimmed.isNotEmpty() && isValidUrl(trimmed)) {
+            val formatted = formatUrl(trimmed)
+            try {
+                val uri = java.net.URI(formatted)
+                val host = uri.host
+                val scheme = uri.scheme ?: "https"
+                val port = if (uri.port != -1) ":${uri.port}" else ""
+                if (host != null && host.isNotEmpty()) {
+                    val inferredFavicon = "$scheme://$host$port/favicon.ico"
+                    // 只有在 customIconUrl 为空时才进行初始化自动填充
+                    if (customIconUrl.isEmpty()) {
+                        customIconUrl = inferredFavicon
+                        // 如果是新应用，且没有改过内置图标，默认直接勾选这个推导出的 Favicon
+                        if (app == null && selectedIcon == "icon_gamepad") {
+                            selectedIcon = inferredFavicon
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // 忽略解析异常
+            }
         }
     }
+
 
     suspend fun pingUrl(urlStr: String): Boolean = withContext(Dispatchers.IO) {
         runCatching {
@@ -627,7 +802,9 @@ fun AddEditWebAppDialog(
             modifier = Modifier.fillMaxWidth().padding(16.dp)
         ) {
             Column(
-                modifier = Modifier.padding(20.dp),
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
@@ -655,6 +832,16 @@ fun AddEditWebAppDialog(
                     isError = urlError != null,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                if (urlInput.trim().startsWith("http://", ignoreCase = true)) {
+                    Text(
+                        text = "⚠️ 警告：当前添加的是未加密的 HTTP 网站。在公共网络中可能会有被监听或劫持的风险，建议使用 HTTPS。",
+                        color = Color(0xFFE65100), // 橙色警告
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
 
                 if (urlError != null) {
                     Text(
@@ -697,6 +884,61 @@ fun AddEditWebAppDialog(
                                 tint = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                    }
+                }
+
+                // 自定义网络图片/Favicon 图标
+                val isCustomSelected = selectedIcon.startsWith("http://", ignoreCase = true) || 
+                                       selectedIcon.startsWith("https://", ignoreCase = true)
+                
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isCustomSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                                         else MaterialTheme.colorScheme.surface
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(
+                        width = 1.dp,
+                        color = if (isCustomSelected) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                if (customIconUrl.trim().isNotEmpty()) {
+                                    selectedIcon = customIconUrl.trim()
+                                }
+                            }
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = isCustomSelected,
+                            onClick = {
+                                if (customIconUrl.trim().isNotEmpty()) {
+                                    selectedIcon = customIconUrl.trim()
+                                }
+                            }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        OutlinedTextField(
+                            value = customIconUrl,
+                            onValueChange = {
+                                customIconUrl = it
+                                selectedIcon = it.trim()
+                            },
+                            label = { Text("自定义网址图标 (默认网站 favicon)") },
+                            shape = RoundedCornerShape(8.dp),
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            colors = TextFieldDefaults.outlinedTextFieldColors(
+                                containerColor = Color.Transparent,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                            )
+                        )
                     }
                 }
 

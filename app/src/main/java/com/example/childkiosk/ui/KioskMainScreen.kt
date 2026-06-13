@@ -42,6 +42,7 @@ import com.example.childkiosk.data.WebAppEntity
 @Composable
 fun KioskMainScreen(
     config: SystemConfigEntity?,
+    iconSizeMode: String,
     onEnterAdmin: () -> Unit,
     onExitKiosk: () -> Unit
 ) {
@@ -104,16 +105,28 @@ fun KioskMainScreen(
                     )
                 }
             } else {
+                val minGridSize = when (iconSizeMode) {
+                    "SMALL" -> 90.dp
+                    "LARGE" -> 160.dp
+                    else -> 120.dp
+                }
+                val gridSpacing = when (iconSizeMode) {
+                    "SMALL" -> 12.dp
+                    "LARGE" -> 24.dp
+                    else -> 16.dp
+                }
+
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 160.dp),
+                    columns = GridCells.Adaptive(minSize = minGridSize),
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(24.dp)
+                    horizontalArrangement = Arrangement.spacedBy(gridSpacing),
+                    verticalArrangement = Arrangement.spacedBy(gridSpacing)
                 ) {
                     items(webApps) { app ->
                         AppGridItem(
                             app = app,
+                            iconSizeMode = iconSizeMode,
                             onClick = {
                                 val intent = Intent(context, WebViewActivity::class.java).apply {
                                     putExtra("WEB_APP_ID", app.id)
@@ -187,6 +200,7 @@ fun KioskMainScreen(
 @Composable
 fun AppGridItem(
     app: WebAppEntity,
+    iconSizeMode: String,
     onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -196,6 +210,48 @@ fun AppGridItem(
     
     val iconVector = getIconVector(app.iconPath)
 
+    // 动态计算不同尺寸模式下的 UI 样式参数
+    val cardMinSize = when (iconSizeMode) {
+        "SMALL" -> 80.dp
+        "LARGE" -> 140.dp
+        else -> 100.dp
+    }
+    val iconBoxSize = when (iconSizeMode) {
+        "SMALL" -> 36.dp
+        "LARGE" -> 64.dp
+        else -> 48.dp
+    }
+    val iconSize = when (iconSizeMode) {
+        "SMALL" -> 20.dp
+        "LARGE" -> 36.dp
+        else -> 28.dp
+    }
+    val cardPadding = when (iconSizeMode) {
+        "SMALL" -> 8.dp
+        "LARGE" -> 16.dp
+        else -> 12.dp
+    }
+    val innerSpacing = when (iconSizeMode) {
+        "SMALL" -> 4.dp
+        "LARGE" -> 12.dp
+        else -> 8.dp
+    }
+    val fontSize = when (iconSizeMode) {
+        "SMALL" -> 12.sp
+        "LARGE" -> 18.sp
+        else -> 14.sp
+    }
+    val cornerRadius = when (iconSizeMode) {
+        "SMALL" -> 12.dp
+        "LARGE" -> 24.dp
+        else -> 18.dp
+    }
+    val iconBoxCornerRadius = when (iconSizeMode) {
+        "SMALL" -> 8.dp
+        "LARGE" -> 16.dp
+        else -> 12.dp
+    }
+
     Card(
         onClick = {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -204,9 +260,9 @@ fun AppGridItem(
         interactionSource = interactionSource,
         modifier = Modifier
             .scale(scale)
-            .sizeIn(minWidth = 140.dp, minHeight = 140.dp) // 满足 72dp+ 大触控目标区域规范
+            .sizeIn(minWidth = cardMinSize, minHeight = cardMinSize)
             .aspectRatio(1f),
-        shape = RoundedCornerShape(24.dp), // 大圆角
+        shape = RoundedCornerShape(cornerRadius),
         colors = CardDefaults.cardColors(
             containerColor = Color.White,
             contentColor = Color(0xFF4E342E)
@@ -216,28 +272,41 @@ fun AppGridItem(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(cardPadding),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
+            val iconPath = app.iconPath ?: ""
+            val isNetworkIcon = iconPath.startsWith("http://", ignoreCase = true) || 
+                                iconPath.startsWith("https://", ignoreCase = true)
             Box(
                 modifier = Modifier
-                    .size(64.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .size(iconBoxSize)
+                    .clip(RoundedCornerShape(iconBoxCornerRadius))
                     .background(Color(0xFFFFF9C4)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = iconVector,
-                    contentDescription = app.title,
-                    tint = Color(0xFFFBC02D),
-                    modifier = Modifier.size(36.dp)
-                )
+                if (isNetworkIcon) {
+                    coil.compose.AsyncImage(
+                        model = iconPath,
+                        contentDescription = app.title,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        error = androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Default.Star)
+                    )
+                } else {
+                    Icon(
+                        imageVector = iconVector,
+                        contentDescription = app.title,
+                        tint = Color(0xFFFBC02D),
+                        modifier = Modifier.size(iconSize)
+                    )
+                }
             }
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(innerSpacing))
             Text(
                 text = app.title,
-                fontSize = 18.sp,
+                fontSize = fontSize,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center
             )

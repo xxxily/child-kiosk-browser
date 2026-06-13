@@ -37,6 +37,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var adminComponent: ComponentName
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 0. 早期屏幕方向设置，避免启动闪烁
+        val orientationMode = KioskPrefs.getOrientationMode(this)
+        requestedOrientation = when (orientationMode) {
+            KioskPrefs.ORIENTATION_PORTRAIT -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+            KioskPrefs.ORIENTATION_LANDSCAPE -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
+        }
+
         super.onCreate(savedInstanceState)
 
         // 1. 设置 FLAG_SECURE 防截屏逃逸
@@ -46,6 +54,33 @@ class MainActivity : ComponentActivity() {
         )
         // 2. 沉浸式全屏
         SystemUiHelper.enterImmersive(this)
+
+        // 3. 监听 System UI / Window 边距变化，防止状态栏灰色半透明条卡死，3秒自动收回
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.decorView.setOnApplyWindowInsetsListener { view, insets ->
+                val isVisible = insets.isVisible(android.view.WindowInsets.Type.statusBars()) || 
+                                insets.isVisible(android.view.WindowInsets.Type.navigationBars())
+                if (isVisible) {
+                    view.postDelayed({
+                        if (!isDestroyed && !isFinishing) {
+                            SystemUiHelper.enterImmersive(this@MainActivity)
+                        }
+                    }, 3000)
+                }
+                view.onApplyWindowInsets(insets)
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.setOnSystemUiVisibilityChangeListener { visibility ->
+                if ((visibility and android.view.View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
+                    window.decorView.postDelayed({
+                        if (!isDestroyed && !isFinishing) {
+                            SystemUiHelper.enterImmersive(this@MainActivity)
+                        }
+                    }, 3000)
+                }
+            }
+        }
 
         dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         adminComponent = ComponentName(this, MyDeviceAdminReceiver::class.java)
@@ -63,9 +98,14 @@ class MainActivity : ComponentActivity() {
                         .getSystemConfigFlow()
                         .collectAsState(initial = null)
 
+                    val iconSizeMode = remember(currentScreen) {
+                        KioskPrefs.getIconSizeMode(this@MainActivity)
+                    }
+
                     when (currentScreen) {
                         "MAIN" -> KioskMainScreen(
                             config = systemConfig,
+                            iconSizeMode = iconSizeMode,
                             onEnterAdmin = { currentScreen = "ADMIN" },
                             onExitKiosk = { stopLockTaskMode() }
                         )
