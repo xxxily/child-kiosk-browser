@@ -9,7 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-@Database(entities = [WebAppEntity::class, SystemConfigEntity::class], version = 2, exportSchema = false)
+@Database(entities = [WebAppEntity::class, SystemConfigEntity::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun webAppDao(): WebAppDao
@@ -58,84 +58,96 @@ abstract class AppDatabase : RoomDatabase() {
                             url = "https://scratch.mit.edu/",
                             iconPath = "icon_gamepad",
                             isPreset = true,
-                            isEnabled = false
+                            isEnabled = false,
+                            category = WebAppEntity.CATEGORY_GAME
                         ),
                         WebAppEntity(
                             title = "PBS Kids",
                             url = "https://pbskids.org/",
                             iconPath = "icon_rocket",
                             isPreset = true,
-                            isEnabled = false
+                            isEnabled = false,
+                            category = WebAppEntity.CATEGORY_GAME
                         ),
                         WebAppEntity(
                             title = "NASA Kids' Club",
                             url = "https://www.nasa.gov/learning-resources/kids-club/",
                             iconPath = "icon_puzzle",
                             isPreset = true,
-                            isEnabled = false
+                            isEnabled = false,
+                            category = WebAppEntity.CATEGORY_STUDY
                         ),
                         WebAppEntity(
                             title = "国家中小学智慧教育平台",
                             url = "https://basic.smartedu.cn/",
                             iconPath = "icon_school",
                             isPreset = true,
-                            isEnabled = false
+                            isEnabled = false,
+                            category = WebAppEntity.CATEGORY_STUDY
                         ),
                         WebAppEntity(
                             title = "故宫博物院(青少版)",
                             url = "https://www.dpm.org.cn/kids.html",
                             iconPath = "icon_book",
                             isPreset = true,
-                            isEnabled = false
+                            isEnabled = false,
+                            category = WebAppEntity.CATEGORY_BOOK
                         ),
                         WebAppEntity(
                             title = "中华珍宝馆",
                             url = "http://www.ltfc.net/",
                             iconPath = "icon_paint",
                             isPreset = true,
-                            isEnabled = false
+                            isEnabled = false,
+                            category = WebAppEntity.CATEGORY_BOOK
                         ),
                         WebAppEntity(
                             title = "科普中国",
                             url = "https://www.kepuchina.cn/",
                             iconPath = "icon_lightbulb",
                             isPreset = true,
-                            isEnabled = false
+                            isEnabled = false,
+                            category = WebAppEntity.CATEGORY_STUDY
                         ),
                         WebAppEntity(
                             title = "中国数字科技馆",
                             url = "https://www.cdstm.cn/",
                             iconPath = "icon_toy",
                             isPreset = true,
-                            isEnabled = false
+                            isEnabled = false,
+                            category = WebAppEntity.CATEGORY_STUDY
                         ),
                         WebAppEntity(
                             title = "汉字屋",
                             url = "https://www.hanziwu.com/",
                             iconPath = "icon_home",
                             isPreset = true,
-                            isEnabled = false
+                            isEnabled = false,
+                            category = WebAppEntity.CATEGORY_BOOK
                         ),
                         WebAppEntity(
                             title = "编程猫",
                             url = "https://www.codemao.cn/",
                             iconPath = "icon_gamepad",
                             isPreset = true,
-                            isEnabled = false
+                            isEnabled = false,
+                            category = WebAppEntity.CATEGORY_GAME
                         ),
                         WebAppEntity(
                             title = "中国科普博览",
                             url = "https://www.kepu.net.cn/",
                             iconPath = "icon_pet",
                             isPreset = true,
-                            isEnabled = false
+                            isEnabled = false,
+                            category = WebAppEntity.CATEGORY_STUDY
                         ),
                         WebAppEntity(
                             title = "宝宝巴士官网",
                             url = "https://www.babybus.com/",
                             iconPath = "icon_gift",
                             isPreset = true,
-                            isEnabled = false
+                            isEnabled = false,
+                            category = WebAppEntity.CATEGORY_BOOK
                         )
                     )
                     database.webAppDao().insertAll(presetApps)

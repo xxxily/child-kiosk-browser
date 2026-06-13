@@ -7,8 +7,10 @@ import android.widget.Toast
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -51,6 +53,15 @@ fun KioskMainScreen(
     val db = remember { AppDatabase.getInstance(context) }
     
     var webApps by remember { mutableStateOf<List<WebAppEntity>>(emptyList()) }
+    var selectedCategory by remember { mutableStateOf("ALL") }
+
+    val filteredApps = remember(webApps, selectedCategory) {
+        if (selectedCategory == "ALL") {
+            webApps
+        } else {
+            webApps.filter { it.category == selectedCategory }
+        }
+    }
     
     // 家长隐藏手势触发状态
     var showMenuDialog by remember { mutableStateOf(false) }
@@ -124,13 +135,55 @@ fun KioskMainScreen(
                 Spacer(modifier = Modifier.height(24.dp))
             }
 
-            if (webApps.isEmpty()) {
+            // 儿童友好型分类 Tab 过滤栏
+            val categories = listOf(
+                "ALL" to "🌟 全部",
+                WebAppEntity.CATEGORY_GAME to "🎮 游戏",
+                WebAppEntity.CATEGORY_VIDEO to "📺 视频",
+                WebAppEntity.CATEGORY_BOOK to "📚 绘本",
+                WebAppEntity.CATEGORY_STUDY to "✍️ 学习",
+                WebAppEntity.CATEGORY_OTHER to "⚙️ 其他"
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 8.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                categories.forEach { (catKey, catName) ->
+                    val isSelected = selectedCategory == catKey
+                    Card(
+                        onClick = { selectedCategory = catKey },
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isSelected) Color(0xFF4E342E) else Color.White.copy(alpha = 0.9f),
+                            contentColor = if (isSelected) Color.White else Color(0xFF4E342E)
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 6.dp else 2.dp),
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = catName,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (filteredApps.isEmpty()) {
                 Box(
                     modifier = Modifier.weight(1f),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "这里空空如也，请联系家长在管理后台添加游戏！",
+                        text = if (webApps.isEmpty()) "这里空空如也，请联系家长在管理后台添加游戏！"
+                               else "此分类下还没有应用哦，去看看其他分类吧！",
                         fontSize = 18.sp,
                         color = Color(0xFF8D6E63),
                         textAlign = TextAlign.Center
@@ -155,7 +208,7 @@ fun KioskMainScreen(
                     horizontalArrangement = Arrangement.spacedBy(gridSpacing),
                     verticalArrangement = Arrangement.spacedBy(gridSpacing)
                 ) {
-                    items(webApps) { app ->
+                    items(filteredApps) { app ->
                         AppGridItem(
                             app = app,
                             iconSizeMode = iconSizeMode,

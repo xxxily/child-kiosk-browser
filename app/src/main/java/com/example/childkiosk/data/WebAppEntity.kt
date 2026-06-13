@@ -12,5 +12,34 @@ data class WebAppEntity(
     @ColumnInfo(name = "icon_path") val iconPath: String?,
     @ColumnInfo(name = "is_preset") val isPreset: Boolean = false,
     @ColumnInfo(name = "is_enabled") val isEnabled: Boolean = true,
+    @ColumnInfo(name = "category", defaultValue = "OTHER") val category: String = CATEGORY_OTHER,
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis()
-)
+) {
+    companion object {
+        const val CATEGORY_GAME = "GAME"
+        const val CATEGORY_VIDEO = "VIDEO"
+        const val CATEGORY_BOOK = "BOOK"
+        const val CATEGORY_STUDY = "STUDY"
+        const val CATEGORY_OTHER = "OTHER"
+
+        fun getCategoryDisplayName(category: String): String {
+            return when (category) {
+                CATEGORY_GAME -> "游戏"
+                CATEGORY_VIDEO -> "视频"
+                CATEGORY_BOOK -> "绘本"
+                CATEGORY_STUDY -> "学习"
+                else -> "其他"
+            }
+        }
+
+        fun getCategoryEmoji(category: String): String {
+            return when (category) {
+                CATEGORY_GAME -> "🎮"
+                CATEGORY_VIDEO -> "📺"
+                CATEGORY_BOOK -> "📚"
+                CATEGORY_STUDY -> "✍️"
+                else -> "⚙️"
+            }
+        }
+    }
+}

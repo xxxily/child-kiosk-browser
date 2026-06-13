@@ -48,7 +48,8 @@ fun AdminConsoleScreen(
     isDeviceOwner: Boolean,
     onBack: () -> Unit,
     onExitKiosk: () -> Unit,
-    onGoToHomeSettings: () -> Unit
+    onGoToHomeSettings: () -> Unit,
+    onProtectionModeChanged: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -60,8 +61,8 @@ fun AdminConsoleScreen(
     var editingWebApp by remember { mutableStateOf<WebAppEntity?>(null) }
 
     // 家长设置状态
-    var timeLimit by remember { mutableIntStateOf(config?.timeLimitMinutes ?: 0) }
-    var dailyLimit by remember { mutableIntStateOf(config?.dailyLimitMinutes ?: 0) }
+    var timeLimit by remember { mutableStateOf(config?.timeLimitMinutes ?: 0) }
+    var dailyLimit by remember { mutableStateOf(config?.dailyLimitMinutes ?: 0) }
     var verificationMode by remember { mutableStateOf(config?.verificationMode ?: "MATH") }
 
     // 非 Device Owner 场景下的防护等级（屏幕固定软锁 / 无系统级锁定）
@@ -73,6 +74,9 @@ fun AdminConsoleScreen(
     var showUpdateDialog by remember { mutableStateOf(false) }
     var latestReleaseInfo by remember { mutableStateOf<ReleaseInfo?>(null) }
     var isCheckingUpdate by remember { mutableStateOf(false) }
+
+    // 当前二级子页面导航状态：null 代表首页目录，可选："PROTECTION", "TIME_LIMIT", "VERIFICATION", "INTERFACE", "PERFORMANCE", "WHITELIST"
+    var currentSubPage by remember { mutableStateOf<String?>(null) }
 
     val currentVersion = remember {
         try {
@@ -134,9 +138,26 @@ fun AdminConsoleScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("家长管理后台", fontWeight = FontWeight.Bold) },
+                title = {
+                    val titleText = when (currentSubPage) {
+                        "PROTECTION" -> "安全防护等级"
+                        "TIME_LIMIT" -> "健康时间限制"
+                        "VERIFICATION" -> "家长验证设置"
+                        "INTERFACE" -> "界面与显示配置"
+                        "PERFORMANCE" -> "网页性能优化"
+                        "WHITELIST" -> "应用白名单管理"
+                        else -> "家长管理后台"
+                    }
+                    Text(titleText, fontWeight = FontWeight.Bold)
+                },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = {
+                        if (currentSubPage != null) {
+                            currentSubPage = null
+                        } else {
+                            onBack()
+                        }
+                    }) {
                         Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "返回")
                     }
                 },
@@ -147,529 +168,669 @@ fun AdminConsoleScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddDialog = true },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
-            ) {
-                Icon(imageVector = Icons.Default.Add, contentDescription = "添加应用")
+            // 只有在应用白名单二级页面下才显示“添加应用” FloatingActionButton
+            if (currentSubPage == "WHITELIST") {
+                FloatingActionButton(
+                    onClick = { showAddDialog = true },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ) {
+                    Icon(imageVector = Icons.Default.Add, contentDescription = "添加应用")
+                }
             }
         }
     ) { innerPadding ->
-        LazyColumn(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // Section 0: 防护等级（仅在非 Device Owner 时展示可切换项与激活引导）
-            item {
-                ProtectionLevelCard(
-                    isDeviceOwner = isDeviceOwner,
-                    protectionMode = protectionMode,
-                    onModeChange = { mode ->
-                        protectionMode = mode
-                        KioskPrefs.setProtectionMode(context, mode)
-                    },
-                    onCopyScript = {
-                        clipboardManager.setText(
-                            AnnotatedString("adb shell dpm set-device-owner com.example.childkiosk/.MyDeviceAdminReceiver")
-                        )
-                        Toast.makeText(context, "ADB 激活脚本已复制到剪贴板！", Toast.LENGTH_SHORT).show()
-                    },
-                    onGoToHomeSettings = onGoToHomeSettings
-                )
-            }
-
-            // Section 1: 健康使用时长管理
-            item {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(bottom = 12.dp)
-                        ) {
-                            Icon(imageVector = Icons.Default.DateRange, contentDescription = "限时", tint = MaterialTheme.colorScheme.primary)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("儿童健康使用时长限制", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            when (currentSubPage) {
+                null -> {
+                    // 主菜单列表
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        item {
+                            Card(
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                            ) {
+                                Column {
+                                    AdminMenuItem(
+                                        icon = Icons.Default.Lock,
+                                        title = "安全防护与锁定",
+                                        summary = if (isDeviceOwner) "企业级完全锁定已生效" else "当前处于普通锁定（可配置软锁）",
+                                        onClick = { currentSubPage = "PROTECTION" }
+                                    )
+                                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                                    AdminMenuItem(
+                                        icon = Icons.Default.DateRange,
+                                        title = "健康限时管理",
+                                        summary = "每次可用: ${if (timeLimit > 0) "${timeLimit}分钟" else "不限"} | 每日累计: ${if (dailyLimit > 0) "${dailyLimit}分钟" else "不限"}",
+                                        onClick = { currentSubPage = "TIME_LIMIT" }
+                                    )
+                                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                                    AdminMenuItem(
+                                        icon = Icons.Default.VerifiedUser,
+                                        title = "家长身份验证",
+                                        summary = if (verificationMode == "MATH") "当前使用动态口算题验证" else "当前使用数字 PIN 密码验证",
+                                        onClick = { currentSubPage = "VERIFICATION" }
+                                    )
+                                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                                    AdminMenuItem(
+                                        icon = Icons.Default.Settings,
+                                        title = "界面与显示配置",
+                                        summary = "屏幕方向、首屏图标大小、隐藏标题及管理锁图标等",
+                                        onClick = { currentSubPage = "INTERFACE" }
+                                    )
+                                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                                    AdminMenuItem(
+                                        icon = Icons.Default.Build,
+                                        title = "网页缓存与秒开优化",
+                                        summary = "预加载常用网站，清理网页缓存及 Cookie 数据",
+                                        onClick = { currentSubPage = "PERFORMANCE" }
+                                    )
+                                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                                    AdminMenuItem(
+                                        icon = Icons.Default.List,
+                                        title = "应用白名单管理",
+                                        summary = "管理并分类展示允许访问的应用（共 ${webApps.size} 个应用）",
+                                        onClick = { currentSubPage = "WHITELIST" }
+                                    )
+                                }
+                            }
                         }
 
-                        // 单次使用时间限制
-                        Text("每次持续可用时长：${if (timeLimit > 0) "${timeLimit}分钟" else "不限"}", fontSize = 14.sp)
-                        Slider(
-                            value = timeLimit.toFloat(),
-                            onValueChange = { timeLimit = it.toInt() },
-                            valueRange = 0f..120f,
-                            steps = 7, // 0, 15, 30, 45, 60, 75, 90, 105, 120
-                            onValueChangeFinished = {
-                                scope.launch(Dispatchers.IO) {
-                                    val current = db.systemConfigDao().getSystemConfig() ?: SystemConfigEntity()
-                                    db.systemConfigDao().insertOrUpdateConfig(current.copy(timeLimitMinutes = timeLimit))
+                        // 关于与系统诊断卡片 (保留在首页下方)
+                        item {
+                            AboutAndSystemCard(
+                                currentVersion = currentVersion,
+                                webViewInfo = webViewInfo,
+                                deviceInfo = deviceInfo,
+                                androidVersion = androidVersion,
+                                protectionLevel = protectionLevel,
+                                isCheckingUpdate = isCheckingUpdate,
+                                onCheckUpdate = {
+                                    isCheckingUpdate = true
+                                    scope.launch {
+                                        val release = fetchLatestRelease()
+                                        isCheckingUpdate = false
+                                        if (release != null) {
+                                            latestReleaseInfo = release
+                                            if (isNewerVersion(currentVersion, release.version)) {
+                                                showUpdateDialog = true
+                                            } else {
+                                                Toast.makeText(context, "当前已是最新版本！", Toast.LENGTH_SHORT).show()
+                                            }
+                                        } else {
+                                            Toast.makeText(context, "检查更新失败，请检查网络连接！", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                                onCopyUrl = {
+                                    clipboardManager.setText(AnnotatedString("https://github.com/xxxily/child-kiosk-browser"))
+                                    Toast.makeText(context, "项目地址已复制到剪贴板！", Toast.LENGTH_SHORT).show()
+                                },
+                                onOpenUrl = {
+                                    try {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/xxxily/child-kiosk-browser"))
+                                        context.startActivity(intent)
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "无法打开浏览器，请手动复制地址", Toast.LENGTH_SHORT).show()
+                                    }
                                 }
-                            }
-                        )
+                            )
+                        }
 
-                        // 每日累计限制
-                        Text("每日累计可用时长：${if (dailyLimit > 0) "${dailyLimit}分钟" else "不限"}", fontSize = 14.sp)
-                        Slider(
-                            value = dailyLimit.toFloat(),
-                            onValueChange = { dailyLimit = it.toInt() },
-                            valueRange = 0f..240f,
-                            steps = 7, // 0, 30, 60, 90, 120, 150, 180, 210, 240
-                            onValueChangeFinished = {
-                                scope.launch(Dispatchers.IO) {
-                                    val current = db.systemConfigDao().getSystemConfig() ?: SystemConfigEntity()
-                                    db.systemConfigDao().insertOrUpdateConfig(current.copy(dailyLimitMinutes = dailyLimit))
-                                }
+                        // 退出并安全解锁 (保留在首页底部)
+                        item {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            QButton(
+                                onClick = onExitKiosk,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                            ) {
+                                Text("退出并安全解锁（返回系统桌面）", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                             }
+                        }
+                    }
+                }
+                "PROTECTION" -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        ProtectionLevelCard(
+                            isDeviceOwner = isDeviceOwner,
+                            protectionMode = protectionMode,
+                            onModeChange = { mode ->
+                                protectionMode = mode
+                                KioskPrefs.setProtectionMode(context, mode)
+                                onProtectionModeChanged(mode)
+                            },
+                            onCopyScript = {
+                                clipboardManager.setText(
+                                    AnnotatedString("adb shell dpm set-device-owner com.example.childkiosk/.MyDeviceAdminReceiver")
+                                )
+                                Toast.makeText(context, "ADB 激活脚本已复制到剪贴板！", Toast.LENGTH_SHORT).show()
+                            },
+                            onGoToHomeSettings = onGoToHomeSettings
                         )
                     }
                 }
-            }
-
-            // Section 2: 安全退出验证设置
-            item {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(bottom = 12.dp)
+                "TIME_LIMIT" -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                         ) {
-                            Icon(imageVector = Icons.Default.Lock, contentDescription = "验证", tint = MaterialTheme.colorScheme.primary)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("家长身份验证配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        }
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(bottom = 12.dp)
+                                ) {
+                                    Icon(imageVector = Icons.Default.DateRange, contentDescription = "限时", tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("儿童健康使用时长限制", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(
-                                    selected = verificationMode == "MATH",
-                                    onClick = {
-                                        verificationMode = "MATH"
+                                // 单次使用时间限制
+                                Text("每次持续可用时长：${if (timeLimit > 0) "${timeLimit}分钟" else "不限"}", fontSize = 14.sp)
+                                Slider(
+                                    value = timeLimit.toFloat(),
+                                    onValueChange = { timeLimit = it.toInt() },
+                                    valueRange = 0f..120f,
+                                    steps = 7, // 0, 15, 30, 45, 60, 75, 90, 105, 120
+                                    onValueChangeFinished = {
                                         scope.launch(Dispatchers.IO) {
                                             val current = db.systemConfigDao().getSystemConfig() ?: SystemConfigEntity()
-                                            db.systemConfigDao().insertOrUpdateConfig(current.copy(verificationMode = "MATH"))
+                                            db.systemConfigDao().insertOrUpdateConfig(current.copy(timeLimitMinutes = timeLimit))
                                         }
                                     }
                                 )
-                                Text("动态口算题")
-                            }
 
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(
-                                    selected = verificationMode == "PIN",
-                                    onClick = {
-                                        if (config?.pinHash.isNullOrEmpty()) {
-                                            // 必须先配置 PIN 才能切换
-                                            showPinSetupDialog = true
-                                        } else {
-                                            verificationMode = "PIN"
-                                            scope.launch(Dispatchers.IO) {
-                                                val current = db.systemConfigDao().getSystemConfig() ?: SystemConfigEntity()
-                                                db.systemConfigDao().insertOrUpdateConfig(current.copy(verificationMode = "PIN"))
+                                // 每日累计限制
+                                Text("每日累计可用时长：${if (dailyLimit > 0) "${dailyLimit}分钟" else "不限"}", fontSize = 14.sp)
+                                Slider(
+                                    value = dailyLimit.toFloat(),
+                                    onValueChange = { dailyLimit = it.toInt() },
+                                    valueRange = 0f..240f,
+                                    steps = 7, // 0, 30, 60, 90, 120, 150, 180, 210, 240
+                                    onValueChangeFinished = {
+                                        scope.launch(Dispatchers.IO) {
+                                            val current = db.systemConfigDao().getSystemConfig() ?: SystemConfigEntity()
+                                            db.systemConfigDao().insertOrUpdateConfig(current.copy(dailyLimitMinutes = dailyLimit))
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                "VERIFICATION" -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(bottom = 12.dp)
+                                ) {
+                                    Icon(imageVector = Icons.Default.VerifiedUser, contentDescription = "验证", tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("家长身份验证配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        RadioButton(
+                                            selected = verificationMode == "MATH",
+                                            onClick = {
+                                                verificationMode = "MATH"
+                                                scope.launch(Dispatchers.IO) {
+                                                    val current = db.systemConfigDao().getSystemConfig() ?: SystemConfigEntity()
+                                                    db.systemConfigDao().insertOrUpdateConfig(current.copy(verificationMode = "MATH"))
+                                                }
+                                            }
+                                        )
+                                        Text("动态口算题")
+                                    }
+
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        RadioButton(
+                                            selected = verificationMode == "PIN",
+                                            onClick = {
+                                                if (config?.pinHash.isNullOrEmpty()) {
+                                                    // 必须先配置 PIN 才能切换
+                                                    showPinSetupDialog = true
+                                                } else {
+                                                    verificationMode = "PIN"
+                                                    scope.launch(Dispatchers.IO) {
+                                                        val current = db.systemConfigDao().getSystemConfig() ?: SystemConfigEntity()
+                                                        db.systemConfigDao().insertOrUpdateConfig(current.copy(verificationMode = "PIN"))
+                                                    }
+                                                }
+                                            }
+                                        )
+                                        Text("数字 PIN 码")
+                                    }
+                                }
+
+                                if (!config?.pinHash.isNullOrEmpty()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    TextButton(onClick = { showPinSetupDialog = true }) {
+                                        Icon(imageVector = Icons.Default.Settings, contentDescription = "修改")
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("修改家长数字 PIN 码")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                "INTERFACE" -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // 屏幕显示方向配置
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(bottom = 12.dp)
+                                ) {
+                                    Icon(imageVector = Icons.Default.Refresh, contentDescription = "方向", tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("屏幕显示方向", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                var orientationMode by remember { mutableStateOf(KioskPrefs.getOrientationMode(context)) }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        RadioButton(
+                                            selected = orientationMode == KioskPrefs.ORIENTATION_AUTO,
+                                            onClick = {
+                                                orientationMode = KioskPrefs.ORIENTATION_AUTO
+                                                KioskPrefs.setOrientationMode(context, KioskPrefs.ORIENTATION_AUTO)
+                                                (context as? android.app.Activity)?.requestedOrientation =
+                                                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
+                                            }
+                                        )
+                                        Text("自适应")
+                                    }
+
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        RadioButton(
+                                            selected = orientationMode == KioskPrefs.ORIENTATION_LANDSCAPE,
+                                            onClick = {
+                                                orientationMode = KioskPrefs.ORIENTATION_LANDSCAPE
+                                                KioskPrefs.setOrientationMode(context, KioskPrefs.ORIENTATION_LANDSCAPE)
+                                                (context as? android.app.Activity)?.requestedOrientation =
+                                                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                            }
+                                        )
+                                        Text("横屏")
+                                    }
+
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        RadioButton(
+                                            selected = orientationMode == KioskPrefs.ORIENTATION_PORTRAIT,
+                                            onClick = {
+                                                orientationMode = KioskPrefs.ORIENTATION_PORTRAIT
+                                                KioskPrefs.setOrientationMode(context, KioskPrefs.ORIENTATION_PORTRAIT)
+                                                (context as? android.app.Activity)?.requestedOrientation =
+                                                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                                            }
+                                        )
+                                        Text("竖屏")
+                                    }
+                                }
+                            }
+                        }
+
+                        // 首屏图标显示大小配置
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(bottom = 12.dp)
+                                ) {
+                                    Icon(imageVector = Icons.Default.Menu, contentDescription = "图标", tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("首屏图标显示大小", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                var iconSizeMode by remember { mutableStateOf(KioskPrefs.getIconSizeMode(context)) }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        RadioButton(
+                                            selected = iconSizeMode == KioskPrefs.ICON_SIZE_SMALL,
+                                            onClick = {
+                                                iconSizeMode = KioskPrefs.ICON_SIZE_SMALL
+                                                KioskPrefs.setIconSizeMode(context, KioskPrefs.ICON_SIZE_SMALL)
+                                            }
+                                        )
+                                        Text("小")
+                                    }
+
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        RadioButton(
+                                            selected = iconSizeMode == KioskPrefs.ICON_SIZE_MEDIUM,
+                                            onClick = {
+                                                iconSizeMode = KioskPrefs.ICON_SIZE_MEDIUM
+                                                KioskPrefs.setIconSizeMode(context, KioskPrefs.ICON_SIZE_MEDIUM)
+                                            }
+                                        )
+                                        Text("中")
+                                    }
+
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        RadioButton(
+                                            selected = iconSizeMode == KioskPrefs.ICON_SIZE_LARGE,
+                                            onClick = {
+                                                iconSizeMode = KioskPrefs.ICON_SIZE_LARGE
+                                                KioskPrefs.setIconSizeMode(context, KioskPrefs.ICON_SIZE_LARGE)
+                                            }
+                                        )
+                                        Text("大")
+                                    }
+                                }
+                            }
+                        }
+
+                        // 界面配置卡片
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(imageVector = Icons.Default.Settings, contentDescription = "界面配置", tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("主页界面与网站退出行为配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                // 选项 1: 退出网站时需要家长验证
+                                var verifyOnExit by remember { mutableStateOf(KioskPrefs.getVerifyOnWebExit(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("退出网站时需要验证", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("关闭后按返回键可直接退回主页，开启则需输入家长密码", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = verifyOnExit,
+                                        onCheckedChange = {
+                                            verifyOnExit = it
+                                            KioskPrefs.setVerifyOnWebExit(context, it)
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 2: 隐藏右上角管理锁图标
+                                var hideAdminIcon by remember { mutableStateOf(KioskPrefs.getHideAdminIcon(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("隐藏右上角管理锁图标", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("隐藏后，主页右上角锁头将消失，只能通过快速盲点击该区域 5 次进入后台", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = hideAdminIcon,
+                                        onCheckedChange = {
+                                            hideAdminIcon = it
+                                            KioskPrefs.setHideAdminIcon(context, it)
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 3: 标题配置
+                                var mainTitleText by remember { mutableStateOf(KioskPrefs.getMainTitleText(context)) }
+                                var hideMainTitle by remember { mutableStateOf(KioskPrefs.getHideMainTitle(context)) }
+
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("隐藏主页标题文字", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Switch(
+                                            checked = hideMainTitle,
+                                            onCheckedChange = {
+                                                hideMainTitle = it
+                                                KioskPrefs.setHideMainTitle(context, it)
+                                            }
+                                        )
+                                    }
+
+                                    if (!hideMainTitle) {
+                                        OutlinedTextField(
+                                            value = mainTitleText,
+                                            onValueChange = {
+                                                mainTitleText = it
+                                                KioskPrefs.setMainTitleText(context, it)
+                                            },
+                                            label = { Text("自定义主页标题文本") },
+                                            singleLine = true,
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                "PERFORMANCE" -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(imageVector = Icons.Default.Build, contentDescription = "性能配置", tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("网页缓存与预加载优化（试验性）", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                // 选项 1: 网页预加载开关
+                                var webPreloadEnabled by remember { mutableStateOf(KioskPrefs.getWebPreloadEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("网页后台预加载", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("在主页闲置时提前载入排名前3的常用网页以实现秒开，需占用约150-300MB内存，若内存紧张建议关闭", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = webPreloadEnabled,
+                                        onCheckedChange = {
+                                            webPreloadEnabled = it
+                                            KioskPrefs.setWebPreloadEnabled(context, it)
+                                            if (!it) {
+                                                com.example.childkiosk.util.WebViewPool.clear()
                                             }
                                         }
-                                    }
-                                )
-                                Text("数字 PIN 码")
-                            }
-                        }
-
-                        if (!config?.pinHash.isNullOrEmpty()) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            TextButton(onClick = { showPinSetupDialog = true }) {
-                                Icon(imageVector = Icons.Default.Settings, contentDescription = "修改")
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("修改家长数字 PIN 码")
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Section 2.5: 屏幕显示方向配置
-            item {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(bottom = 12.dp)
-                        ) {
-                            Icon(imageVector = Icons.Default.Refresh, contentDescription = "方向", tint = MaterialTheme.colorScheme.primary)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("屏幕显示方向", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        }
-
-                        var orientationMode by remember { mutableStateOf(KioskPrefs.getOrientationMode(context)) }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(
-                                    selected = orientationMode == KioskPrefs.ORIENTATION_AUTO,
-                                    onClick = {
-                                        orientationMode = KioskPrefs.ORIENTATION_AUTO
-                                        KioskPrefs.setOrientationMode(context, KioskPrefs.ORIENTATION_AUTO)
-                                        (context as? android.app.Activity)?.requestedOrientation =
-                                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
-                                    }
-                                )
-                                Text("自适应")
-                            }
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(
-                                    selected = orientationMode == KioskPrefs.ORIENTATION_LANDSCAPE,
-                                    onClick = {
-                                        orientationMode = KioskPrefs.ORIENTATION_LANDSCAPE
-                                        KioskPrefs.setOrientationMode(context, KioskPrefs.ORIENTATION_LANDSCAPE)
-                                        (context as? android.app.Activity)?.requestedOrientation =
-                                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                                    }
-                                )
-                                Text("横屏")
-                            }
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(
-                                    selected = orientationMode == KioskPrefs.ORIENTATION_PORTRAIT,
-                                    onClick = {
-                                        orientationMode = KioskPrefs.ORIENTATION_PORTRAIT
-                                        KioskPrefs.setOrientationMode(context, KioskPrefs.ORIENTATION_PORTRAIT)
-                                        (context as? android.app.Activity)?.requestedOrientation =
-                                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                                    }
-                                )
-                                Text("竖屏")
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Section 2.6: 首屏图标显示大小配置
-            item {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(bottom = 12.dp)
-                        ) {
-                            Icon(imageVector = Icons.Default.Menu, contentDescription = "图标", tint = MaterialTheme.colorScheme.primary)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("首屏图标显示大小", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        }
-
-                        var iconSizeMode by remember { mutableStateOf(KioskPrefs.getIconSizeMode(context)) }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(
-                                    selected = iconSizeMode == KioskPrefs.ICON_SIZE_SMALL,
-                                    onClick = {
-                                        iconSizeMode = KioskPrefs.ICON_SIZE_SMALL
-                                        KioskPrefs.setIconSizeMode(context, KioskPrefs.ICON_SIZE_SMALL)
-                                    }
-                                )
-                                Text("小")
-                            }
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(
-                                    selected = iconSizeMode == KioskPrefs.ICON_SIZE_MEDIUM,
-                                    onClick = {
-                                        iconSizeMode = KioskPrefs.ICON_SIZE_MEDIUM
-                                        KioskPrefs.setIconSizeMode(context, KioskPrefs.ICON_SIZE_MEDIUM)
-                                    }
-                                )
-                                Text("中")
-                            }
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(
-                                    selected = iconSizeMode == KioskPrefs.ICON_SIZE_LARGE,
-                                    onClick = {
-                                        iconSizeMode = KioskPrefs.ICON_SIZE_LARGE
-                                        KioskPrefs.setIconSizeMode(context, KioskPrefs.ICON_SIZE_LARGE)
-                                    }
-                                )
-                                Text("大")
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Section 2.7: 退出行为与主页界面自定义配置
-            item {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(imageVector = Icons.Default.Settings, contentDescription = "界面配置", tint = MaterialTheme.colorScheme.primary)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("主页界面与网站退出行为配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        }
-
-                        // 选项 1: 退出网站时需要家长验证
-                        var verifyOnExit by remember { mutableStateOf(KioskPrefs.getVerifyOnWebExit(context)) }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("退出网站时需要验证", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                Text("关闭后按返回键可直接退回主页，开启则需输入家长密码", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            Switch(
-                                checked = verifyOnExit,
-                                onCheckedChange = {
-                                    verifyOnExit = it
-                                    KioskPrefs.setVerifyOnWebExit(context, it)
+                                    )
                                 }
-                            )
-                        }
 
-                        Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-                        // 选项 2: 隐藏右上角管理锁图标
-                        var hideAdminIcon by remember { mutableStateOf(KioskPrefs.getHideAdminIcon(context)) }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("隐藏右上角管理锁图标", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                Text("隐藏后，主页右上角锁头将消失，只能通过快速盲点击该区域 5 次进入后台", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            Switch(
-                                checked = hideAdminIcon,
-                                onCheckedChange = {
-                                    hideAdminIcon = it
-                                    KioskPrefs.setHideAdminIcon(context, it)
-                                }
-                            )
-                        }
-
-                        Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                        // 选项 3: 标题配置
-                        var mainTitleText by remember { mutableStateOf(KioskPrefs.getMainTitleText(context)) }
-                        var hideMainTitle by remember { mutableStateOf(KioskPrefs.getHideMainTitle(context)) }
-
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("隐藏主页标题文字", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                Switch(
-                                    checked = hideMainTitle,
-                                    onCheckedChange = {
-                                        hideMainTitle = it
-                                        KioskPrefs.setHideMainTitle(context, it)
+                                // 选项 2: 清理缓存
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("清理网页缓存数据", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("清除所有本地网页缓存和Cookie，释放存储空间并解决部分加载异常问题", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
-                                )
-                            }
-
-                            if (!hideMainTitle) {
-                                OutlinedTextField(
-                                    value = mainTitleText,
-                                    onValueChange = {
-                                        mainTitleText = it
-                                        KioskPrefs.setMainTitleText(context, it)
-                                    },
-                                    label = { Text("自定义主页标题文本") },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Section 2.8: WebView 性能与缓存优化配置
-            item {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(imageVector = Icons.Default.Settings, contentDescription = "性能配置", tint = MaterialTheme.colorScheme.primary)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("网页缓存与预加载优化（试验性）", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        }
-
-                        // 选项 1: 网页预加载开关
-                        var webPreloadEnabled by remember { mutableStateOf(KioskPrefs.getWebPreloadEnabled(context)) }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("网页后台预加载", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                Text("在主页闲置时提前载入排名前3的常用网页以实现秒开，需占用约150-300MB内存，若内存紧张建议关闭", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            Switch(
-                                checked = webPreloadEnabled,
-                                onCheckedChange = {
-                                    webPreloadEnabled = it
-                                    KioskPrefs.setWebPreloadEnabled(context, it)
-                                    if (!it) {
-                                        com.example.childkiosk.util.WebViewPool.clear()
-                                    }
-                                }
-                            )
-                        }
-
-                        Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                        // 选项 2: 清理缓存
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("清理网页缓存数据", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                Text("清除所有本地网页缓存和Cookie，释放存储空间并解决部分加载异常问题", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            TextButton(
-                                onClick = {
-                                    try {
-                                        android.webkit.WebView(context).apply {
-                                            clearCache(true)
-                                            destroy()
+                                    TextButton(
+                                        onClick = {
+                                            try {
+                                                android.webkit.WebView(context).apply {
+                                                    clearCache(true)
+                                                    destroy()
+                                                }
+                                                android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                                                Toast.makeText(context, "网页缓存和Cookie已清理成功！", Toast.LENGTH_SHORT).show()
+                                            } catch (e: java.lang.Exception) {
+                                                Toast.makeText(context, "清理失败：${e.message}", Toast.LENGTH_SHORT).show()
+                                            }
                                         }
-                                        android.webkit.CookieManager.getInstance().removeAllCookies(null)
-                                        Toast.makeText(context, "网页缓存和Cookie已清理成功！", Toast.LENGTH_SHORT).show()
-                                    } catch (e: java.lang.Exception) {
-                                        Toast.makeText(context, "清理失败：${e.message}", Toast.LENGTH_SHORT).show()
+                                    ) {
+                                        Icon(imageVector = Icons.Default.Delete, contentDescription = "清理")
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("立即清理")
                                     }
                                 }
-                            ) {
-                                Icon(imageVector = Icons.Default.Delete, contentDescription = "清理")
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("立即清理")
                             }
                         }
                     }
                 }
-            }
+                "WHITELIST" -> {
+                    // 应用白名单二级单独页面，带分类 Tab 过滤和展示
+                    var selectedSubCategory by remember { mutableStateOf("ALL") }
+                    val categories = listOf(
+                        "ALL" to "全部",
+                        WebAppEntity.CATEGORY_GAME to "游戏",
+                        WebAppEntity.CATEGORY_VIDEO to "视频",
+                        WebAppEntity.CATEGORY_BOOK to "绘本",
+                        WebAppEntity.CATEGORY_STUDY to "学习",
+                        WebAppEntity.CATEGORY_OTHER to "其他"
+                    )
 
-            // Section 3: Web 应用列表管理
-            item {
-                Text(
-                    text = "应用白名单列表",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-            }
-
-            items(webApps) { app ->
-                WebAppCard(
-                    app = app,
-                    onEdit = { editingWebApp = app },
-                    onDelete = {
-                        scope.launch(Dispatchers.IO) {
-                            db.webAppDao().deleteWebApp(app)
-                        }
-                        Toast.makeText(context, "已删除应用", Toast.LENGTH_SHORT).show()
-                    },
-                    onToggleEnabled = { enabled ->
-                        scope.launch(Dispatchers.IO) {
-                            db.webAppDao().updateWebApp(app.copy(isEnabled = enabled))
+                    val filteredApps = remember(webApps, selectedSubCategory) {
+                        if (selectedSubCategory == "ALL") {
+                            webApps
+                        } else {
+                            webApps.filter { it.category == selectedSubCategory }
                         }
                     }
-                )
-            }
 
-            // 关于与系统诊断卡片
-            item {
-                AboutAndSystemCard(
-                    currentVersion = currentVersion,
-                    webViewInfo = webViewInfo,
-                    deviceInfo = deviceInfo,
-                    androidVersion = androidVersion,
-                    protectionLevel = protectionLevel,
-                    isCheckingUpdate = isCheckingUpdate,
-                    onCheckUpdate = {
-                        isCheckingUpdate = true
-                        scope.launch {
-                            val release = fetchLatestRelease()
-                            isCheckingUpdate = false
-                            if (release != null) {
-                                latestReleaseInfo = release
-                                if (isNewerVersion(currentVersion, release.version)) {
-                                    showUpdateDialog = true
-                                } else {
-                                    Toast.makeText(context, "当前已是最新版本！", Toast.LENGTH_SHORT).show()
-                                }
-                            } else {
-                                Toast.makeText(context, "检查更新失败，请检查网络连接！", Toast.LENGTH_SHORT).show()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // 分类过滤行 (Tab 形式)
+                        ScrollableTabRow(
+                            selectedTabIndex = categories.indexOfFirst { it.first == selectedSubCategory }.coerceAtLeast(0),
+                            edgePadding = 0.dp,
+                            containerColor = Color.Transparent,
+                            divider = {}
+                        ) {
+                            categories.forEach { (catKey, catName) ->
+                                Tab(
+                                    selected = selectedSubCategory == catKey,
+                                    onClick = { selectedSubCategory = catKey },
+                                    text = { Text(catName, fontWeight = FontWeight.Bold) }
+                                )
                             }
                         }
-                    },
-                    onCopyUrl = {
-                        clipboardManager.setText(AnnotatedString("https://github.com/xxxily/child-kiosk-browser"))
-                        Toast.makeText(context, "项目地址已复制到剪贴板！", Toast.LENGTH_SHORT).show()
-                    },
-                    onOpenUrl = {
-                        try {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/xxxily/child-kiosk-browser"))
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "无法打开浏览器，请手动复制地址", Toast.LENGTH_SHORT).show()
+
+                        if (filteredApps.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("此分类下暂无应用，点击右下角按钮添加！", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                items(filteredApps) { app ->
+                                    WebAppCard(
+                                        app = app,
+                                        onEdit = { editingWebApp = app },
+                                        onDelete = {
+                                            scope.launch(Dispatchers.IO) {
+                                                db.webAppDao().deleteWebApp(app)
+                                            }
+                                            Toast.makeText(context, "已删除应用", Toast.LENGTH_SHORT).show()
+                                        },
+                                        onToggleEnabled = { enabled ->
+                                            scope.launch(Dispatchers.IO) {
+                                                db.webAppDao().updateWebApp(app.copy(isEnabled = enabled))
+                                            }
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
-                )
-            }
-
-            // Section 4: 退出并解锁
-            item {
-                Spacer(modifier = Modifier.height(8.dp))
-                QButton(
-                    onClick = onExitKiosk,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("退出并安全解锁（返回系统桌面）", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -684,15 +845,15 @@ fun AdminConsoleScreen(
                 showAddDialog = false
                 editingWebApp = null
             },
-            onSave = { title, url, icon ->
+            onSave = { title, url, icon, category ->
                 scope.launch(Dispatchers.IO) {
                     if (appToEdit == null) {
                         db.webAppDao().insertWebApp(
-                            WebAppEntity(title = title, url = url, iconPath = icon, isPreset = false)
+                            WebAppEntity(title = title, url = url, iconPath = icon, isPreset = false, category = category)
                         )
                     } else {
                         db.webAppDao().updateWebApp(
-                            appToEdit.copy(title = title, url = url, iconPath = icon)
+                            appToEdit.copy(title = title, url = url, iconPath = icon, category = category)
                         )
                     }
                 }
@@ -728,6 +889,50 @@ fun AdminConsoleScreen(
         UpdateDialog(
             releaseInfo = latestReleaseInfo!!,
             onDismiss = { showUpdateDialog = false }
+        )
+    }
+}
+
+/**
+ * 带有图标和箭头的层级管理列表项
+ */
+@Composable
+fun AdminMenuItem(
+    icon: ImageVector,
+    title: String,
+    summary: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.primaryContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = title,
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+        Spacer(modifier = Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(summary, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Icon(
+            imageVector = Icons.Default.KeyboardArrowRight,
+            contentDescription = "详情",
+            tint = MaterialTheme.colorScheme.outline
         )
     }
 }
@@ -948,12 +1153,28 @@ fun WebAppCard(
                 Spacer(modifier = Modifier.width(16.dp))
 
                 Column {
-                    Text(
-                        text = app.title,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = app.title,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "${WebAppEntity.getCategoryEmoji(app.category)} ${WebAppEntity.getCategoryDisplayName(app.category)}",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = app.url,
@@ -1029,10 +1250,11 @@ private fun formatUrl(url: String): String {
 fun AddEditWebAppDialog(
     app: WebAppEntity?,
     onDismiss: () -> Unit,
-    onSave: (title: String, url: String, icon: String) -> Unit
+    onSave: (title: String, url: String, icon: String, category: String) -> Unit
 ) {
     var title by remember { mutableStateOf(app?.title ?: "") }
     var urlInput by remember { mutableStateOf(app?.url ?: "") }
+    var category by remember { mutableStateOf(app?.category ?: WebAppEntity.CATEGORY_GAME) }
     
     // 如果已有应用且 iconPath 是网络地址，初始化 customIconUrl，否则为空
     var customIconUrl by remember { 
@@ -1139,6 +1361,43 @@ fun AddEditWebAppDialog(
                         color = if (pingFailedOnce) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
                         fontSize = 12.sp
                     )
+                }
+
+                // 分类选择
+                Text("选择应用分类：", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    val categories = listOf(
+                        WebAppEntity.CATEGORY_GAME to "游戏",
+                        WebAppEntity.CATEGORY_VIDEO to "视频",
+                        WebAppEntity.CATEGORY_BOOK to "绘本",
+                        WebAppEntity.CATEGORY_STUDY to "学习",
+                        WebAppEntity.CATEGORY_OTHER to "其他"
+                    )
+                    categories.forEach { (catKey, catName) ->
+                        val isSelected = category == catKey
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (isSelected) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                                )
+                                .clickable { category = catKey }
+                                .padding(vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = catName,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
 
                 // 图标选择
@@ -1316,7 +1575,7 @@ fun AddEditWebAppDialog(
 
                             if (pingFailedOnce) {
                                 // 第二次点击：强行保存
-                                onSave(title, formattedUrl, selectedIcon)
+                                onSave(title, formattedUrl, selectedIcon, category)
                                 return@Button
                             }
 
@@ -1330,7 +1589,7 @@ fun AddEditWebAppDialog(
                                     pingFailedOnce = true
                                     urlError = "警告：目标链接可能无法访问，再次点击将直接保存。"
                                 } else {
-                                    onSave(title, formattedUrl, selectedIcon)
+                                    onSave(title, formattedUrl, selectedIcon, category)
                                 }
                             }
                         },

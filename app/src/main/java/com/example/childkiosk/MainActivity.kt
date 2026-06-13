@@ -1,5 +1,6 @@
 package com.example.childkiosk
 
+import android.app.ActivityManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
@@ -35,6 +36,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var dpm: DevicePolicyManager
     private lateinit var adminComponent: ComponentName
+    private var isSoftLockDeferred = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // 0. 早期屏幕方向设置，避免启动闪烁
@@ -114,7 +116,13 @@ class MainActivity : ComponentActivity() {
                             isDeviceOwner = dpm.isDeviceOwnerApp(packageName),
                             onBack = { currentScreen = "MAIN" },
                             onExitKiosk = { stopLockTaskMode() },
-                            onGoToHomeSettings = { openHomeSettings() }
+                            onGoToHomeSettings = { openHomeSettings() },
+                            onProtectionModeChanged = { mode ->
+                                if (mode == KioskPrefs.MODE_SOFT_LOCK) {
+                                    isSoftLockDeferred = false
+                                    triggerKioskIfNeeded()
+                                }
+                            }
                         )
                     }
                 }
@@ -125,19 +133,47 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         SystemUiHelper.enterImmersive(this)
+        triggerKioskIfNeeded()
+    }
+
+    private fun triggerKioskIfNeeded() {
         when {
             // Tier 1：Device Owner，企业级完全锁定
             dpm.isDeviceOwnerApp(packageName) -> setupAndStartKiosk()
             // Tier 2：无 Device Owner，按家长配置进入屏幕固定软锁
-            KioskPrefs.getProtectionMode(this) == KioskPrefs.MODE_SOFT_LOCK -> startSoftLock()
+            KioskPrefs.getProtectionMode(this) == KioskPrefs.MODE_SOFT_LOCK -> {
+                if (!isSoftLockDeferred && !isInLockTaskMode()) {
+                    startSoftLock()
+                }
+            }
             // Tier 3：纯沉浸式，无系统级锁定
             else -> { /* 仅依赖沉浸式全屏 + 自定义 Launcher + 家长验证退出 */ }
         }
     }
 
+    private fun isInLockTaskMode(): Boolean {
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
+        } else {
+            @Suppress("DEPRECATION")
+            am.isInLockTaskMode
+        }
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) SystemUiHelper.enterImmersive(this)
+        if (hasFocus) {
+            SystemUiHelper.enterImmersive(this)
+            // 如果重新获得焦点，且当前需要软锁锁定，但实际上未进入锁定状态，且并非 Device Owner，
+            // 说明用户点击了“不用了”或者主动解除了屏幕固定。
+            // 此时我们设置 isSoftLockDeferred = true 避免循环弹窗提示。
+            if (KioskPrefs.getProtectionMode(this) == KioskPrefs.MODE_SOFT_LOCK &&
+                !dpm.isDeviceOwnerApp(packageName) &&
+                !isInLockTaskMode()) {
+                isSoftLockDeferred = true
+            }
+        }
     }
 
     /**
