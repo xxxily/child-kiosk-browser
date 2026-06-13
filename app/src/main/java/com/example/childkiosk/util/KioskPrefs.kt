@@ -167,6 +167,27 @@ object KioskPrefs {
     fun isLimitFileAccessEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_file_access", true)
     fun setLimitFileAccessEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_file_access", enabled).apply()
 
+    // 4. 网页调试与开发配置
+    fun getWebDebugTool(context: Context): String = prefs(context).getString("web_debug_tool", "NONE") ?: "NONE"
+    fun setWebDebugTool(context: Context, tool: String) = prefs(context).edit().putString("web_debug_tool", tool).apply()
+
+    fun getVConsoleCdnUrl(context: Context): String =
+        prefs(context).getString("vconsole_cdn_url", "https://unpkg.com/vconsole@latest/dist/vconsole.min.js") ?: "https://unpkg.com/vconsole@latest/dist/vconsole.min.js"
+    fun setVConsoleCdnUrl(context: Context, url: String) = prefs(context).edit().putString("vconsole_cdn_url", url).apply()
+
+    fun getErudaCdnUrl(context: Context): String =
+        prefs(context).getString("eruda_cdn_url", "https://cdn.jsdelivr.net/npm/eruda") ?: "https://cdn.jsdelivr.net/npm/eruda"
+    fun setErudaCdnUrl(context: Context, url: String) = prefs(context).edit().putString("eruda_cdn_url", url).apply()
+
+    fun getCustomInjectJs(context: Context): String = prefs(context).getString("custom_inject_js", "") ?: ""
+    fun setCustomInjectJs(context: Context, js: String) = prefs(context).edit().putString("custom_inject_js", js).apply()
+
+    fun getInjectTimingMode(context: Context): String = prefs(context).getString("inject_timing_mode", "PAGE_STARTED") ?: "PAGE_STARTED"
+    fun setInjectTimingMode(context: Context, mode: String) = prefs(context).edit().putString("inject_timing_mode", mode).apply()
+
+    fun isChromeInspectEnabled(context: Context): Boolean = prefs(context).getBoolean("chrome_inspect_enabled", false)
+    fun setChromeInspectEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("chrome_inspect_enabled", enabled).apply()
+
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 }

@@ -1242,6 +1242,185 @@ fun AdminConsoleScreen(
                                 }
                             }
                         }
+
+                        // 4. 🔧 网页调试与开发配置
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(imageVector = Icons.Default.Build, contentDescription = "网页调试", tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("🔧 网页调试与开发配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                // 选项 1: USB 远程调试
+                                var chromeInspect by remember { mutableStateOf(KioskPrefs.isChromeInspectEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("启用 USB 远程调试 (Chrome Inspect)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("开启后，可连接电脑在 Chrome 输入 chrome://inspect 进行深度网页审查与断点调试", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = chromeInspect,
+                                        onCheckedChange = {
+                                            chromeInspect = it
+                                            KioskPrefs.setChromeInspectEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 2: 网页内置调试面板
+                                var debugTool by remember { mutableStateOf(KioskPrefs.getWebDebugTool(context)) }
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("网页内置调试面板", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    Text("在移动端屏幕网页中直接显示控制台按钮，方便脱离电脑直接审查网页报错", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        listOf("NONE" to "无", "VCONSOLE" to "vConsole", "ERUDA" to "Eruda", "CUSTOM" to "自定义").forEach { (key, label) ->
+                                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable {
+                                                debugTool = key
+                                                KioskPrefs.setWebDebugTool(context, key)
+                                                onSandboxLimitsChanged()
+                                            }) {
+                                                RadioButton(
+                                                    selected = debugTool == key,
+                                                    onClick = {
+                                                        debugTool = key
+                                                        KioskPrefs.setWebDebugTool(context, key)
+                                                        onSandboxLimitsChanged()
+                                                    }
+                                                )
+                                                Text(label, fontSize = 13.sp)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 动态展示输入配置
+                                if (debugTool != "NONE") {
+                                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                    // 选项 3: 脚本注入时机
+                                    var timingMode by remember { mutableStateOf(KioskPrefs.getInjectTimingMode(context)) }
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text("调试脚本注入时机", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(24.dp)
+                                        ) {
+                                            listOf("PAGE_STARTED" to "页面开始加载 (推荐)", "PAGE_FINISHED" to "页面加载完成").forEach { (key, label) ->
+                                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable {
+                                                    timingMode = key
+                                                    KioskPrefs.setInjectTimingMode(context, key)
+                                                    onSandboxLimitsChanged()
+                                                }) {
+                                                    RadioButton(
+                                                        selected = timingMode == key,
+                                                        onClick = {
+                                                            timingMode = key
+                                                            KioskPrefs.setInjectTimingMode(context, key)
+                                                            onSandboxLimitsChanged()
+                                                        }
+                                                    )
+                                                    Text(label, fontSize = 13.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    when (debugTool) {
+                                        "VCONSOLE" -> {
+                                            Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                                            var vconsoleUrl by remember { mutableStateOf(KioskPrefs.getVConsoleCdnUrl(context)) }
+                                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                Text("vConsole CDN 资源地址", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                                OutlinedTextField(
+                                                    value = vconsoleUrl,
+                                                    onValueChange = {
+                                                        vconsoleUrl = it
+                                                        KioskPrefs.setVConsoleCdnUrl(context, it)
+                                                    },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    singleLine = true,
+                                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                                                )
+                                                TextButton(
+                                                    onClick = {
+                                                        val defaultUrl = "https://unpkg.com/vconsole@latest/dist/vconsole.min.js"
+                                                        vconsoleUrl = defaultUrl
+                                                        KioskPrefs.setVConsoleCdnUrl(context, defaultUrl)
+                                                    },
+                                                    modifier = Modifier.align(Alignment.End)
+                                                ) {
+                                                    Text("重置为默认 CDN 地址", fontSize = 12.sp)
+                                                }
+                                            }
+                                        }
+                                        "ERUDA" -> {
+                                            Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                                            var erudaUrl by remember { mutableStateOf(KioskPrefs.getErudaCdnUrl(context)) }
+                                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                Text("Eruda CDN 资源地址", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                                OutlinedTextField(
+                                                    value = erudaUrl,
+                                                    onValueChange = {
+                                                        erudaUrl = it
+                                                        KioskPrefs.setErudaCdnUrl(context, it)
+                                                    },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    singleLine = true,
+                                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                                                )
+                                                TextButton(
+                                                    onClick = {
+                                                        val defaultUrl = "https://cdn.jsdelivr.net/npm/eruda"
+                                                        erudaUrl = defaultUrl
+                                                        KioskPrefs.setErudaCdnUrl(context, defaultUrl)
+                                                    },
+                                                    modifier = Modifier.align(Alignment.End)
+                                                ) {
+                                                    Text("重置为默认 CDN 地址", fontSize = 12.sp)
+                                                }
+                                            }
+                                        }
+                                        "CUSTOM" -> {
+                                            Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                                            var customJs by remember { mutableStateOf(KioskPrefs.getCustomInjectJs(context)) }
+                                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                Text("自定义注入 JavaScript 代码", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                                Text("将在设定注入时机时，作为自执行函数注入并执行", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                OutlinedTextField(
+                                                    value = customJs,
+                                                    onValueChange = {
+                                                        customJs = it
+                                                        KioskPrefs.setCustomInjectJs(context, it)
+                                                    },
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(140.dp),
+                                                    placeholder = { Text("// 在此输入您的 Javascript 代码...", fontSize = 12.sp) },
+                                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 "WHITELIST" -> {

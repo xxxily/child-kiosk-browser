@@ -558,6 +558,11 @@ private fun createSecureWebView(
     existingWebView: WebView? = null
 ): WebView {
     val webView = existingWebView ?: WebView(ctx)
+    
+    // 启用 USB 远程调试
+    val enableInspect = com.example.childkiosk.util.KioskPrefs.isChromeInspectEnabled(ctx)
+    WebView.setWebContentsDebuggingEnabled(enableInspect)
+
     return webView.apply {
         // 仅在网页未加载完成时设置暖色底色以防止白屏；已加载完的实例直接使用白色底色
         val initialBgColor = if (existingWebView != null && existingWebView.progress == 100) {
@@ -613,9 +618,12 @@ private fun createSecureWebView(
         webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                // 忽略 attach 时触发的重入的已完成加载通知，防止状态被重设为 loading 并卡死
+                // 忽略 attach 时触发 the 重入的已完成加载通知，防止状态被重设为 loading 并卡死
                 if (view != null && view.progress < 100) {
                     onLoadingStateChanged(true)
+                }
+                if (view != null) {
+                    injectDebugToolIfNeeded(view, ctx, "PAGE_STARTED")
                 }
             }
 
@@ -623,6 +631,10 @@ private fun createSecureWebView(
                 super.onPageFinished(view, url)
                 // 网页载入完成后恢复白色背景，防止无背景网页的文字无法看清
                 view?.setBackgroundColor(android.graphics.Color.WHITE)
+
+                if (view != null) {
+                    injectDebugToolIfNeeded(view, ctx, "PAGE_FINISHED")
+                }
 
                 // 针对 SPA 页面进行 DOM 渲染检测
                 view?.evaluateJavascript(
@@ -922,4 +934,70 @@ private fun LoadingErrorOverlay(
             }
         }
     }
+}
+
+private fun injectDebugToolIfNeeded(webView: WebView, context: Context, currentTiming: String) {
+    val timingMode = com.example.childkiosk.util.KioskPrefs.getInjectTimingMode(context)
+    if (timingMode != currentTiming) {
+        return
+    }
+
+    val tool = com.example.childkiosk.util.KioskPrefs.getWebDebugTool(context)
+    if (tool == "NONE") {
+        return
+    }
+
+    when (tool) {
+        "VCONSOLE" -> {
+            val cdnUrl = com.example.childkiosk.util.KioskPrefs.getVConsoleCdnUrl(context)
+            injectCdnScript(webView, cdnUrl, "new VConsole();")
+        }
+        "ERUDA" -> {
+            val cdnUrl = com.example.childkiosk.util.KioskPrefs.getErudaCdnUrl(context)
+            injectCdnScript(webView, cdnUrl, "eruda.init();")
+        }
+        "CUSTOM" -> {
+            val customJs = com.example.childkiosk.util.KioskPrefs.getCustomInjectJs(context)
+            if (customJs.isNotEmpty()) {
+                injectRawScript(webView, customJs)
+            }
+        }
+    }
+}
+
+private fun injectCdnScript(webView: WebView, cdnUrl: String, initJs: String) {
+    val js = """
+        (function() {
+            if (window.__debug_tool_injected__) return;
+            window.__debug_tool_injected__ = true;
+            
+            var script = document.createElement('script');
+            script.src = '$cdnUrl';
+            script.onload = function() {
+                try {
+                    $initJs
+                } catch(e) {
+                    console.error('Debug tool init error:', e);
+                }
+            };
+            script.onerror = function() {
+                console.error('Failed to load debug tool from CDN');
+            };
+            (document.head || document.documentElement).appendChild(script);
+        })();
+    """.trimIndent()
+    webView.evaluateJavascript(js, null)
+}
+
+private fun injectRawScript(webView: WebView, rawJs: String) {
+    val js = """
+        (function() {
+            try {
+                $rawJs
+            } catch(e) {
+                console.error('Custom script execute error:', e);
+            }
+        })();
+    """.trimIndent()
+    webView.evaluateJavascript(js, null)
 }
