@@ -63,6 +63,17 @@ fun KioskMainScreen(
     var webApps by remember { mutableStateOf<List<WebAppEntity>>(emptyList()) }
     var selectedCategory by remember { mutableStateOf("ALL") }
 
+    val isPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
+    val screenHorizontalPadding = if (isPortrait) 10.dp else 24.dp
+    val screenVerticalPadding = if (isPortrait) 16.dp else 24.dp
+    val gridContentPadding = if (isPortrait) 8.dp else 16.dp
+
+    val titlePaddingTop = if (isPortrait) 8.dp else 16.dp
+    val titlePaddingBottom = if (isPortrait) 12.dp else 24.dp
+    val spacerHeightAfterTitle = if (isPortrait) 8.dp else 24.dp
+    val tabPaddingVertical = if (isPortrait) 4.dp else 8.dp
+    val spacerHeightAfterTabs = if (isPortrait) 8.dp else 16.dp
+
     val filteredApps = remember(webApps, selectedCategory) {
         if (selectedCategory == "ALL") {
             webApps
@@ -127,7 +138,7 @@ fun KioskMainScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
+                .padding(horizontal = screenHorizontalPadding, vertical = screenVerticalPadding),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // 顶部 Title
@@ -137,10 +148,10 @@ fun KioskMainScreen(
                     fontSize = 32.sp,
                     fontWeight = FontWeight.Black,
                     color = Color(0xFF4E342E),
-                    modifier = Modifier.padding(top = 16.dp, bottom = 24.dp)
+                    modifier = Modifier.padding(top = titlePaddingTop, bottom = titlePaddingBottom)
                 )
             } else {
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(spacerHeightAfterTitle))
             }
 
             // 儿童友好型分类 Tab 过滤栏
@@ -156,7 +167,7 @@ fun KioskMainScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 8.dp)
+                    .padding(horizontal = 8.dp, vertical = tabPaddingVertical)
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -182,7 +193,7 @@ fun KioskMainScreen(
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(spacerHeightAfterTabs))
 
             if (filteredApps.isEmpty()) {
                 Box(
@@ -209,7 +220,6 @@ fun KioskMainScreen(
                     else -> 16.dp
                 }
 
-                val isPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
                 val columnsMode = if (isPortrait) {
                     when (iconSizeMode) {
                         "SMALL" -> GridCells.Fixed(3)
@@ -223,7 +233,7 @@ fun KioskMainScreen(
                 LazyVerticalGrid(
                     columns = columnsMode,
                     modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(16.dp),
+                    contentPadding = PaddingValues(gridContentPadding),
                     horizontalArrangement = Arrangement.spacedBy(gridSpacing),
                     verticalArrangement = Arrangement.spacedBy(gridSpacing)
                 ) {
