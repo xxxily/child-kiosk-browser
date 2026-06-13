@@ -11,5 +11,6 @@ data class WebAppEntity(
     @ColumnInfo(name = "url") val url: String,
     @ColumnInfo(name = "icon_path") val iconPath: String?,
     @ColumnInfo(name = "is_preset") val isPreset: Boolean = false,
+    @ColumnInfo(name = "is_enabled") val isEnabled: Boolean = true,
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis()
 )

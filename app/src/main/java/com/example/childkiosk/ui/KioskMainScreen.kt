@@ -63,7 +63,7 @@ fun KioskMainScreen(
     // 载入应用白名单
     LaunchedEffect(Unit) {
         db.webAppDao().getAllWebAppsFlow().collect { list ->
-            webApps = list
+            webApps = list.filter { it.isEnabled }
         }
     }
 

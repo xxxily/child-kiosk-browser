@@ -563,6 +563,11 @@ fun AdminConsoleScreen(
                             db.webAppDao().deleteWebApp(app)
                         }
                         Toast.makeText(context, "已删除应用", Toast.LENGTH_SHORT).show()
+                    },
+                    onToggleEnabled = { enabled ->
+                        scope.launch(Dispatchers.IO) {
+                            db.webAppDao().updateWebApp(app.copy(isEnabled = enabled))
+                        }
                     }
                 )
             }
@@ -795,7 +800,8 @@ private fun ProtectionOption(
 fun WebAppCard(
     app: WebAppEntity,
     onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onToggleEnabled: (Boolean) -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -861,7 +867,20 @@ fun WebAppCard(
                 }
             }
 
-            Row {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Switch(
+                    checked = app.isEnabled,
+                    onCheckedChange = onToggleEnabled,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = MaterialTheme.colorScheme.primary,
+                        checkedTrackColor = MaterialTheme.colorScheme.primaryContainer,
+                        uncheckedThumbColor = MaterialTheme.colorScheme.outline,
+                        uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                )
                 IconButton(onClick = onEdit) {
                     Icon(imageVector = Icons.Default.Edit, contentDescription = "编辑", tint = MaterialTheme.colorScheme.primary)
                 }
