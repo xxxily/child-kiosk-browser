@@ -86,19 +86,19 @@ abstract class AppDatabase : RoomDatabase() {
                             category = WebAppEntity.CATEGORY_STUDY
                         ),
                         WebAppEntity(
-                            title = "故宫博物院(青少版)",
-                            url = "https://www.dpm.org.cn/kids.html",
-                            iconPath = "icon_book",
+                            title = "模拟钢琴",
+                            url = "https://pages.anzz.site/app/piano/",
+                            iconPath = "icon_music",
                             isPreset = true,
-                            isEnabled = false,
-                            category = WebAppEntity.CATEGORY_BOOK
+                            isEnabled = true,
+                            category = WebAppEntity.CATEGORY_GAME
                         ),
                         WebAppEntity(
-                            title = "中华珍宝馆",
-                            url = "http://www.ltfc.net/",
-                            iconPath = "icon_paint",
+                            title = "文案荟萃",
+                            url = "https://pages.anzz.site/books/",
+                            iconPath = "icon_book",
                             isPreset = true,
-                            isEnabled = false,
+                            isEnabled = true,
                             category = WebAppEntity.CATEGORY_BOOK
                         ),
                         WebAppEntity(
@@ -126,12 +126,12 @@ abstract class AppDatabase : RoomDatabase() {
                             category = WebAppEntity.CATEGORY_BOOK
                         ),
                         WebAppEntity(
-                            title = "编程猫",
-                            url = "https://www.codemao.cn/",
-                            iconPath = "icon_gamepad",
+                            title = "img-playground",
+                            url = "https://img-playground.anzz.site",
+                            iconPath = "icon_paint",
                             isPreset = true,
-                            isEnabled = false,
-                            category = WebAppEntity.CATEGORY_GAME
+                            isEnabled = true,
+                            category = WebAppEntity.CATEGORY_STUDY
                         ),
                         WebAppEntity(
                             title = "中国科普博览",
@@ -142,12 +142,12 @@ abstract class AppDatabase : RoomDatabase() {
                             category = WebAppEntity.CATEGORY_STUDY
                         ),
                         WebAppEntity(
-                            title = "宝宝巴士官网",
-                            url = "https://www.babybus.com/",
-                            iconPath = "icon_gift",
+                            title = "CodeFlux",
+                            url = "https://code.anzz.site",
+                            iconPath = "icon_school",
                             isPreset = true,
-                            isEnabled = false,
-                            category = WebAppEntity.CATEGORY_BOOK
+                            isEnabled = true,
+                            category = WebAppEntity.CATEGORY_STUDY
                         )
                     )
                     database.webAppDao().insertAll(presetApps)

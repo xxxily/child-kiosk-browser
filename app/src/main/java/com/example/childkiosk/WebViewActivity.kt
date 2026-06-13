@@ -19,6 +19,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
@@ -180,7 +181,7 @@ fun WebViewScreen(
 
     var webApp by remember { mutableStateOf<WebAppEntity?>(null) }
     var config by remember { mutableStateOf<SystemConfigEntity?>(null) }
-    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
 
     var sslErrorUrl by remember { mutableStateOf<String?>(null) }
     var blockedUrl by remember { mutableStateOf<String?>(null) }
@@ -266,16 +267,91 @@ fun WebViewScreen(
     var loadError by remember { mutableStateOf<String?>(null) }
     var overlayShownTime by remember { mutableLongStateOf(0L) }
 
-    BackHandler(enabled = true) {
-        val wv = webViewRef
-        if (wv != null && wv.canGoBack()) {
-            wv.goBack()
-        } else {
-            if (verifyOnExit) {
-                showParentVerifyForClose = true
-            } else {
-                onClose()
+    // 多 Tab WebView 栈管理
+    val webViewStack = remember { mutableStateListOf<WebView>() }
+    val webViewRef by remember { derivedStateOf { webViewStack.lastOrNull() } }
+
+    // 自动超时逻辑：弱网环境或加载慢页面 3秒后强制关闭 loading 遮罩
+    LaunchedEffect(isPageLoading) {
+        if (isPageLoading) {
+            delay(3000)
+            isPageLoading = false
+        }
+    }
+
+    // 首次初始化主 WebView
+    val mainWebView = remember(targetUrl) {
+        if (targetUrl != "about:blank") {
+            createSecureWebView(
+                ctx = context,
+                targetUrl = targetUrl,
+                originalHost = originalHost,
+                onSslError = { sslErrorUrl = it },
+                onBlocked = { blockedUrl = it },
+                onDownloadBlocked = {
+                    Toast.makeText(context, "下载功能已受阻，若要下载应用请联系家长。", Toast.LENGTH_LONG).show()
+                },
+                onLoadingStateChanged = { loading -> isPageLoading = loading },
+                onProgressUpdate = { progress -> loadProgress = progress },
+                onError = { error -> loadError = error },
+                existingWebView = preloadEntry?.webView,
+                onCreateWindow = { newWv ->
+                    webViewStack.add(newWv)
+                }
+            ).also { wv ->
+                onWebViewReady(wv)
+                if (preloadEntry == null) {
+                    wv.loadUrl(targetUrl)
+                }
             }
+        } else null
+    }
+
+    LaunchedEffect(mainWebView) {
+        if (mainWebView != null && webViewStack.isEmpty()) {
+            webViewStack.add(mainWebView)
+        }
+    }
+
+    // 自动资源释放销毁
+    DisposableEffect(Unit) {
+        onDispose {
+            webViewStack.forEach { wv ->
+                runCatching {
+                    wv.loadUrl("about:blank")
+                    wv.clearHistory()
+                    wv.clearCache(true)
+                    (wv.parent as? ViewGroup)?.removeView(wv)
+                    wv.removeAllViews()
+                    wv.destroy()
+                }
+            }
+            webViewStack.clear()
+        }
+    }
+
+    BackHandler(enabled = true) {
+        val wv = webViewStack.lastOrNull()
+        if (wv != null) {
+            if (wv.canGoBack()) {
+                wv.goBack()
+            } else {
+                if (webViewStack.size > 1) {
+                    webViewStack.removeLast().apply {
+                        loadUrl("about:blank")
+                        clearHistory()
+                        destroy()
+                    }
+                } else {
+                    if (verifyOnExit) {
+                        showParentVerifyForClose = true
+                    } else {
+                        onClose()
+                    }
+                }
+            }
+        } else {
+            onClose()
         }
     }
 
@@ -285,31 +361,18 @@ fun WebViewScreen(
             .background(Color(0xFFFFF8E1)) // 暖色底色兜底
     ) {
         if (webApp != null) {
-            AndroidView(
-                factory = { ctx ->
-                    createSecureWebView(
-                        ctx = ctx,
-                        targetUrl = targetUrl,
-                        originalHost = originalHost,
-                        onSslError = { sslErrorUrl = it },
-                        onBlocked = { blockedUrl = it },
-                        onDownloadBlocked = {
-                            Toast.makeText(ctx, "下载功能已受阻，若要下载应用请联系家长。", Toast.LENGTH_LONG).show()
-                        },
-                        onLoadingStateChanged = { loading -> isPageLoading = loading },
-                        onProgressUpdate = { progress -> loadProgress = progress },
-                        onError = { error -> loadError = error },
-                        existingWebView = preloadEntry?.webView
-                    ).also { wv ->
-                        webViewRef = wv
-                        onWebViewReady(wv)
-                        if (preloadEntry == null) {
-                            wv.loadUrl(targetUrl)
-                        }
+            webViewStack.forEachIndexed { index, wv ->
+                val isTop = index == webViewStack.lastIndex
+                AndroidView(
+                    factory = { wv },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .alpha(if (isTop) 1f else 0f),
+                    update = { view ->
+                        view.visibility = if (isTop) android.view.View.VISIBLE else android.view.View.GONE
                     }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+                )
+            }
         }
 
         // 记录遮罩开始展示时间，实现最小展示时长控制，防闪烁
@@ -556,7 +619,8 @@ private fun createSecureWebView(
     onLoadingStateChanged: (Boolean) -> Unit,
     onProgressUpdate: (Int) -> Unit,
     onError: (String) -> Unit,
-    existingWebView: WebView? = null
+    existingWebView: WebView? = null,
+    onCreateWindow: (WebView) -> Unit
 ): WebView {
     val webView = existingWebView ?: WebView(ctx)
     
@@ -756,7 +820,24 @@ private fun createSecureWebView(
                 isUserGesture: Boolean,
                 resultMsg: android.os.Message?
             ): Boolean {
-                return false
+                if (resultMsg == null) return false
+                val newWebView = createSecureWebView(
+                    ctx = ctx,
+                    targetUrl = "",
+                    originalHost = originalHost,
+                    onSslError = onSslError,
+                    onBlocked = onBlocked,
+                    onDownloadBlocked = onDownloadBlocked,
+                    onLoadingStateChanged = onLoadingStateChanged,
+                    onProgressUpdate = onProgressUpdate,
+                    onError = onError,
+                    onCreateWindow = onCreateWindow
+                )
+                onCreateWindow(newWebView)
+                val transport = resultMsg.obj as WebView.WebViewTransport
+                transport.webView = newWebView
+                resultMsg.sendToTarget()
+                return true
             }
         }
 

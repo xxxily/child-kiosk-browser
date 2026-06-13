@@ -18,6 +18,7 @@ object KioskPrefs {
 
     private const val KEY_VERIFY_ON_WEB_EXIT = "verify_on_web_exit"
     private const val KEY_HIDE_ADMIN_ICON = "hide_admin_icon"
+    private const val KEY_ADMIN_ICON_ALPHA = "admin_icon_alpha"
     private const val KEY_MAIN_TITLE_TEXT = "main_title_text"
     private const val KEY_HIDE_MAIN_TITLE = "hide_main_title"
 
@@ -76,6 +77,14 @@ object KioskPrefs {
 
     fun setHideAdminIcon(context: Context, hide: Boolean) {
         prefs(context).edit().putBoolean(KEY_HIDE_ADMIN_ICON, hide).apply()
+    }
+
+    fun getAdminIconAlpha(context: Context): Float {
+        return prefs(context).getFloat(KEY_ADMIN_ICON_ALPHA, 0.4f)
+    }
+
+    fun setAdminIconAlpha(context: Context, alpha: Float) {
+        prefs(context).edit().putFloat(KEY_ADMIN_ICON_ALPHA, alpha).apply()
     }
 
     fun getMainTitleText(context: Context): String {

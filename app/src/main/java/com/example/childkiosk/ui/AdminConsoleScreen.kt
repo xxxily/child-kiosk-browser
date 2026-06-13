@@ -704,6 +704,33 @@ fun AdminConsoleScreen(
                                     )
                                 }
 
+                                if (!hideAdminIcon) {
+                                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                                    var adminIconAlpha by remember { mutableStateOf(KioskPrefs.getAdminIconAlpha(context)) }
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text("管理锁图标透明度", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                            Text("${(adminIconAlpha * 100).toInt()}%", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                        }
+                                        Slider(
+                                            value = adminIconAlpha,
+                                            onValueChange = {
+                                                adminIconAlpha = it
+                                                KioskPrefs.setAdminIconAlpha(context, it)
+                                            },
+                                            valueRange = 0.1f..1.0f,
+                                            steps = 8
+                                        )
+                                    }
+                                }
+
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 3: 标题配置

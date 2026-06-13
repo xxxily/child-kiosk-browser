@@ -22,6 +22,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
@@ -65,14 +66,14 @@ fun KioskMainScreen(
 
     val isPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
     val screenHorizontalPadding = if (isPortrait) 10.dp else 24.dp
-    val screenVerticalPadding = if (isPortrait) 16.dp else 24.dp
+    val screenVerticalPadding = if (isPortrait) 16.dp else 12.dp
     val gridContentPadding = if (isPortrait) 8.dp else 16.dp
 
-    val titlePaddingTop = if (isPortrait) 8.dp else 16.dp
-    val titlePaddingBottom = if (isPortrait) 12.dp else 24.dp
-    val spacerHeightAfterTitle = if (isPortrait) 8.dp else 24.dp
-    val tabPaddingVertical = if (isPortrait) 4.dp else 8.dp
-    val spacerHeightAfterTabs = if (isPortrait) 8.dp else 16.dp
+    val titlePaddingTop = if (isPortrait) 8.dp else 6.dp
+    val titlePaddingBottom = if (isPortrait) 12.dp else 8.dp
+    val spacerHeightAfterTitle = if (isPortrait) 8.dp else 6.dp
+    val tabPaddingVertical = if (isPortrait) 4.dp else 4.dp
+    val spacerHeightAfterTabs = if (isPortrait) 8.dp else 8.dp
 
     val filteredApps = remember(webApps, selectedCategory) {
         if (selectedCategory == "ALL") {
@@ -121,6 +122,9 @@ fun KioskMainScreen(
     }
     val hideAdminIcon = remember {
         com.example.childkiosk.util.KioskPrefs.getHideAdminIcon(context)
+    }
+    val adminIconAlpha = remember {
+        com.example.childkiosk.util.KioskPrefs.getAdminIconAlpha(context)
     }
 
     Box(
@@ -288,7 +292,7 @@ fun KioskMainScreen(
                         containerColor = Color.White.copy(alpha = 0.8f)
                     ),
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                    modifier = Modifier.size(48.dp)
+                    modifier = Modifier.size(48.dp).alpha(adminIconAlpha)
                 ) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
