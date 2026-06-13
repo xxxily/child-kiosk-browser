@@ -16,6 +16,11 @@ object KioskPrefs {
     private const val KEY_ORIENTATION_MODE = "orientation_mode"
     private const val KEY_ICON_SIZE_MODE = "icon_size_mode"
 
+    private const val KEY_VERIFY_ON_WEB_EXIT = "verify_on_web_exit"
+    private const val KEY_HIDE_ADMIN_ICON = "hide_admin_icon"
+    private const val KEY_MAIN_TITLE_TEXT = "main_title_text"
+    private const val KEY_HIDE_MAIN_TITLE = "hide_main_title"
+
     /** 屏幕固定软锁：调用 startLockTask() 触发系统「屏幕固定」，拦截 Home/最近任务。 */
     const val MODE_SOFT_LOCK = "SOFT_LOCK"
 
@@ -55,6 +60,38 @@ object KioskPrefs {
 
     fun setIconSizeMode(context: Context, mode: String) {
         prefs(context).edit().putString(KEY_ICON_SIZE_MODE, mode).apply()
+    }
+
+    fun getVerifyOnWebExit(context: Context): Boolean {
+        return prefs(context).getBoolean(KEY_VERIFY_ON_WEB_EXIT, false)
+    }
+
+    fun setVerifyOnWebExit(context: Context, verify: Boolean) {
+        prefs(context).edit().putBoolean(KEY_VERIFY_ON_WEB_EXIT, verify).apply()
+    }
+
+    fun getHideAdminIcon(context: Context): Boolean {
+        return prefs(context).getBoolean(KEY_HIDE_ADMIN_ICON, false)
+    }
+
+    fun setHideAdminIcon(context: Context, hide: Boolean) {
+        prefs(context).edit().putBoolean(KEY_HIDE_ADMIN_ICON, hide).apply()
+    }
+
+    fun getMainTitleText(context: Context): String {
+        return prefs(context).getString(KEY_MAIN_TITLE_TEXT, "我的游戏乐园") ?: "我的游戏乐园"
+    }
+
+    fun setMainTitleText(context: Context, text: String) {
+        prefs(context).edit().putString(KEY_MAIN_TITLE_TEXT, text).apply()
+    }
+
+    fun getHideMainTitle(context: Context): Boolean {
+        return prefs(context).getBoolean(KEY_HIDE_MAIN_TITLE, false)
+    }
+
+    fun setHideMainTitle(context: Context, hide: Boolean) {
+        prefs(context).edit().putBoolean(KEY_HIDE_MAIN_TITLE, hide).apply()
     }
 
     private fun prefs(context: Context) =

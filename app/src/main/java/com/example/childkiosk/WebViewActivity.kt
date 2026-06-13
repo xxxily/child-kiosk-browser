@@ -171,6 +171,10 @@ fun WebViewScreen(
     var blockedUrl by remember { mutableStateOf<String?>(null) }
     var isTimeOut by remember { mutableStateOf(false) }
 
+    val verifyOnExit = remember {
+        com.example.childkiosk.util.KioskPrefs.getVerifyOnWebExit(context)
+    }
+
     var showParentVerifyForClose by remember { mutableStateOf(false) }
     var showParentVerifyForTimeout by remember { mutableStateOf(false) }
 
@@ -239,7 +243,11 @@ fun WebViewScreen(
         if (wv != null && wv.canGoBack()) {
             wv.goBack()
         } else {
-            showParentVerifyForClose = true
+            if (verifyOnExit) {
+                showParentVerifyForClose = true
+            } else {
+                onClose()
+            }
         }
     }
 
@@ -280,7 +288,11 @@ fun WebViewScreen(
                     if (clicks.size > 5) clicks.removeAt(0)
                     if (clicks.size == 5 && (now - clicks[0]) <= 2000) {
                         clicks.clear()
-                        showParentVerifyForClose = true
+                        if (verifyOnExit) {
+                            showParentVerifyForClose = true
+                        } else {
+                            onClose()
+                        }
                     }
                 }
         )

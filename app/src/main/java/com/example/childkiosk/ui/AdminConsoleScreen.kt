@@ -373,6 +373,103 @@ fun AdminConsoleScreen(
                 }
             }
 
+            // Section 2.7: 退出行为与主页界面自定义配置
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(imageVector = Icons.Default.Settings, contentDescription = "界面配置", tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("主页界面与网站退出行为配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        // 选项 1: 退出网站时需要家长验证
+                        var verifyOnExit by remember { mutableStateOf(KioskPrefs.getVerifyOnWebExit(context)) }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("退出网站时需要验证", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                Text("关闭后按返回键可直接退回主页，开启则需输入家长密码", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(
+                                checked = verifyOnExit,
+                                onCheckedChange = {
+                                    verifyOnExit = it
+                                    KioskPrefs.setVerifyOnWebExit(context, it)
+                                }
+                            )
+                        }
+
+                        Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                        // 选项 2: 隐藏右上角管理锁图标
+                        var hideAdminIcon by remember { mutableStateOf(KioskPrefs.getHideAdminIcon(context)) }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("隐藏右上角管理锁图标", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                Text("隐藏后，主页右上角锁头将消失，只能通过快速盲点击该区域 5 次进入后台", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(
+                                checked = hideAdminIcon,
+                                onCheckedChange = {
+                                    hideAdminIcon = it
+                                    KioskPrefs.setHideAdminIcon(context, it)
+                                }
+                            )
+                        }
+
+                        Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                        // 选项 3: 标题配置
+                        var mainTitleText by remember { mutableStateOf(KioskPrefs.getMainTitleText(context)) }
+                        var hideMainTitle by remember { mutableStateOf(KioskPrefs.getHideMainTitle(context)) }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("隐藏主页标题文字", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                Switch(
+                                    checked = hideMainTitle,
+                                    onCheckedChange = {
+                                        hideMainTitle = it
+                                        KioskPrefs.setHideMainTitle(context, it)
+                                    }
+                                )
+                            }
+
+                            if (!hideMainTitle) {
+                                OutlinedTextField(
+                                    value = mainTitleText,
+                                    onValueChange = {
+                                        mainTitleText = it
+                                        KioskPrefs.setMainTitleText(context, it)
+                                    },
+                                    label = { Text("自定义主页标题文本") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // Section 3: Web 应用列表管理
             item {
                 Text(
@@ -695,11 +792,8 @@ fun WebAppCard(
                 IconButton(onClick = onEdit) {
                     Icon(imageVector = Icons.Default.Edit, contentDescription = "编辑", tint = MaterialTheme.colorScheme.primary)
                 }
-                // 预设应用不允许删除以确保开箱可用
-                if (!app.isPreset) {
-                    IconButton(onClick = onDelete) {
-                        Icon(imageVector = Icons.Default.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
-                    }
+                IconButton(onClick = onDelete) {
+                    Icon(imageVector = Icons.Default.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
                 }
             }
         }
@@ -708,11 +802,18 @@ fun WebAppCard(
 
 fun getIconVector(iconName: String?): ImageVector {
     return when (iconName) {
-        "icon_gamepad" -> Icons.Default.PlayArrow
+        "icon_gamepad" -> Icons.Default.SportsEsports
         "icon_rocket" -> Icons.Default.Star
-        "icon_puzzle" -> Icons.Default.Face
-        "icon_book" -> Icons.Default.Home
-        "icon_paint" -> Icons.Default.Build
+        "icon_puzzle" -> Icons.Default.Extension
+        "icon_book" -> Icons.Default.MenuBook
+        "icon_paint" -> Icons.Default.Palette
+        "icon_pet" -> Icons.Default.Pets
+        "icon_music" -> Icons.Default.MusicNote
+        "icon_school" -> Icons.Default.School
+        "icon_lightbulb" -> Icons.Default.Lightbulb
+        "icon_toy" -> Icons.Default.Face
+        "icon_gift" -> Icons.Default.Favorite
+        "icon_home" -> Icons.Default.Home
         else -> Icons.Default.Star
     }
 }
@@ -858,11 +959,18 @@ fun AddEditWebAppDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     val icons = listOf(
-                        "icon_gamepad" to Icons.Default.PlayArrow,
+                        "icon_gamepad" to Icons.Default.SportsEsports,
                         "icon_rocket" to Icons.Default.Star,
-                        "icon_puzzle" to Icons.Default.Face,
-                        "icon_book" to Icons.Default.Home,
-                        "icon_paint" to Icons.Default.Build
+                        "icon_puzzle" to Icons.Default.Extension,
+                        "icon_book" to Icons.Default.MenuBook,
+                        "icon_paint" to Icons.Default.Palette,
+                        "icon_pet" to Icons.Default.Pets,
+                        "icon_music" to Icons.Default.MusicNote,
+                        "icon_school" to Icons.Default.School,
+                        "icon_lightbulb" to Icons.Default.Lightbulb,
+                        "icon_toy" to Icons.Default.Face,
+                        "icon_gift" to Icons.Default.Favorite,
+                        "icon_home" to Icons.Default.Home
                     )
 
                     icons.forEach { (name, vec) ->
@@ -893,52 +1001,100 @@ fun AddEditWebAppDialog(
                 
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (isCustomSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                                         else MaterialTheme.colorScheme.surface
+                        containerColor = if (isCustomSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f)
+                                         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
                     ),
                     border = androidx.compose.foundation.BorderStroke(
                         width = 1.dp,
                         color = if (isCustomSelected) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                                else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
                     )
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                if (customIconUrl.trim().isNotEmpty()) {
-                                    selectedIcon = customIconUrl.trim()
-                                }
-                            }
-                            .padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        RadioButton(
-                            selected = isCustomSelected,
-                            onClick = {
-                                if (customIconUrl.trim().isNotEmpty()) {
-                                    selectedIcon = customIconUrl.trim()
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    if (customIconUrl.trim().isNotEmpty()) {
+                                        selectedIcon = customIconUrl.trim()
+                                    } else {
+                                        selectedIcon = "https://example.com/favicon.ico"
+                                        customIconUrl = "https://example.com/favicon.ico"
+                                    }
+                                }
+                        ) {
+                            RadioButton(
+                                selected = isCustomSelected,
+                                onClick = {
+                                    if (customIconUrl.trim().isNotEmpty()) {
+                                        selectedIcon = customIconUrl.trim()
+                                    } else {
+                                        selectedIcon = "https://example.com/favicon.ico"
+                                        customIconUrl = "https://example.com/favicon.ico"
+                                    }
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "使用自定义网络图标",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isCustomSelected) MaterialTheme.colorScheme.primary 
+                                        else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surface),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (customIconUrl.trim().startsWith("http", ignoreCase = true)) {
+                                    coil.compose.AsyncImage(
+                                        model = customIconUrl.trim(),
+                                        contentDescription = "预览",
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                        error = androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Default.Warning)
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.Warning,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.outline
+                                    )
                                 }
                             }
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        OutlinedTextField(
-                            value = customIconUrl,
-                            onValueChange = {
-                                customIconUrl = it
-                                selectedIcon = it.trim()
-                            },
-                            label = { Text("自定义网址图标 (默认网站 favicon)") },
-                            shape = RoundedCornerShape(8.dp),
-                            singleLine = true,
-                            modifier = Modifier.weight(1f),
-                            colors = TextFieldDefaults.outlinedTextFieldColors(
-                                containerColor = Color.Transparent,
-                                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+
+                            OutlinedTextField(
+                                value = customIconUrl,
+                                onValueChange = {
+                                    customIconUrl = it
+                                    selectedIcon = it.trim()
+                                },
+                                placeholder = { Text("图标网址，例如 example.com/logo.png") },
+                                shape = RoundedCornerShape(10.dp),
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                                colors = TextFieldDefaults.outlinedTextFieldColors(
+                                    containerColor = MaterialTheme.colorScheme.surface,
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                                )
                             )
-                        )
+                        }
                     }
                 }
 

@@ -15,7 +15,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -65,6 +65,16 @@ fun KioskMainScreen(
         }
     }
 
+    val mainTitleText = remember {
+        com.example.childkiosk.util.KioskPrefs.getMainTitleText(context)
+    }
+    val hideMainTitle = remember {
+        com.example.childkiosk.util.KioskPrefs.getHideMainTitle(context)
+    }
+    val hideAdminIcon = remember {
+        com.example.childkiosk.util.KioskPrefs.getHideAdminIcon(context)
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -84,13 +94,17 @@ fun KioskMainScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // 顶部 Title
-            Text(
-                text = "🌟 我的游戏乐园 🌟",
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Black,
-                color = Color(0xFF4E342E),
-                modifier = Modifier.padding(top = 16.dp, bottom = 24.dp)
-            )
+            if (!hideMainTitle) {
+                Text(
+                    text = "🌟 $mainTitleText 🌟",
+                    fontSize = 32.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color(0xFF4E342E),
+                    modifier = Modifier.padding(top = 16.dp, bottom = 24.dp)
+                )
+            } else {
+                Spacer(modifier = Modifier.height(24.dp))
+            }
 
             if (webApps.isEmpty()) {
                 Box(
@@ -159,8 +173,32 @@ fun KioskMainScreen(
                         nextActionAfterVerify = "MENU"
                         showVerifyDialog = true
                     }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            if (!hideAdminIcon) {
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.White.copy(alpha = 0.8f)
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "家长控制",
+                            tint = Color(0xFF4E342E),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
-        )
+            }
+        }
 
         // 验证弹窗
         if (showVerifyDialog) {

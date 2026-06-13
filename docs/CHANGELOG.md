@@ -6,6 +6,29 @@
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-06-13
+
+### Added — 新增
+
+- **网站退出验证按需配置**：
+  - 新增 `verify_on_web_exit` 配置项，默认关闭退出验证。按返回键或顶部区域 5 次盲点击可以直接安全退出到主页。开启该配置则恢复之前的强制家长密码验证逻辑。
+- **右上角可交互管理锁图标**：
+  - 在主页右上角添加了精美的锁头卡片图标（当未开启隐藏时），引导家长点击进入管理后台。多次点击该锁头即可弹出家长验证框。
+  - 新增 `hide_admin_icon` 配置开关，在控制台开启隐藏后，锁头图标不显示，但仍保留盲区 5 次点击的后台入口。
+- **主页标题文字自定义与隐藏**：
+  - 新增 `main_title_text` 配置项，允许家长在后台将“我的游戏乐园”修改为任意自定义文本。
+  - 新增 `hide_main_title` 选项，支持一键隐藏主页顶部标题，让首屏布局更为纯净。
+- **内置图标库扩增**：
+  - 将内置图标数增加至 12 个，支持更多的日常分类（如星星、书本、手柄、视频、音乐、地球、相机、学校、灯泡、笑脸、心形、主页）。
+
+### Changed — 变更
+
+- **白名单应用删除限制解除**：
+  - 解除了默认预设应用（isPreset）的无法删除限制。现在所有应用均可自由删除，避免造成应用列表的锁死。
+- **自定义 Favicon 卡片排版优化与预览**：
+  - 将原来的自定义 Favicon 单行布局改为了更宽敞舒适的纵向多行布局。
+  - 引入了 56dp x 56dp 的 Coil `AsyncImage` 框进行实时图片预览。当输入有效的 HTTP/HTTPS 图片网址时，自动加载展示预览，加载失败或格式不合法时优雅显示警告，界面高档雅致。
+
 ## [0.0.3] - 2026-06-13
 
 ### Added — 新增
@@ -108,7 +131,8 @@
 - 调研报告 `docs/android_kiosk_research_report.md`
 - 需求规格 `docs/child_kiosk_browser_requirements.md`
 
-[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.3...HEAD
+[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/xxxily/child-kiosk-browser/releases/tag/v0.0.1
