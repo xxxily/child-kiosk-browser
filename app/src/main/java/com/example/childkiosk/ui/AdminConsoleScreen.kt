@@ -881,37 +881,7 @@ fun AdminConsoleScreen(
                                     }
                                 }
 
-                                // 选项 1: ADB 限制 (USB 调试)
-                                val isAdbDisabledByInspect = chromeInspect // 若开启远程 Inspect 调试，强制 ADB 放开限制
-                                val finalAdbChecked = if (isAdbDisabledByInspect) false else limitAdb
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用 USB 调试 (ADB)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        val summaryText = if (isAdbDisabledByInspect) {
-                                            "已因下方启用「USB 远程调试 (Chrome Inspect)」而强制允许连接"
-                                        } else {
-                                            "防止通过电脑连接 ADB 调试修改或强行停用、卸载本软件"
-                                        }
-                                        Text(summaryText, fontSize = 11.sp, color = if (isAdbDisabledByInspect) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Switch(
-                                        enabled = !isAdbDisabledByInspect,
-                                        checked = finalAdbChecked,
-                                        onCheckedChange = {
-                                            limitAdb = it
-                                            KioskPrefs.setLimitAdbEnabled(context, it)
-                                            onSandboxLimitsChanged()
-                                        }
-                                    )
-                                }
-
-                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                                // 选项 2: 安全模式限制
+                                // 选项 1: 安全模式限制
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1043,7 +1013,7 @@ fun AdminConsoleScreen(
 
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-                                // 选项 8: 锁屏限制
+                                // 选项 7: 锁屏限制
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1062,60 +1032,32 @@ fun AdminConsoleScreen(
                                         }
                                     )
                                 }
-                            }
-                        }
-
-                        // 2. 📱 界面与物理按键限制
-                        Card(
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                        ) {
-                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(imageVector = Icons.Default.Settings, contentDescription = "物理与界面限制", tint = MaterialTheme.colorScheme.primary)
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("📱 界面与物理按键限制", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                                }
-
-                                // 选项 1: FLAG_SECURE 防截屏/录像
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("防止截屏显示 (FLAG_SECURE)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("将窗口标志设为安全，使系统级别的截屏或录屏输出为黑色画布", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Switch(
-                                        checked = limitFlagSecure,
-                                        onCheckedChange = {
-                                            limitFlagSecure = it
-                                            KioskPrefs.setLimitFlagSecureEnabled(context, it)
-                                            onSandboxLimitsChanged()
-                                        }
-                                    )
-                                }
 
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-                                // 选项 2: 拦截声音物理按键
+                                // 选项 8: ADB 限制 (USB 调试)
+                                val isAdbDisabledByInspect = chromeInspect // 若开启远程 Inspect 调试，强制 ADB 放开限制
+                                val finalAdbChecked = if (isAdbDisabledByInspect) false else limitAdb
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("物理音量加减按键锁定", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("拦截并消费物理音量键，防止儿童在主页及网页误触把声音调过大或静音", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用 USB 调试 (ADB)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        val summaryText = if (isAdbDisabledByInspect) {
+                                            "已因下方启用「USB 远程调试 (Chrome Inspect)」而强制允许连接"
+                                        } else {
+                                            "防止通过电脑连接 ADB 调试修改或强行停用、卸载本软件"
+                                        }
+                                        Text(summaryText, fontSize = 11.sp, color = if (isAdbDisabledByInspect) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
-                                        checked = limitVolumeKeys,
+                                        enabled = !isAdbDisabledByInspect,
+                                        checked = finalAdbChecked,
                                         onCheckedChange = {
-                                            limitVolumeKeys = it
-                                            KioskPrefs.setLimitVolumeKeysEnabled(context, it)
+                                            limitAdb = it
+                                            KioskPrefs.setLimitAdbEnabled(context, it)
                                             onSandboxLimitsChanged()
                                         }
                                     )
@@ -1123,197 +1065,7 @@ fun AdminConsoleScreen(
                             }
                         }
 
-                        // 3. 🌐 网页浏览器沙箱限制
-                        Card(
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                        ) {
-                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(imageVector = Icons.Default.Build, contentDescription = "浏览器沙箱", tint = MaterialTheme.colorScheme.primary)
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("🌐 网页浏览器沙箱限制", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                                }
-
-                                // 选项 1: 广告过滤
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("网页广告与弹窗过滤", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("在网络拦截层智能匹配并阻断第三方广告、弹窗及不当 Host 请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Switch(
-                                        checked = limitAdBlock,
-                                        onCheckedChange = {
-                                            limitAdBlock = it
-                                            KioskPrefs.setLimitAdBlockEnabled(context, it)
-                                            onSandboxLimitsChanged()
-                                        }
-                                    )
-                                }
-
-                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                                // 选项 2: 下载限制
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("完全禁用网页文件下载", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("禁用网页内的文件下载监听，防止儿童点击链接下载未知应用程序", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Switch(
-                                        checked = limitDownload,
-                                        onCheckedChange = {
-                                            limitDownload = it
-                                            KioskPrefs.setLimitDownloadEnabled(context, it)
-                                            onSandboxLimitsChanged()
-                                        }
-                                    )
-                                }
-
-                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                                // 选项 3: 长按限制
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用长按文本选择与复制", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("阻断在网页长按时弹出系统「复制/分享/搜索」工具条以确保纯净浏览", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Switch(
-                                        checked = limitLongClick,
-                                        onCheckedChange = {
-                                            limitLongClick = it
-                                            KioskPrefs.setLimitLongClickEnabled(context, it)
-                                            onSandboxLimitsChanged()
-                                        }
-                                    )
-                                }
-
-                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                                // 选项 4: 域名限制跳转
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("仅允许白名单域名跳转", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("启用后，网页内点击链接将限制在当前宿主域名内，防止跳转至第三方无关外网", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Switch(
-                                        checked = limitUrlRedirect,
-                                        onCheckedChange = {
-                                            limitUrlRedirect = it
-                                            KioskPrefs.setLimitUrlRedirectEnabled(context, it)
-                                            onSandboxLimitsChanged()
-                                        }
-                                    )
-                                }
-
-                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                                // 选项 5: 地理位置限制
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用网页定位 (Geolocation)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("直接拒绝网页申请设备地理位置的权限，保护儿童隐私安全", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Switch(
-                                        checked = limitGeolocation,
-                                        onCheckedChange = {
-                                            limitGeolocation = it
-                                            KioskPrefs.setLimitGeolocationEnabled(context, it)
-                                            onSandboxLimitsChanged()
-                                        }
-                                    )
-                                }
-
-                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                                // 选项 6: 强制 SSL 校验
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("强制网页 SSL 连接安全校验", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("证书异常时直接强制安全阻断，不提供「忽略并继续访问」的逃逸入口", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Switch(
-                                        checked = limitSslCheck,
-                                        onCheckedChange = {
-                                            limitSslCheck = it
-                                            KioskPrefs.setLimitSslCheckEnabled(context, it)
-                                            onSandboxLimitsChanged()
-                                        }
-                                    )
-                                }
-
-                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                                // 选项 7: 禁止弹窗新窗口
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁止网页自动弹出新窗口", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("拦截 window.open() 类型的网页多窗口新开请求，使浏览行为限制在单页面内", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Switch(
-                                        checked = limitMultiWindow,
-                                        onCheckedChange = {
-                                            limitMultiWindow = it
-                                            KioskPrefs.setLimitMultiWindowEnabled(context, it)
-                                            onSandboxLimitsChanged()
-                                        }
-                                    )
-                                }
-
-                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                                // 选项 8: 禁止文件系统访问
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁止网页读取本地文件系统", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("限制 WebView 访问 file:// 协议以及本地多媒体资源，防御本地沙箱突破", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Switch(
-                                        checked = limitFileAccess,
-                                        onCheckedChange = {
-                                            limitFileAccess = it
-                                            KioskPrefs.setLimitFileAccessEnabled(context, it)
-                                            onSandboxLimitsChanged()
-                                        }
-                                    )
-                                }
-                            }
-                        }
-
-                        // 4. 🔧 网页调试与开发配置
+                                                // 2. 🔧 网页调试与开发配置
                         Card(
                             shape = RoundedCornerShape(16.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -1568,6 +1320,256 @@ fun AdminConsoleScreen(
                                 }
                             }
                         }
+
+                                                // 3. 📱 界面与物理按键限制
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(imageVector = Icons.Default.Settings, contentDescription = "物理与界面限制", tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("📱 界面与物理按键限制", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                // 选项 1: FLAG_SECURE 防截屏/录像
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("防止截屏显示 (FLAG_SECURE)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("将窗口标志设为安全，使系统级别的截屏或录屏输出为黑色画布", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitFlagSecure,
+                                        onCheckedChange = {
+                                            limitFlagSecure = it
+                                            KioskPrefs.setLimitFlagSecureEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 2: 拦截声音物理按键
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("物理音量加减按键锁定", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("拦截并消费物理音量键，防止儿童在主页及网页误触把声音调过大或静音", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitVolumeKeys,
+                                        onCheckedChange = {
+                                            limitVolumeKeys = it
+                                            KioskPrefs.setLimitVolumeKeysEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                                                // 4. 🌐 网页浏览器沙箱限制
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(imageVector = Icons.Default.Build, contentDescription = "浏览器沙箱", tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("🌐 网页浏览器沙箱限制", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                // 选项 1: 广告过滤
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("网页广告与弹窗过滤", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("在网络拦截层智能匹配并阻断第三方广告、弹窗及不当 Host 请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitAdBlock,
+                                        onCheckedChange = {
+                                            limitAdBlock = it
+                                            KioskPrefs.setLimitAdBlockEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 2: 下载限制
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("完全禁用网页文件下载", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("禁用网页内的文件下载监听，防止儿童点击链接下载未知应用程序", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitDownload,
+                                        onCheckedChange = {
+                                            limitDownload = it
+                                            KioskPrefs.setLimitDownloadEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 3: 长按限制
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁用长按文本选择与复制", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("阻断在网页长按时弹出系统「复制/分享/搜索」工具条以确保纯净浏览", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitLongClick,
+                                        onCheckedChange = {
+                                            limitLongClick = it
+                                            KioskPrefs.setLimitLongClickEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 4: 域名限制跳转
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("仅允许白名单域名跳转", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("启用后，网页内点击链接将限制在当前宿主域名内，防止跳转至第三方无关外网", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitUrlRedirect,
+                                        onCheckedChange = {
+                                            limitUrlRedirect = it
+                                            KioskPrefs.setLimitUrlRedirectEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 5: 地理位置限制
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁用网页定位 (Geolocation)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("直接拒绝网页申请设备地理位置的权限，保护儿童隐私安全", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitGeolocation,
+                                        onCheckedChange = {
+                                            limitGeolocation = it
+                                            KioskPrefs.setLimitGeolocationEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 6: 强制 SSL 校验
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("强制网页 SSL 连接安全校验", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("证书异常时直接强制安全阻断，不提供「忽略并继续访问」的逃逸入口", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitSslCheck,
+                                        onCheckedChange = {
+                                            limitSslCheck = it
+                                            KioskPrefs.setLimitSslCheckEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 7: 禁止弹窗新窗口
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁止网页自动弹出新窗口", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("拦截 window.open() 类型的网页多窗口新开请求，使浏览行为限制在单页面内", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitMultiWindow,
+                                        onCheckedChange = {
+                                            limitMultiWindow = it
+                                            KioskPrefs.setLimitMultiWindowEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 8: 禁止文件系统访问
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁止网页读取本地文件系统", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("限制 WebView 访问 file:// 协议以及本地多媒体资源，防御本地沙箱突破", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitFileAccess,
+                                        onCheckedChange = {
+                                            limitFileAccess = it
+                                            KioskPrefs.setLimitFileAccessEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+
                     }
                 }
                 "WHITELIST" -> {
