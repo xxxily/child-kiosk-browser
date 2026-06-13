@@ -38,6 +38,7 @@ import com.example.childkiosk.WebViewActivity
 import com.example.childkiosk.data.AppDatabase
 import com.example.childkiosk.data.SystemConfigEntity
 import com.example.childkiosk.data.WebAppEntity
+import kotlinx.coroutines.launch
 
 @Composable
 fun KioskMainScreen(
@@ -57,11 +58,28 @@ fun KioskMainScreen(
     var nextActionAfterVerify by remember { mutableStateOf("") } // "ADMIN" or "EXIT"
     
     val clicks = remember { mutableStateListOf<Long>() }
+    val scope = rememberCoroutineScope()
 
     // 载入应用白名单
     LaunchedEffect(Unit) {
         db.webAppDao().getAllWebAppsFlow().collect { list ->
             webApps = list
+        }
+    }
+
+    // 后台空闲预加载前3个常用网页 (Phase 4)
+    LaunchedEffect(webApps) {
+        val isPreloadEnabled = com.example.childkiosk.util.KioskPrefs.getWebPreloadEnabled(context)
+        if (!isPreloadEnabled || webApps.isEmpty()) return@LaunchedEffect
+
+        android.os.Looper.myQueue().addIdleHandler {
+            scope.launch {
+                webApps.take(3).forEach { app ->
+                    kotlinx.coroutines.delay(1000) // 间隔预加载，分流网络和内存开销
+                    com.example.childkiosk.util.WebViewPool.preload(app.url)
+                }
+            }
+            false
         }
     }
 

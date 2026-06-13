@@ -470,6 +470,79 @@ fun AdminConsoleScreen(
                 }
             }
 
+            // Section 2.8: WebView 性能与缓存优化配置
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(imageVector = Icons.Default.Settings, contentDescription = "性能配置", tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("网页缓存与预加载优化（试验性）", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        // 选项 1: 网页预加载开关
+                        var webPreloadEnabled by remember { mutableStateOf(KioskPrefs.getWebPreloadEnabled(context)) }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("网页后台预加载", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                Text("在主页闲置时提前载入排名前3的常用网页以实现秒开，需占用约150-300MB内存，若内存紧张建议关闭", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(
+                                checked = webPreloadEnabled,
+                                onCheckedChange = {
+                                    webPreloadEnabled = it
+                                    KioskPrefs.setWebPreloadEnabled(context, it)
+                                    if (!it) {
+                                        com.example.childkiosk.util.WebViewPool.clear()
+                                    }
+                                }
+                            )
+                        }
+
+                        Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                        // 选项 2: 清理缓存
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("清理网页缓存数据", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                Text("清除所有本地网页缓存和Cookie，释放存储空间并解决部分加载异常问题", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            TextButton(
+                                onClick = {
+                                    try {
+                                        android.webkit.WebView(context).apply {
+                                            clearCache(true)
+                                            destroy()
+                                        }
+                                        android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                                        Toast.makeText(context, "网页缓存和Cookie已清理成功！", Toast.LENGTH_SHORT).show()
+                                    } catch (e: java.lang.Exception) {
+                                        Toast.makeText(context, "清理失败：${e.message}", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            ) {
+                                Icon(imageVector = Icons.Default.Delete, contentDescription = "清理")
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("立即清理")
+                            }
+                        }
+                    }
+                }
+            }
+
             // Section 3: Web 应用列表管理
             item {
                 Text(

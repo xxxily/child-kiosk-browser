@@ -94,6 +94,22 @@ object KioskPrefs {
         prefs(context).edit().putBoolean(KEY_HIDE_MAIN_TITLE, hide).apply()
     }
 
+    fun getWebPreloadEnabled(context: Context): Boolean {
+        return prefs(context).getBoolean("web_preload_enabled", true)
+    }
+
+    fun setWebPreloadEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean("web_preload_enabled", enabled).apply()
+    }
+
+    fun getLastCacheClearTime(context: Context): Long {
+        return prefs(context).getLong("last_cache_clear_time", 0L)
+    }
+
+    fun setLastCacheClearTime(context: Context, time: Long) {
+        prefs(context).edit().putLong("last_cache_clear_time", time).apply()
+    }
+
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 }

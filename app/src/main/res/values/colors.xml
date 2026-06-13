@@ -8,4 +8,5 @@
     <color name="kiosk_red">#FF4D4D</color>
     <color name="white">#FFFFFFFF</color>
     <color name="black">#FF000000</color>
+    <color name="warm_background">#FFF8E1</color>
 </resources>

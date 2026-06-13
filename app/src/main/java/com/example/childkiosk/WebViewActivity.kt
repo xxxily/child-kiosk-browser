@@ -18,8 +18,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -238,6 +241,29 @@ fun WebViewScreen(
         runCatching { URL(targetUrl).host }.getOrNull()?.lowercase().orEmpty()
     }
 
+    // 预加载获取与加载状态管理 (Phase 4)
+    val isPreloadEnabled = remember { com.example.childkiosk.util.KioskPrefs.getWebPreloadEnabled(context) }
+    val preloadEntry = remember(targetUrl) {
+        if (isPreloadEnabled && targetUrl != "about:blank") {
+            com.example.childkiosk.util.WebViewPool.acquire(targetUrl)
+        } else null
+    }
+
+    var isPageLoading by remember { mutableStateOf(true) }
+    var loadProgress by remember { mutableIntStateOf(0) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var overlayShownTime by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(preloadEntry) {
+        if (preloadEntry != null) {
+            isPageLoading = !preloadEntry.isLoaded
+            loadProgress = preloadEntry.progress
+        } else {
+            isPageLoading = true
+            loadProgress = 0
+        }
+    }
+
     BackHandler(enabled = true) {
         val wv = webViewRef
         if (wv != null && wv.canGoBack()) {
@@ -251,7 +277,11 @@ fun WebViewScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFFFF8E1)) // 暖色底色兜底
+    ) {
         if (webApp != null) {
             AndroidView(
                 factory = { ctx ->
@@ -263,15 +293,53 @@ fun WebViewScreen(
                         onBlocked = { blockedUrl = it },
                         onDownloadBlocked = {
                             Toast.makeText(ctx, "下载功能已受阻，若要下载应用请联系家长。", Toast.LENGTH_LONG).show()
-                        }
+                        },
+                        onLoadingStateChanged = { loading -> isPageLoading = loading },
+                        onProgressUpdate = { progress -> loadProgress = progress },
+                        onError = { error -> loadError = error },
+                        existingWebView = preloadEntry?.webView
                     ).also { wv ->
                         webViewRef = wv
                         onWebViewReady(wv)
-                        wv.loadUrl(targetUrl)
+                        if (preloadEntry == null) {
+                            wv.loadUrl(targetUrl)
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxSize()
             )
+        }
+
+        // 记录遮罩开始展示时间，实现最小展示时长控制，防闪烁
+        LaunchedEffect(isPageLoading) {
+            if (isPageLoading) {
+                overlayShownTime = System.currentTimeMillis()
+            }
+        }
+
+        val shouldShowOverlay by remember {
+            derivedStateOf {
+                isPageLoading || loadError != null || (System.currentTimeMillis() - overlayShownTime < 600)
+            }
+        }
+
+        AnimatedVisibility(
+            visible = shouldShowOverlay,
+            exit = fadeOut(animationSpec = androidx.compose.animation.core.tween(400))
+        ) {
+            if (loadError != null) {
+                LoadingErrorOverlay(
+                    error = loadError!!,
+                    onRetry = {
+                        loadError = null
+                        isPageLoading = true
+                        webViewRef?.reload()
+                    },
+                    onClose = onClose
+                )
+            } else {
+                LoadingOverlay(webApp = webApp, progress = loadProgress)
+            }
         }
 
         // 右上角隐藏点击手势区域 (80dp x 80dp)
@@ -503,9 +571,17 @@ private fun createSecureWebView(
     originalHost: String,
     onSslError: (String) -> Unit,
     onBlocked: (String) -> Unit,
-    onDownloadBlocked: () -> Unit
+    onDownloadBlocked: () -> Unit,
+    onLoadingStateChanged: (Boolean) -> Unit,
+    onProgressUpdate: (Int) -> Unit,
+    onError: (String) -> Unit,
+    existingWebView: WebView? = null
 ): WebView {
-    return WebView(ctx).apply {
+    val webView = existingWebView ?: WebView(ctx)
+    return webView.apply {
+        // 设置与主题一致的底色，防止白屏闪烁
+        setBackgroundColor(android.graphics.Color.parseColor("#FFF8E1"))
+
         settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -537,11 +613,61 @@ private fun createSecureWebView(
             textZoom = 100
         }
 
-        // 禁用长按选择，防儿童误触召唤复制/分享菜单
+        // 禁用长按选择，防儿童误触
         setOnLongClickListener { true }
         isLongClickable = false
 
         webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                onLoadingStateChanged(true)
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                // 网页载入完成后恢复白色背景，防止无背景网页的文字无法看清
+                view?.setBackgroundColor(android.graphics.Color.WHITE)
+
+                // 针对 SPA 页面进行 DOM 渲染检测
+                view?.evaluateJavascript(
+                    "(document.body && document.body.children.length > 0).toString()"
+                ) { result ->
+                    if (result == "\"true\"") {
+                        onLoadingStateChanged(false)
+                    } else {
+                        // 降级机制：如果页面 DOM 在 300ms 后仍为空，强制移除遮罩
+                        postDelayed({
+                            onLoadingStateChanged(false)
+                        }, 300)
+                    }
+                }
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?
+            ) {
+                super.onReceivedError(view, request, error)
+                if (request?.isForMainFrame == true) {
+                    onError(error?.description?.toString() ?: "网络连接异常")
+                }
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?
+            ) {
+                super.onReceivedHttpError(view, request, errorResponse)
+                if (request?.isForMainFrame == true) {
+                    val code = errorResponse?.statusCode ?: 200
+                    if (code >= 400) {
+                        onError("服务器返回异常: HTTP $code")
+                    }
+                }
+            }
+
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: WebResourceRequest?
@@ -591,6 +717,14 @@ private fun createSecureWebView(
         }
 
         webChromeClient = object : WebChromeClient() {
+            override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                super.onProgressChanged(view, newProgress)
+                onProgressUpdate(newProgress)
+                if (newProgress >= 85) {
+                    onLoadingStateChanged(false)
+                }
+            }
+
             override fun onPermissionRequest(request: PermissionRequest?) {
                 request?.deny()
             }
@@ -601,13 +735,183 @@ private fun createSecureWebView(
                 isUserGesture: Boolean,
                 resultMsg: android.os.Message?
             ): Boolean {
-                // 禁止任何 window.open 弹窗
                 return false
             }
         }
 
         setDownloadListener { _, _, _, _, _ ->
             onDownloadBlocked()
+        }
+    }
+}
+
+@Composable
+private fun LoadingOverlay(
+    webApp: WebAppEntity?,
+    progress: Int
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(Color(0xFFFFF8E1), Color(0xFFFFECB3))
+                )
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            if (webApp != null) {
+                val iconPath = webApp.iconPath ?: ""
+                val isNetworkIcon = iconPath.startsWith("http://", ignoreCase = true) || 
+                                    iconPath.startsWith("https://", ignoreCase = true)
+                Box(
+                    modifier = Modifier
+                        .size(80.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFFFFF9C4)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isNetworkIcon) {
+                        coil.compose.AsyncImage(
+                            model = iconPath,
+                            contentDescription = webApp.title,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            error = androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Default.Star)
+                        )
+                    } else {
+                        val iconVector = com.example.childkiosk.ui.getIconVector(webApp.iconPath)
+                        Icon(
+                            imageVector = iconVector,
+                            contentDescription = webApp.title,
+                            tint = Color(0xFFFBC02D),
+                            modifier = Modifier.size(48.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = webApp.title,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF4E342E)
+                )
+            } else {
+                Text(
+                    text = "精彩内容正在加载中",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF4E342E)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Box(contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    progress = progress / 100f,
+                    modifier = Modifier.size(72.dp),
+                    color = Color(0xFFFBC02D),
+                    trackColor = Color(0xFFFFF9C4),
+                    strokeWidth = 6.dp
+                )
+                Text(
+                    text = "$progress%",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF4E342E)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            val tip = remember {
+                listOf(
+                    "正在为你准备精彩内容...",
+                    "马上就好啦，拍拍小手等一下 👏",
+                    "精彩即将呈现，小眼睛眨一眨 👀",
+                    "正在加载好玩的网站，准备出发 🚀",
+                    "小宝贝，稍等片刻哦，精彩内容飞奔而来 🎈"
+                ).random()
+            }
+            Text(
+                text = tip,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFF8D6E63)
+            )
+        }
+    }
+}
+
+@Composable
+private fun LoadingErrorOverlay(
+    error: String,
+    onRetry: () -> Unit,
+    onClose: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(Color(0xFFFFF8E1), Color(0xFFFFECB3))
+                )
+            )
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = null,
+                tint = Color(0xFFFF4D4D),
+                modifier = Modifier.size(80.dp)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "网络连接有点小问题哦",
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF4E342E),
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = error,
+                fontSize = 14.sp,
+                color = Color(0xFF8D6E63),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+            Spacer(modifier = Modifier.height(32.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                QButton(
+                    onClick = onRetry,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF00C853),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text("重试一下", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+                QButton(
+                    onClick = onClose,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.DarkGray,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text("返回乐园", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+            }
         }
     }
 }
