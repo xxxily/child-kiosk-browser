@@ -1,3 +1,17 @@
+## Child Kiosk Browser v0.0.8
+
+本版本紧急修复了 `v0.0.7` 升级中由于 Room 破坏性迁移导致白名单列表为空的 Bug，保证内置网站能够被正常加载。
+
+> **说明**：本 APK 使用 debug 签名，仅供调试与家庭内部部署。生产/商用请自行用正式 keystore 重新签名。
+
+### 本版本核心变化
+
+* **修复数据库破坏性迁移导致白名单为空的 Bug**：
+  - 修复了 Room 数据库从 `version = 1` 升级至 `version = 2` 触发 Destructive Migration（破坏性迁移）时，不调用 `onCreate` 回调导致内置白名单丢失的重大缺陷。我们重写并添加了 `onDestructiveMigration` 回调。
+  - 移除了在协程中直接读取未赋值全局单例 `INSTANCE` 的竞争隐患，改用协程内主动安全请求 `getInstance(context)` 的线程安全机制。
+
+---
+
 ## Child Kiosk Browser v0.0.7
 
 本版本引入了**精选国内绿色儿童网站的内置**，以及**白名单启用/禁用开关**，使家长可以更灵活、细致地管理儿童可浏览的网站内容。
