@@ -79,7 +79,7 @@ object KioskPrefs {
     }
 
     fun getMainTitleText(context: Context): String {
-        return prefs(context).getString(KEY_MAIN_TITLE_TEXT, "我的游戏乐园") ?: "我的游戏乐园"
+        return prefs(context).getString(KEY_MAIN_TITLE_TEXT, "儿童空间") ?: "儿童空间"
     }
 
     fun setMainTitleText(context: Context, text: String) {

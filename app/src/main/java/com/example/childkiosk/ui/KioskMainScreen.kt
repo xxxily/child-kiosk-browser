@@ -30,6 +30,8 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalConfiguration
+import android.content.res.Configuration
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -201,8 +203,19 @@ fun KioskMainScreen(
                     else -> 16.dp
                 }
 
+                val isPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
+                val columnsMode = if (isPortrait) {
+                    when (iconSizeMode) {
+                        "SMALL" -> GridCells.Fixed(3)
+                        "LARGE" -> GridCells.Fixed(1)
+                        else -> GridCells.Fixed(2)
+                    }
+                } else {
+                    GridCells.Adaptive(minSize = minGridSize)
+                }
+
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = minGridSize),
+                    columns = columnsMode,
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(16.dp),
                     horizontalArrangement = Arrangement.spacedBy(gridSpacing),
