@@ -179,14 +179,28 @@ object KioskPrefs {
         prefs(context).getString("eruda_cdn_url", "https://cdn.jsdelivr.net/npm/eruda") ?: "https://cdn.jsdelivr.net/npm/eruda"
     fun setErudaCdnUrl(context: Context, url: String) = prefs(context).edit().putString("eruda_cdn_url", url).apply()
 
-    fun getCustomInjectJs(context: Context): String = prefs(context).getString("custom_inject_js", "") ?: ""
-    fun setCustomInjectJs(context: Context, js: String) = prefs(context).edit().putString("custom_inject_js", js).apply()
-
     fun getInjectTimingMode(context: Context): String = prefs(context).getString("inject_timing_mode", "PAGE_STARTED") ?: "PAGE_STARTED"
     fun setInjectTimingMode(context: Context, mode: String) = prefs(context).edit().putString("inject_timing_mode", mode).apply()
 
     fun isChromeInspectEnabled(context: Context): Boolean = prefs(context).getBoolean("chrome_inspect_enabled", false)
     fun setChromeInspectEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("chrome_inspect_enabled", enabled).apply()
+
+    // 5. 家长操作验证机制
+    fun getVerifyAdminActions(context: Context): Boolean = prefs(context).getBoolean("verify_admin_actions", true)
+    fun setVerifyAdminActions(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("verify_admin_actions", enabled).apply()
+
+    // 6. 自定义独立 JS 注入配置
+    fun isCustomJsInjectEnabled(context: Context): Boolean = prefs(context).getBoolean("custom_js_inject_enabled", false)
+    fun setCustomJsInjectEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("custom_js_inject_enabled", enabled).apply()
+
+    fun getCustomJsInjectTiming(context: Context): String = prefs(context).getString("custom_js_inject_timing", "PAGE_STARTED") ?: "PAGE_STARTED"
+    fun setCustomJsInjectTiming(context: Context, timing: String) = prefs(context).edit().putString("custom_js_inject_timing", timing).apply()
+
+    fun getCustomJsInjectUrl(context: Context): String = prefs(context).getString("custom_js_inject_url", "") ?: ""
+    fun setCustomJsInjectUrl(context: Context, url: String) = prefs(context).edit().putString("custom_js_inject_url", url).apply()
+
+    fun getCustomJsInjectCode(context: Context): String = prefs(context).getString("custom_js_inject_code", "") ?: ""
+    fun setCustomJsInjectCode(context: Context, code: String) = prefs(context).edit().putString("custom_js_inject_code", code).apply()
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

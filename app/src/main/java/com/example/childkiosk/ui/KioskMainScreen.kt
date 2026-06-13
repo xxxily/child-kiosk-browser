@@ -240,9 +240,14 @@ fun KioskMainScreen(
                     }
                     if (clicks.size == 5 && (now - clicks[0]) <= 2000) {
                         clicks.clear()
-                        // 弹窗家长验证
-                        nextActionAfterVerify = "MENU"
-                        showVerifyDialog = true
+                        if (com.example.childkiosk.util.KioskPrefs.getVerifyAdminActions(context)) {
+                            // 弹窗家长验证
+                            nextActionAfterVerify = "MENU"
+                            showVerifyDialog = true
+                        } else {
+                            // 免验证直接进入菜单
+                            showMenuDialog = true
+                        }
                     }
                 },
             contentAlignment = Alignment.Center

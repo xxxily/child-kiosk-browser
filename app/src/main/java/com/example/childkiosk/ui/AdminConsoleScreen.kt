@@ -390,6 +390,7 @@ fun AdminConsoleScreen(
                     }
                 }
                 "VERIFICATION" -> {
+                    var verifyAdminActions by remember { mutableStateOf(KioskPrefs.getVerifyAdminActions(context)) }
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -455,6 +456,54 @@ fun AdminConsoleScreen(
                                         Icon(imageVector = Icons.Default.Settings, contentDescription = "修改")
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text("修改家长数字 PIN 码")
+                                    }
+                                }
+                            }
+                        }
+
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(imageVector = Icons.Default.Security, contentDescription = "验证安全", tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("家长验证限制开关", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("启用家长验证限制", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("若关闭，则进入后台或退出时免除验证，极大提升开发配置效率", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = verifyAdminActions,
+                                        onCheckedChange = {
+                                            verifyAdminActions = it
+                                            KioskPrefs.setVerifyAdminActions(context, it)
+                                        }
+                                    )
+                                }
+
+                                if (!verifyAdminActions) {
+                                    Card(
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = "⚠️ 警告：关闭验证后，任何人多次点击管理锁图标均可直接进入配置后台或退出应用，防逃逸安全机制将失效。建议仅在开发调试配置阶段临时关闭，日常使用请务必开启！",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onErrorContainer,
+                                            modifier = Modifier.padding(12.dp)
+                                        )
                                     }
                                 }
                             }
@@ -765,6 +814,37 @@ fun AdminConsoleScreen(
                     }
                 }
                 "SANDBOX_LIMITS" -> {
+                    // 统一提升 State，方便联动与修改
+                    var limitAdb by remember { mutableStateOf(KioskPrefs.isLimitAdbEnabled(context)) }
+                    var limitSafeBoot by remember { mutableStateOf(KioskPrefs.isLimitSafeBootEnabled(context)) }
+                    var limitFactoryReset by remember { mutableStateOf(KioskPrefs.isLimitFactoryResetEnabled(context)) }
+                    var limitAddUser by remember { mutableStateOf(KioskPrefs.isLimitAddUserEnabled(context)) }
+                    var limitUsbTransfer by remember { mutableStateOf(KioskPrefs.isLimitUsbTransferEnabled(context)) }
+                    var limitScreenshot by remember { mutableStateOf(KioskPrefs.isLimitScreenshotEnabled(context)) }
+                    var limitStatusBar by remember { mutableStateOf(KioskPrefs.isLimitStatusBarEnabled(context)) }
+                    var limitKeyguard by remember { mutableStateOf(KioskPrefs.isLimitKeyguardEnabled(context)) }
+
+                    var limitFlagSecure by remember { mutableStateOf(KioskPrefs.isLimitFlagSecureEnabled(context)) }
+                    var limitVolumeKeys by remember { mutableStateOf(KioskPrefs.isLimitVolumeKeysEnabled(context)) }
+
+                    var limitAdBlock by remember { mutableStateOf(KioskPrefs.isLimitAdBlockEnabled(context)) }
+                    var limitDownload by remember { mutableStateOf(KioskPrefs.isLimitDownloadEnabled(context)) }
+                    var limitLongClick by remember { mutableStateOf(KioskPrefs.isLimitLongClickEnabled(context)) }
+                    var limitUrlRedirect by remember { mutableStateOf(KioskPrefs.isLimitUrlRedirectEnabled(context)) }
+                    var limitGeolocation by remember { mutableStateOf(KioskPrefs.isLimitGeolocationEnabled(context)) }
+                    var limitSslCheck by remember { mutableStateOf(KioskPrefs.isLimitSslCheckEnabled(context)) }
+                    var limitMultiWindow by remember { mutableStateOf(KioskPrefs.isLimitMultiWindowEnabled(context)) }
+                    var limitFileAccess by remember { mutableStateOf(KioskPrefs.isLimitFileAccessEnabled(context)) }
+
+                    var chromeInspect by remember { mutableStateOf(KioskPrefs.isChromeInspectEnabled(context)) }
+                    var debugTool by remember { mutableStateOf(KioskPrefs.getWebDebugTool(context)) }
+                    var timingMode by remember { mutableStateOf(KioskPrefs.getInjectTimingMode(context)) }
+
+                    var customJsInjectEnabled by remember { mutableStateOf(KioskPrefs.isCustomJsInjectEnabled(context)) }
+                    var customJsInjectTiming by remember { mutableStateOf(KioskPrefs.getCustomJsInjectTiming(context)) }
+                    var customJsInjectUrl by remember { mutableStateOf(KioskPrefs.getCustomJsInjectUrl(context)) }
+                    var customJsInjectCode by remember { mutableStateOf(KioskPrefs.getCustomJsInjectCode(context)) }
+
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -801,8 +881,9 @@ fun AdminConsoleScreen(
                                     }
                                 }
 
-                                // 选项 1: ADB 限制
-                                var limitAdb by remember { mutableStateOf(KioskPrefs.isLimitAdbEnabled(context)) }
+                                // 选项 1: ADB 限制 (USB 调试)
+                                val isAdbDisabledByInspect = chromeInspect // 若开启远程 Inspect 调试，强制 ADB 放开限制
+                                val finalAdbChecked = if (isAdbDisabledByInspect) false else limitAdb
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -810,10 +891,16 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("禁用 USB 调试 (ADB)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("防止通过电脑连接 ADB 调试修改或强行停用、卸载本软件", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        val summaryText = if (isAdbDisabledByInspect) {
+                                            "已因下方启用「USB 远程调试 (Chrome Inspect)」而强制允许连接"
+                                        } else {
+                                            "防止通过电脑连接 ADB 调试修改或强行停用、卸载本软件"
+                                        }
+                                        Text(summaryText, fontSize = 11.sp, color = if (isAdbDisabledByInspect) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
-                                        checked = limitAdb,
+                                        enabled = !isAdbDisabledByInspect,
+                                        checked = finalAdbChecked,
                                         onCheckedChange = {
                                             limitAdb = it
                                             KioskPrefs.setLimitAdbEnabled(context, it)
@@ -825,7 +912,6 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 2: 安全模式限制
-                                var limitSafeBoot by remember { mutableStateOf(KioskPrefs.isLimitSafeBootEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -848,7 +934,6 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 3: 恢复出厂限制
-                                var limitFactoryReset by remember { mutableStateOf(KioskPrefs.isLimitFactoryResetEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -871,7 +956,6 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 4: 多用户限制
-                                var limitAddUser by remember { mutableStateOf(KioskPrefs.isLimitAddUserEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -894,7 +978,6 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 5: USB 文件传输限制
-                                var limitUsbTransfer by remember { mutableStateOf(KioskPrefs.isLimitUsbTransferEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -917,7 +1000,6 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 6: 截图限制
-                                var limitScreenshot by remember { mutableStateOf(KioskPrefs.isLimitScreenshotEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -940,7 +1022,6 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 7: 下拉状态栏
-                                var limitStatusBar by remember { mutableStateOf(KioskPrefs.isLimitStatusBarEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -963,7 +1044,6 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 8: 锁屏限制
-                                var limitKeyguard by remember { mutableStateOf(KioskPrefs.isLimitKeyguardEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1000,7 +1080,6 @@ fun AdminConsoleScreen(
                                 }
 
                                 // 选项 1: FLAG_SECURE 防截屏/录像
-                                var limitFlagSecure by remember { mutableStateOf(KioskPrefs.isLimitFlagSecureEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1023,7 +1102,6 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 2: 拦截声音物理按键
-                                var limitVolumeKeys by remember { mutableStateOf(KioskPrefs.isLimitVolumeKeysEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1060,7 +1138,6 @@ fun AdminConsoleScreen(
                                 }
 
                                 // 选项 1: 广告过滤
-                                var limitAdBlock by remember { mutableStateOf(KioskPrefs.isLimitAdBlockEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1083,7 +1160,6 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 2: 下载限制
-                                var limitDownload by remember { mutableStateOf(KioskPrefs.isLimitDownloadEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1106,7 +1182,6 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 3: 长按限制
-                                var limitLongClick by remember { mutableStateOf(KioskPrefs.isLimitLongClickEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1129,7 +1204,6 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 4: 域名限制跳转
-                                var limitUrlRedirect by remember { mutableStateOf(KioskPrefs.isLimitUrlRedirectEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1152,7 +1226,6 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 5: 地理位置限制
-                                var limitGeolocation by remember { mutableStateOf(KioskPrefs.isLimitGeolocationEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1175,7 +1248,6 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 6: 强制 SSL 校验
-                                var limitSslCheck by remember { mutableStateOf(KioskPrefs.isLimitSslCheckEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1198,7 +1270,6 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 7: 禁止弹窗新窗口
-                                var limitMultiWindow by remember { mutableStateOf(KioskPrefs.isLimitMultiWindowEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1221,7 +1292,6 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 8: 禁止文件系统访问
-                                var limitFileAccess by remember { mutableStateOf(KioskPrefs.isLimitFileAccessEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1258,7 +1328,7 @@ fun AdminConsoleScreen(
                                 }
 
                                 // 选项 1: USB 远程调试
-                                var chromeInspect by remember { mutableStateOf(KioskPrefs.isChromeInspectEnabled(context)) }
+                                val isInspectDisabledByAdb = limitAdb // 若启用了禁用 ADB，强制不允许开启远程调试
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1266,13 +1336,24 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("启用 USB 远程调试 (Chrome Inspect)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("开启后，可连接电脑在 Chrome 输入 chrome://inspect 进行深度网页审查与断点调试", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        val summaryText = if (isInspectDisabledByAdb) {
+                                            "已因上方启用「禁用 USB 调试 (ADB)」而强制关闭"
+                                        } else {
+                                            "开启后，可连接电脑在 Chrome 输入 chrome://inspect 进行深度网页审查与断点调试"
+                                        }
+                                        Text(summaryText, fontSize = 11.sp, color = if (isInspectDisabledByAdb) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
-                                        checked = chromeInspect,
+                                        enabled = !limitAdb,
+                                        checked = if (limitAdb) false else chromeInspect,
                                         onCheckedChange = {
                                             chromeInspect = it
                                             KioskPrefs.setChromeInspectEnabled(context, it)
+                                            if (it) {
+                                                // 冲突关联：启用 Inspect 必须放开系统级 ADB 限制
+                                                limitAdb = false
+                                                KioskPrefs.setLimitAdbEnabled(context, false)
+                                            }
                                             onSandboxLimitsChanged()
                                         }
                                     )
@@ -1281,16 +1362,15 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 2: 网页内置调试面板
-                                var debugTool by remember { mutableStateOf(KioskPrefs.getWebDebugTool(context)) }
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text("网页内置调试面板", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                     Text("在移动端屏幕网页中直接显示控制台按钮，方便脱离电脑直接审查网页报错", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(24.dp)
                                     ) {
-                                        listOf("NONE" to "无", "VCONSOLE" to "vConsole", "ERUDA" to "Eruda", "CUSTOM" to "自定义").forEach { (key, label) ->
+                                        listOf("NONE" to "无", "VCONSOLE" to "vConsole", "ERUDA" to "Eruda").forEach { (key, label) ->
                                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable {
                                                 debugTool = key
                                                 KioskPrefs.setWebDebugTool(context, key)
@@ -1310,14 +1390,13 @@ fun AdminConsoleScreen(
                                     }
                                 }
 
-                                // 动态展示输入配置
+                                // 动态展示内置调试面板输入配置
                                 if (debugTool != "NONE") {
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-                                    // 选项 3: 脚本注入时机
-                                    var timingMode by remember { mutableStateOf(KioskPrefs.getInjectTimingMode(context)) }
+                                    // 选项 3: 内置调试工具注入时机
                                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        Text("调试脚本注入时机", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("调试面板注入时机", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.spacedBy(24.dp)
@@ -1397,26 +1476,94 @@ fun AdminConsoleScreen(
                                                 }
                                             }
                                         }
-                                        "CUSTOM" -> {
-                                            Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                                            var customJs by remember { mutableStateOf(KioskPrefs.getCustomInjectJs(context)) }
-                                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                Text("自定义注入 JavaScript 代码", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                                Text("将在设定注入时机时，作为自执行函数注入并执行", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                OutlinedTextField(
-                                                    value = customJs,
-                                                    onValueChange = {
-                                                        customJs = it
-                                                        KioskPrefs.setCustomInjectJs(context, it)
-                                                    },
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(140.dp),
-                                                    placeholder = { Text("// 在此输入您的 Javascript 代码...", fontSize = 12.sp) },
-                                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                                                )
+                                    }
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 5: 自定义独立 JS 注入开关
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("注入自定义开发脚本", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("允许在页面加载时注入管理员自定义编写的 JS 代码或外部 JS 链接，可与 vConsole/Eruda 共存", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = customJsInjectEnabled,
+                                        onCheckedChange = {
+                                            customJsInjectEnabled = it
+                                            KioskPrefs.setCustomJsInjectEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                if (customJsInjectEnabled) {
+                                    // 自定义脚本的注入时机
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text("自定义脚本注入时机", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(24.dp)
+                                        ) {
+                                            listOf("PAGE_STARTED" to "页面开始加载 (推荐)", "PAGE_FINISHED" to "页面加载完成").forEach { (key, label) ->
+                                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable {
+                                                    customJsInjectTiming = key
+                                                    KioskPrefs.setCustomJsInjectTiming(context, key)
+                                                    onSandboxLimitsChanged()
+                                                }) {
+                                                    RadioButton(
+                                                        selected = customJsInjectTiming == key,
+                                                        onClick = {
+                                                            customJsInjectTiming = key
+                                                            KioskPrefs.setCustomJsInjectTiming(context, key)
+                                                            onSandboxLimitsChanged()
+                                                        }
+                                                    )
+                                                    Text(label, fontSize = 13.sp)
+                                                }
                                             }
                                         }
+                                    }
+
+                                    // 外部 JS 链接 (URL)
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("自定义外部 JS 脚本链接 (URL)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("非空时将自动动态载入该外链 JS。若无需载入外部脚本请留空", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        OutlinedTextField(
+                                            value = customJsInjectUrl,
+                                            onValueChange = {
+                                                customJsInjectUrl = it
+                                                KioskPrefs.setCustomJsInjectUrl(context, it)
+                                                onSandboxLimitsChanged()
+                                            },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            singleLine = true,
+                                            placeholder = { Text("https://example.com/custom.js", fontSize = 12.sp) },
+                                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                                        )
+                                    }
+
+                                    // 自定义 JS 代码段
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("自定义注入 JavaScript 代码", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("将在设定注入时机时，作为自执行函数注入并执行。如果在上方配置了外部 JS 链接，则会等待外链脚本加载成功后 (onload) 再执行本代码段", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        OutlinedTextField(
+                                            value = customJsInjectCode,
+                                            onValueChange = {
+                                                customJsInjectCode = it
+                                                KioskPrefs.setCustomJsInjectCode(context, it)
+                                                onSandboxLimitsChanged()
+                                            },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(140.dp),
+                                            placeholder = { Text("// 在此输入您的 Javascript 代码...", fontSize = 12.sp) },
+                                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                                        )
                                     }
                                 }
                             }
@@ -2469,7 +2616,7 @@ fun AboutAndSystemCard(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("项目地址: https://github.com/xxxily/child-kiosk-browser", fontSize = 12.sp)
-                        Text("用户名称: Blaze", fontSize = 12.sp)
+                        Text("作者: Blaze", fontSize = 12.sp)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         IconButton(onClick = onCopyUrl) {

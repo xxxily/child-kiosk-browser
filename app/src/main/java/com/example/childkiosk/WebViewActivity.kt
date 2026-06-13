@@ -187,7 +187,8 @@ fun WebViewScreen(
     var isTimeOut by remember { mutableStateOf(false) }
 
     val verifyOnExit = remember {
-        com.example.childkiosk.util.KioskPrefs.getVerifyOnWebExit(context)
+        com.example.childkiosk.util.KioskPrefs.getVerifyOnWebExit(context) &&
+        com.example.childkiosk.util.KioskPrefs.getVerifyAdminActions(context)
     }
 
     var showParentVerifyForClose by remember { mutableStateOf(false) }
@@ -624,6 +625,7 @@ private fun createSecureWebView(
                 }
                 if (view != null) {
                     injectDebugToolIfNeeded(view, ctx, "PAGE_STARTED")
+                    injectCustomScriptIfNeeded(view, ctx, "PAGE_STARTED")
                 }
             }
 
@@ -634,6 +636,7 @@ private fun createSecureWebView(
 
                 if (view != null) {
                     injectDebugToolIfNeeded(view, ctx, "PAGE_FINISHED")
+                    injectCustomScriptIfNeeded(view, ctx, "PAGE_FINISHED")
                 }
 
                 // 针对 SPA 页面进行 DOM 渲染检测
@@ -956,12 +959,66 @@ private fun injectDebugToolIfNeeded(webView: WebView, context: Context, currentT
             val cdnUrl = com.example.childkiosk.util.KioskPrefs.getErudaCdnUrl(context)
             injectCdnScript(webView, cdnUrl, "eruda.init();")
         }
-        "CUSTOM" -> {
-            val customJs = com.example.childkiosk.util.KioskPrefs.getCustomInjectJs(context)
-            if (customJs.isNotEmpty()) {
-                injectRawScript(webView, customJs)
-            }
-        }
+    }
+}
+
+private fun injectCustomScriptIfNeeded(webView: WebView, context: Context, currentTiming: String) {
+    if (!com.example.childkiosk.util.KioskPrefs.isCustomJsInjectEnabled(context)) {
+        return
+    }
+    val timing = com.example.childkiosk.util.KioskPrefs.getCustomJsInjectTiming(context)
+    if (timing != currentTiming) {
+        return
+    }
+
+    val url = com.example.childkiosk.util.KioskPrefs.getCustomJsInjectUrl(context).trim()
+    val code = com.example.childkiosk.util.KioskPrefs.getCustomJsInjectCode(context).trim()
+
+    if (url.isEmpty() && code.isEmpty()) {
+        return
+    }
+
+    if (url.isNotEmpty()) {
+        // 有外链，需要先动态 append 外部 JS 链接，onload 后执行 code
+        val js = """
+            (function() {
+                if (window.__custom_script_injected__) {
+                    return;
+                }
+                window.__custom_script_injected__ = true;
+                
+                var script = document.createElement('script');
+                script.src = '$url';
+                script.onload = function() {
+                    try {
+                        $code
+                    } catch(e) {
+                        console.error('Custom injected JS code error:', e);
+                    }
+                };
+                script.onerror = function() {
+                    console.error('Failed to load custom script from URL: $url');
+                };
+                (document.head || document.documentElement).appendChild(script);
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(js, null)
+    } else {
+        // 没有外链，直接自执行 code
+        val js = """
+            (function() {
+                if (window.__custom_code_injected__) {
+                    return;
+                }
+                window.__custom_code_injected__ = true;
+                try {
+                    $code
+                } catch(e) {
+                    console.error('Custom injected JS error:', e);
+                }
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(js, null)
     }
 }
 
