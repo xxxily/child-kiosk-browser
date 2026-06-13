@@ -49,7 +49,8 @@ fun AdminConsoleScreen(
     onBack: () -> Unit,
     onExitKiosk: () -> Unit,
     onGoToHomeSettings: () -> Unit,
-    onProtectionModeChanged: (String) -> Unit = {}
+    onProtectionModeChanged: (String) -> Unit = {},
+    onSandboxLimitsChanged: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -142,8 +143,9 @@ fun AdminConsoleScreen(
                     val titleText = when (currentSubPage) {
                         "PROTECTION" -> "安全防护等级"
                         "TIME_LIMIT" -> "健康时间限制"
-                        "VERIFICATION" -> "家长验证设置"
+                         "VERIFICATION" -> "家长验证设置"
                         "INTERFACE" -> "界面与显示配置"
+                        "SANDBOX_LIMITS" -> "安全沙箱与限制"
                         "PERFORMANCE" -> "网页性能优化"
                         "WHITELIST" -> "应用白名单管理"
                         else -> "家长管理后台"
@@ -226,6 +228,13 @@ fun AdminConsoleScreen(
                                         title = "界面与显示配置",
                                         summary = "屏幕方向、首屏图标大小、隐藏标题及管理锁图标等",
                                         onClick = { currentSubPage = "INTERFACE" }
+                                    )
+                                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                                    AdminMenuItem(
+                                        icon = Icons.Default.Lock,
+                                        title = "安全沙箱与限制",
+                                        summary = "系统防逃逸、物理按键控制及网页沙箱精细配置",
+                                        onClick = { currentSubPage = "SANDBOX_LIMITS" }
                                     )
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
@@ -750,6 +759,486 @@ fun AdminConsoleScreen(
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text("立即清理")
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+                "SANDBOX_LIMITS" -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // 1. 🛡️ 系统安全防逃逸限制 (Device Owner 专享)
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(imageVector = Icons.Default.Lock, contentDescription = "系统加固", tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("🛡️ 系统安全防逃逸限制 (需 Device Owner 激活)", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                if (!isDeviceOwner) {
+                                    Card(
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = "⚠️ 设备当前未激活 Device Owner，以下系统级加固选项暂不生效。请使用电脑 ADB 激活企业模式后再行配置。",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onErrorContainer,
+                                            modifier = Modifier.padding(12.dp)
+                                        )
+                                    }
+                                }
+
+                                // 选项 1: ADB 限制
+                                var limitAdb by remember { mutableStateOf(KioskPrefs.isLimitAdbEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁用 USB 调试 (ADB)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("防止通过电脑连接 ADB 调试修改或强行停用、卸载本软件", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitAdb,
+                                        onCheckedChange = {
+                                            limitAdb = it
+                                            KioskPrefs.setLimitAdbEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 2: 安全模式限制
+                                var limitSafeBoot by remember { mutableStateOf(KioskPrefs.isLimitSafeBootEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁用安全模式启动", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("阻断通过重启设备时长按音量键进入系统「安全模式」逃逸本锁定", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitSafeBoot,
+                                        onCheckedChange = {
+                                            limitSafeBoot = it
+                                            KioskPrefs.setLimitSafeBootEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 3: 恢复出厂限制
+                                var limitFactoryReset by remember { mutableStateOf(KioskPrefs.isLimitFactoryResetEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁用系统恢复出厂设置", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("防止通过系统重置来擦除应用及家长控制配置", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitFactoryReset,
+                                        onCheckedChange = {
+                                            limitFactoryReset = it
+                                            KioskPrefs.setLimitFactoryResetEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 4: 多用户限制
+                                var limitAddUser by remember { mutableStateOf(KioskPrefs.isLimitAddUserEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁用创建及切换多用户", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("防止通过系统访客模式或副账号体系逃离本儿童桌面", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitAddUser,
+                                        onCheckedChange = {
+                                            limitAddUser = it
+                                            KioskPrefs.setLimitAddUserEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 5: USB 文件传输限制
+                                var limitUsbTransfer by remember { mutableStateOf(KioskPrefs.isLimitUsbTransferEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁用 USB 数据及文件传输", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("阻断通过 USB 连接电脑侧载安装任意其他 APK 的途径", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitUsbTransfer,
+                                        onCheckedChange = {
+                                            limitUsbTransfer = it
+                                            KioskPrefs.setLimitUsbTransferEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 6: 截图限制
+                                var limitScreenshot by remember { mutableStateOf(KioskPrefs.isLimitScreenshotEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁用系统屏幕截图与录屏", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("禁止使用系统电源键+音量键的硬性截图或录制当前屏幕", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitScreenshot,
+                                        onCheckedChange = {
+                                            limitScreenshot = it
+                                            KioskPrefs.setLimitScreenshotEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 7: 下拉状态栏
+                                var limitStatusBar by remember { mutableStateOf(KioskPrefs.isLimitStatusBarEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("完全屏蔽下拉系统状态栏", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("禁止下拉顶栏展开快捷图标，阻断通过通知和设置入口逃逸", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitStatusBar,
+                                        onCheckedChange = {
+                                            limitStatusBar = it
+                                            KioskPrefs.setLimitStatusBarEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 8: 锁屏限制
+                                var limitKeyguard by remember { mutableStateOf(KioskPrefs.isLimitKeyguardEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁用系统锁屏键盘锁 (Keyguard)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("使按电源键唤醒设备时直达本主屏幕，免受系统级锁屏干扰", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitKeyguard,
+                                        onCheckedChange = {
+                                            limitKeyguard = it
+                                            KioskPrefs.setLimitKeyguardEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        // 2. 📱 界面与物理按键限制
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(imageVector = Icons.Default.Settings, contentDescription = "物理与界面限制", tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("📱 界面与物理按键限制", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                // 选项 1: FLAG_SECURE 防截屏/录像
+                                var limitFlagSecure by remember { mutableStateOf(KioskPrefs.isLimitFlagSecureEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("防止截屏显示 (FLAG_SECURE)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("将窗口标志设为安全，使系统级别的截屏或录屏输出为黑色画布", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitFlagSecure,
+                                        onCheckedChange = {
+                                            limitFlagSecure = it
+                                            KioskPrefs.setLimitFlagSecureEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 2: 拦截声音物理按键
+                                var limitVolumeKeys by remember { mutableStateOf(KioskPrefs.isLimitVolumeKeysEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("物理音量加减按键锁定", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("拦截并消费物理音量键，防止儿童在主页及网页误触把声音调过大或静音", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitVolumeKeys,
+                                        onCheckedChange = {
+                                            limitVolumeKeys = it
+                                            KioskPrefs.setLimitVolumeKeysEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        // 3. 🌐 网页浏览器沙箱限制
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(imageVector = Icons.Default.Build, contentDescription = "浏览器沙箱", tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("🌐 网页浏览器沙箱限制", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                // 选项 1: 广告过滤
+                                var limitAdBlock by remember { mutableStateOf(KioskPrefs.isLimitAdBlockEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("网页广告与弹窗过滤", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("在网络拦截层智能匹配并阻断第三方广告、弹窗及不当 Host 请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitAdBlock,
+                                        onCheckedChange = {
+                                            limitAdBlock = it
+                                            KioskPrefs.setLimitAdBlockEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 2: 下载限制
+                                var limitDownload by remember { mutableStateOf(KioskPrefs.isLimitDownloadEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("完全禁用网页文件下载", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("禁用网页内的文件下载监听，防止儿童点击链接下载未知应用程序", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitDownload,
+                                        onCheckedChange = {
+                                            limitDownload = it
+                                            KioskPrefs.setLimitDownloadEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 3: 长按限制
+                                var limitLongClick by remember { mutableStateOf(KioskPrefs.isLimitLongClickEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁用长按文本选择与复制", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("阻断在网页长按时弹出系统「复制/分享/搜索」工具条以确保纯净浏览", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitLongClick,
+                                        onCheckedChange = {
+                                            limitLongClick = it
+                                            KioskPrefs.setLimitLongClickEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 4: 域名限制跳转
+                                var limitUrlRedirect by remember { mutableStateOf(KioskPrefs.isLimitUrlRedirectEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("仅允许白名单域名跳转", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("启用后，网页内点击链接将限制在当前宿主域名内，防止跳转至第三方无关外网", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitUrlRedirect,
+                                        onCheckedChange = {
+                                            limitUrlRedirect = it
+                                            KioskPrefs.setLimitUrlRedirectEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 5: 地理位置限制
+                                var limitGeolocation by remember { mutableStateOf(KioskPrefs.isLimitGeolocationEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁用网页定位 (Geolocation)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("直接拒绝网页申请设备地理位置的权限，保护儿童隐私安全", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitGeolocation,
+                                        onCheckedChange = {
+                                            limitGeolocation = it
+                                            KioskPrefs.setLimitGeolocationEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 6: 强制 SSL 校验
+                                var limitSslCheck by remember { mutableStateOf(KioskPrefs.isLimitSslCheckEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("强制网页 SSL 连接安全校验", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("证书异常时直接强制安全阻断，不提供「忽略并继续访问」的逃逸入口", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitSslCheck,
+                                        onCheckedChange = {
+                                            limitSslCheck = it
+                                            KioskPrefs.setLimitSslCheckEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 7: 禁止弹窗新窗口
+                                var limitMultiWindow by remember { mutableStateOf(KioskPrefs.isLimitMultiWindowEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁止网页自动弹出新窗口", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("拦截 window.open() 类型的网页多窗口新开请求，使浏览行为限制在单页面内", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitMultiWindow,
+                                        onCheckedChange = {
+                                            limitMultiWindow = it
+                                            KioskPrefs.setLimitMultiWindowEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 8: 禁止文件系统访问
+                                var limitFileAccess by remember { mutableStateOf(KioskPrefs.isLimitFileAccessEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁止网页读取本地文件系统", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("限制 WebView 访问 file:// 协议以及本地多媒体资源，防御本地沙箱突破", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitFileAccess,
+                                        onCheckedChange = {
+                                            limitFileAccess = it
+                                            KioskPrefs.setLimitFileAccessEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
                                 }
                             }
                         }

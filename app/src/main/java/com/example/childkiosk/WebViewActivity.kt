@@ -65,11 +65,15 @@ class WebViewActivity : ComponentActivity() {
 
         super.onCreate(savedInstanceState)
 
-        // 防截屏逃逸
-        window.setFlags(
-            android.view.WindowManager.LayoutParams.FLAG_SECURE,
-            android.view.WindowManager.LayoutParams.FLAG_SECURE
-        )
+        // 防截屏逃逸 (根据配置)
+        if (com.example.childkiosk.util.KioskPrefs.isLimitFlagSecureEnabled(this)) {
+            window.setFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+        } else {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        }
 
         // 沉浸式全屏，隐藏状态栏与导航栏
         SystemUiHelper.enterImmersive(this)
@@ -131,6 +135,19 @@ class WebViewActivity : ComponentActivity() {
     }
 
 
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (com.example.childkiosk.util.KioskPrefs.isLimitVolumeKeysEnabled(this)) {
+            val keyCode = event.keyCode
+            if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+                if (event.action == KeyEvent.ACTION_DOWN) {
+                    Toast.makeText(this, "音量按键已被家长控制锁定", Toast.LENGTH_SHORT).show()
+                }
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
 
     override fun onDestroy() {
         rootWebView?.let {
@@ -555,18 +572,20 @@ private fun createSecureWebView(
             domStorageEnabled = true
             databaseEnabled = true
 
-            allowFileAccess = false
-            allowContentAccess = false
-            allowFileAccessFromFileURLs = false
-            allowUniversalAccessFromFileURLs = false
+            val limitFile = com.example.childkiosk.util.KioskPrefs.isLimitFileAccessEnabled(ctx)
+            allowFileAccess = !limitFile
+            allowContentAccess = !limitFile
+            allowFileAccessFromFileURLs = !limitFile
+            allowUniversalAccessFromFileURLs = !limitFile
 
-            setSupportMultipleWindows(false)
-            javaScriptCanOpenWindowsAutomatically = false
+            val limitMultiWindow = com.example.childkiosk.util.KioskPrefs.isLimitMultiWindowEnabled(ctx)
+            setSupportMultipleWindows(!limitMultiWindow)
+            javaScriptCanOpenWindowsAutomatically = !limitMultiWindow
 
             saveFormData = false
             @Suppress("DEPRECATION")
             savePassword = false
-            setGeolocationEnabled(false)
+            setGeolocationEnabled(!com.example.childkiosk.util.KioskPrefs.isLimitGeolocationEnabled(ctx))
 
             mediaPlaybackRequiresUserGesture = false
             mixedContentMode = if (targetUrl.startsWith("http://", ignoreCase = true)) {
@@ -581,9 +600,15 @@ private fun createSecureWebView(
             textZoom = 100
         }
 
-        // 禁用长按选择，防儿童误触
-        setOnLongClickListener { true }
-        isLongClickable = false
+        // 根据配置禁用或启用长按
+        val limitLongClick = com.example.childkiosk.util.KioskPrefs.isLimitLongClickEnabled(ctx)
+        if (limitLongClick) {
+            setOnLongClickListener { true }
+            isLongClickable = false
+        } else {
+            setOnLongClickListener(null)
+            isLongClickable = true
+        }
 
         webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
@@ -650,12 +675,14 @@ private fun createSecureWebView(
                     return true
                 }
 
-                val host = runCatching { URL(urlStr).host }.getOrNull()?.lowercase().orEmpty()
-                if (originalHost.isNotEmpty() && host.isNotEmpty()) {
-                    val isAllowed = host == originalHost || host.endsWith(".$originalHost")
-                    if (!isAllowed) {
-                        onBlocked(urlStr)
-                        return true
+                if (com.example.childkiosk.util.KioskPrefs.isLimitUrlRedirectEnabled(ctx)) {
+                    val host = runCatching { URL(urlStr).host }.getOrNull()?.lowercase().orEmpty()
+                    if (originalHost.isNotEmpty() && host.isNotEmpty()) {
+                        val isAllowed = host == originalHost || host.endsWith(".$originalHost")
+                        if (!isAllowed) {
+                            onBlocked(urlStr)
+                            return true
+                        }
                     }
                 }
                 return false
@@ -666,7 +693,7 @@ private fun createSecureWebView(
                 request: WebResourceRequest?
             ): WebResourceResponse? {
                 val host = request?.url?.host
-                if (AdBlocker.isAdHost(host)) {
+                if (com.example.childkiosk.util.KioskPrefs.isLimitAdBlockEnabled(ctx) && AdBlocker.isAdHost(host)) {
                     return WebResourceResponse(
                         "text/plain",
                         "utf-8",
@@ -682,8 +709,12 @@ private fun createSecureWebView(
                 handler: SslErrorHandler?,
                 error: SslError?
             ) {
-                handler?.cancel()
-                onSslError(error?.url ?: "未知链接")
+                if (com.example.childkiosk.util.KioskPrefs.isLimitSslCheckEnabled(ctx)) {
+                    handler?.cancel()
+                    onSslError(error?.url ?: "未知链接")
+                } else {
+                    handler?.proceed()
+                }
             }
         }
 
@@ -697,7 +728,11 @@ private fun createSecureWebView(
             }
 
             override fun onPermissionRequest(request: PermissionRequest?) {
-                request?.deny()
+                if (com.example.childkiosk.util.KioskPrefs.isLimitGeolocationEnabled(ctx)) {
+                    request?.deny()
+                } else {
+                    request?.grant(request.resources)
+                }
             }
 
             override fun onCreateWindow(
@@ -711,7 +746,9 @@ private fun createSecureWebView(
         }
 
         setDownloadListener { _, _, _, _, _ ->
-            onDownloadBlocked()
+            if (com.example.childkiosk.util.KioskPrefs.isLimitDownloadEnabled(ctx)) {
+                onDownloadBlocked()
+            }
         }
     }
 }

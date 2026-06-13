@@ -49,11 +49,15 @@ class MainActivity : ComponentActivity() {
 
         super.onCreate(savedInstanceState)
 
-        // 1. 设置 FLAG_SECURE 防截屏逃逸
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_SECURE,
-            WindowManager.LayoutParams.FLAG_SECURE
-        )
+        // 1. 设置 FLAG_SECURE 防截屏逃逸 (根据配置)
+        if (KioskPrefs.isLimitFlagSecureEnabled(this)) {
+            window.setFlags(
+                WindowManager.LayoutParams.FLAG_SECURE,
+                WindowManager.LayoutParams.FLAG_SECURE
+            )
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
         // 2. 沉浸式全屏
         SystemUiHelper.enterImmersive(this)
 
@@ -122,6 +126,9 @@ class MainActivity : ComponentActivity() {
                                     isSoftLockDeferred = false
                                     triggerKioskIfNeeded()
                                 }
+                            },
+                            onSandboxLimitsChanged = {
+                                applySandboxLimits()
                             }
                         )
                     }
@@ -176,6 +183,45 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun applySandboxLimits() {
+        if (KioskPrefs.isLimitFlagSecureEnabled(this)) {
+            window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+
+        if (!dpm.isDeviceOwnerApp(packageName)) {
+            return
+        }
+
+        val admin = adminComponent
+        applyUserRestriction(admin, UserManager.DISALLOW_DEBUGGING_FEATURES, KioskPrefs.isLimitAdbEnabled(this))
+        applyUserRestriction(admin, UserManager.DISALLOW_SAFE_BOOT, KioskPrefs.isLimitSafeBootEnabled(this))
+        applyUserRestriction(admin, UserManager.DISALLOW_FACTORY_RESET, KioskPrefs.isLimitFactoryResetEnabled(this))
+        applyUserRestriction(admin, UserManager.DISALLOW_ADD_USER, KioskPrefs.isLimitAddUserEnabled(this))
+        applyUserRestriction(admin, UserManager.DISALLOW_USB_FILE_TRANSFER, KioskPrefs.isLimitUsbTransferEnabled(this))
+
+        runCatching {
+            dpm.setScreenCaptureDisabled(admin, KioskPrefs.isLimitScreenshotEnabled(this))
+        }
+        runCatching {
+            dpm.setStatusBarDisabled(admin, KioskPrefs.isLimitStatusBarEnabled(this))
+        }
+        runCatching {
+            dpm.setKeyguardDisabled(admin, KioskPrefs.isLimitKeyguardEnabled(this))
+        }
+    }
+
+    private fun applyUserRestriction(admin: ComponentName, restriction: String, enabled: Boolean) {
+        runCatching {
+            if (enabled) {
+                dpm.addUserRestriction(admin, restriction)
+            } else {
+                dpm.clearUserRestriction(admin, restriction)
+            }
+        }
+    }
+
     /**
      * 激活 Kiosk 模式 (Lock Task Mode) 并在 Device Owner 模式下进行多维度安全限制加固
      */
@@ -190,10 +236,7 @@ class MainActivity : ComponentActivity() {
                 )
             }
 
-            // 限制语音助手、调试、屏幕截图等多维度逃逸路径
-            runCatching {
-                dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_DEBUGGING_FEATURES)
-            }
+            // 限制语音助手、未知来源等多维度逃逸路径
             runCatching {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     dpm.addUserRestriction(adminComponent, "no_voice_assistants")
@@ -202,27 +245,9 @@ class MainActivity : ComponentActivity() {
             runCatching {
                 dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_INSTALL_UNKNOWN_SOURCES)
             }
-            runCatching {
-                dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
-            }
-            runCatching {
-                dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_SAFE_BOOT)
-            }
-            runCatching {
-                dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_ADD_USER)
-            }
-            runCatching {
-                dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_USB_FILE_TRANSFER)
-            }
-            runCatching {
-                dpm.setScreenCaptureDisabled(adminComponent, true)
-            }
-            runCatching {
-                dpm.setStatusBarDisabled(adminComponent, true)
-            }
-            runCatching {
-                dpm.setKeyguardDisabled(adminComponent, true)
-            }
+
+            // 应用可配置的沙箱限制
+            applySandboxLimits()
 
             startLockTask()
         } catch (e: IllegalStateException) {
@@ -292,6 +317,19 @@ class MainActivity : ComponentActivity() {
     }
 
 
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (KioskPrefs.isLimitVolumeKeysEnabled(this)) {
+            val keyCode = event.keyCode
+            if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+                if (event.action == KeyEvent.ACTION_DOWN) {
+                    Toast.makeText(this, "音量按键已被家长控制锁定", Toast.LENGTH_SHORT).show()
+                }
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
 
     /** 阻断物理 Back 键，让 Compose BackHandler 接管 */
     override fun onBackPressed() {

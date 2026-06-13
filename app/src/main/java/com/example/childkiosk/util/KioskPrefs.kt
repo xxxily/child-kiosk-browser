@@ -110,6 +110,63 @@ object KioskPrefs {
         prefs(context).edit().putLong("last_cache_clear_time", time).apply()
     }
 
+    // 1. 系统加固开关 (Device Owner)
+    fun isLimitAdbEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_adb", true)
+    fun setLimitAdbEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_adb", enabled).apply()
+
+    fun isLimitSafeBootEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_safe_boot", true)
+    fun setLimitSafeBootEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_safe_boot", enabled).apply()
+
+    fun isLimitFactoryResetEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_factory_reset", true)
+    fun setLimitFactoryResetEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_factory_reset", enabled).apply()
+
+    fun isLimitAddUserEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_add_user", true)
+    fun setLimitAddUserEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_add_user", enabled).apply()
+
+    fun isLimitUsbTransferEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_usb_transfer", true)
+    fun setLimitUsbTransferEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_usb_transfer", enabled).apply()
+
+    fun isLimitScreenshotEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_screenshot", true)
+    fun setLimitScreenshotEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_screenshot", enabled).apply()
+
+    fun isLimitStatusBarEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_status_bar", true)
+    fun setLimitStatusBarEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_status_bar", enabled).apply()
+
+    fun isLimitKeyguardEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_keyguard", true)
+    fun setLimitKeyguardEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_keyguard", enabled).apply()
+
+    // 2. 物理与界面限制开关
+    fun isLimitFlagSecureEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_flag_secure", true)
+    fun setLimitFlagSecureEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_flag_secure", enabled).apply()
+
+    fun isLimitVolumeKeysEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_volume_keys", false)
+    fun setLimitVolumeKeysEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_volume_keys", enabled).apply()
+
+    // 3. 网页浏览器沙箱限制
+    fun isLimitAdBlockEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_ad_block", true)
+    fun setLimitAdBlockEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_ad_block", enabled).apply()
+
+    fun isLimitDownloadEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_download", true)
+    fun setLimitDownloadEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_download", enabled).apply()
+
+    fun isLimitLongClickEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_long_click", true)
+    fun setLimitLongClickEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_long_click", enabled).apply()
+
+    fun isLimitUrlRedirectEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_url_redirect", true)
+    fun setLimitUrlRedirectEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_url_redirect", enabled).apply()
+
+    fun isLimitGeolocationEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_geolocation", true)
+    fun setLimitGeolocationEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_geolocation", enabled).apply()
+
+    fun isLimitSslCheckEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_ssl_check", true)
+    fun setLimitSslCheckEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_ssl_check", enabled).apply()
+
+    fun isLimitMultiWindowEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_multi_window", true)
+    fun setLimitMultiWindowEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_multi_window", enabled).apply()
+
+    fun isLimitFileAccessEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_file_access", true)
+    fun setLimitFileAccessEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_file_access", enabled).apply()
+
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 }
