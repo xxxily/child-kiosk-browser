@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-06-13
+
+### Fixed — 修复
+
+- **预缓存/预加载 100% 卡死问题**：
+  - 修复了预加载的 WebView 挂载到 Window 时因重新 attach 导致底层重新触发 `onPageStarted` 却不再触发 `onPageFinished` 的重入卡死白屏 bug。我们在 `onPageStarted` 中拦截并忽略了网页 progress 为 100% 时的重入通知，同时使用 `remember(preloadEntry)` 进行 Compose 参数同步，彻底杜绝了 100% 页面的卡死。
+  - 修复了已加载完成的预加载实例在重置时强行将背景色设为暖黄色 `#FFF8E1` 导致的网页渲染底色异常，现在根据 `existingWebView.progress == 100` 自适应选用初始底色。
+- **网页右上角点击区域拦截与误退问题**：
+  - 去除了 `WebViewActivity` 顶部的右上角盲点击进入设置区域，避免了该透明区域拦截网页对应坐标（右上角按钮）的点击事件。用户现可通过系统物理/虚拟返回键自然退回主屏幕。
+
 ## [0.0.5] - 2026-06-13
 
 ### Added — 新增

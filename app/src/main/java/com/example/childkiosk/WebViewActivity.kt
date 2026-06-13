@@ -181,7 +181,6 @@ fun WebViewScreen(
     var showParentVerifyForClose by remember { mutableStateOf(false) }
     var showParentVerifyForTimeout by remember { mutableStateOf(false) }
 
-    val clicks = remember { mutableStateListOf<Long>() }
 
     LaunchedEffect(webAppId) {
         withContext(Dispatchers.IO) {
@@ -249,20 +248,10 @@ fun WebViewScreen(
         } else null
     }
 
-    var isPageLoading by remember { mutableStateOf(true) }
-    var loadProgress by remember { mutableIntStateOf(0) }
+    var isPageLoading by remember(preloadEntry) { mutableStateOf(preloadEntry?.isLoaded != true) }
+    var loadProgress by remember(preloadEntry) { mutableIntStateOf(preloadEntry?.progress ?: 0) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var overlayShownTime by remember { mutableLongStateOf(0L) }
-
-    LaunchedEffect(preloadEntry) {
-        if (preloadEntry != null) {
-            isPageLoading = !preloadEntry.isLoaded
-            loadProgress = preloadEntry.progress
-        } else {
-            isPageLoading = true
-            loadProgress = 0
-        }
-    }
 
     BackHandler(enabled = true) {
         val wv = webViewRef
@@ -342,28 +331,7 @@ fun WebViewScreen(
             }
         }
 
-        // 右上角隐藏点击手势区域 (80dp x 80dp)
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .size(80.dp)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) {
-                    val now = System.currentTimeMillis()
-                    clicks.add(now)
-                    if (clicks.size > 5) clicks.removeAt(0)
-                    if (clicks.size == 5 && (now - clicks[0]) <= 2000) {
-                        clicks.clear()
-                        if (verifyOnExit) {
-                            showParentVerifyForClose = true
-                        } else {
-                            onClose()
-                        }
-                    }
-                }
-        )
+        // 已移除进入网页后的右上角隐藏手势框以允许网页右上角按钮正常点击，用户由返回键退回到主屏幕
 
         AnimatedVisibility(
             visible = sslErrorUrl != null,
@@ -579,8 +547,13 @@ private fun createSecureWebView(
 ): WebView {
     val webView = existingWebView ?: WebView(ctx)
     return webView.apply {
-        // 设置与主题一致的底色，防止白屏闪烁
-        setBackgroundColor(android.graphics.Color.parseColor("#FFF8E1"))
+        // 仅在网页未加载完成时设置暖色底色以防止白屏；已加载完的实例直接使用白色底色
+        val initialBgColor = if (existingWebView != null && existingWebView.progress == 100) {
+            android.graphics.Color.WHITE
+        } else {
+            android.graphics.Color.parseColor("#FFF8E1")
+        }
+        setBackgroundColor(initialBgColor)
 
         settings.apply {
             javaScriptEnabled = true
@@ -620,7 +593,10 @@ private fun createSecureWebView(
         webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                onLoadingStateChanged(true)
+                // 忽略 attach 时触发的重入的已完成加载通知，防止状态被重设为 loading 并卡死
+                if (view != null && view.progress < 100) {
+                    onLoadingStateChanged(true)
+                }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
