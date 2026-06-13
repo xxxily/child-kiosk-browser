@@ -36,7 +36,6 @@
             android:launchMode="singleTask"
             android:stateNotNeeded="true"
             android:resizeableActivity="false"
-            android:excludeFromRecents="true"
             android:screenOrientation="unspecified"
             android:configChanges="orientation|screenSize|keyboardHidden|locale|layoutDirection"
             android:exported="true">
@@ -55,7 +54,6 @@
             android:hardwareAccelerated="true"
             android:screenOrientation="unspecified"
             android:configChanges="orientation|screenSize|keyboardHidden|locale|layoutDirection"
-            android:excludeFromRecents="true"
             android:exported="false" />
 
         <!-- 接收设备管理器指令的广播接收器 -->

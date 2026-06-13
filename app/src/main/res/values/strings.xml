@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">儿童乐园</string>
+    <string name="app_name">儿童空间</string>
     <string name="app_name_full">儿童防误触全屏 Kiosk 浏览器</string>
-    <string name="device_admin_label">儿童乐园 设备管理器</string>
+    <string name="device_admin_label">儿童空间 设备管理器</string>
     <string name="device_admin_description">激活后将进入企业级 Kiosk 锁定模式，确保儿童无法通过常规手段离开本应用。家长解除锁定时将自动撤销该权限。</string>
 
     <!-- Toasts & messages -->

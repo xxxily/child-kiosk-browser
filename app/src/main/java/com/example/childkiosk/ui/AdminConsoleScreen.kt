@@ -38,6 +38,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
+import android.content.Intent
+import android.net.Uri
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,6 +68,52 @@ fun AdminConsoleScreen(
     var protectionMode by remember { mutableStateOf(KioskPrefs.getProtectionMode(context)) }
 
     var showPinSetupDialog by remember { mutableStateOf(false) }
+
+    // 检查更新与诊断相关状态
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var latestReleaseInfo by remember { mutableStateOf<ReleaseInfo?>(null) }
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+
+    val currentVersion = remember {
+        try {
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            pInfo.versionName ?: "未知"
+        } catch (e: Exception) {
+            "未知"
+        }
+    }
+
+    val webViewInfo = remember {
+        try {
+            val packageInfo = androidx.webkit.WebViewCompat.getCurrentWebViewPackage(context)
+            if (packageInfo != null) {
+                "${packageInfo.packageName} (${packageInfo.versionName})"
+            } else {
+                val userAgent = android.webkit.WebSettings.getDefaultUserAgent(context)
+                val regex = "Chrome/([\\d.]+)".toRegex()
+                val match = regex.find(userAgent)
+                if (match != null) {
+                    "System WebView (Chrome ${match.groupValues[1]})"
+                } else {
+                    "System WebView (无法获取版本)"
+                }
+            }
+        } catch (e: Throwable) {
+            "System WebView (读取失败)"
+        }
+    }
+
+    val deviceInfo = remember {
+        "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
+    }
+
+    val androidVersion = remember {
+        android.os.Build.VERSION.RELEASE
+    }
+
+    val protectionLevel = remember(isDeviceOwner) {
+        if (isDeviceOwner) "企业级完全锁定 (Device Owner)" else "普通锁定"
+    }
 
     // 同步设置数据
     LaunchedEffect(config) {
@@ -572,6 +620,47 @@ fun AdminConsoleScreen(
                 )
             }
 
+            // 关于与系统诊断卡片
+            item {
+                AboutAndSystemCard(
+                    currentVersion = currentVersion,
+                    webViewInfo = webViewInfo,
+                    deviceInfo = deviceInfo,
+                    androidVersion = androidVersion,
+                    protectionLevel = protectionLevel,
+                    isCheckingUpdate = isCheckingUpdate,
+                    onCheckUpdate = {
+                        isCheckingUpdate = true
+                        scope.launch {
+                            val release = fetchLatestRelease()
+                            isCheckingUpdate = false
+                            if (release != null) {
+                                latestReleaseInfo = release
+                                if (isNewerVersion(currentVersion, release.version)) {
+                                    showUpdateDialog = true
+                                } else {
+                                    Toast.makeText(context, "当前已是最新版本！", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                Toast.makeText(context, "检查更新失败，请检查网络连接！", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    onCopyUrl = {
+                        clipboardManager.setText(AnnotatedString("https://github.com/xxxily/child-kiosk-browser"))
+                        Toast.makeText(context, "项目地址已复制到剪贴板！", Toast.LENGTH_SHORT).show()
+                    },
+                    onOpenUrl = {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/xxxily/child-kiosk-browser"))
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "无法打开浏览器，请手动复制地址", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }
+
             // Section 4: 退出并解锁
             item {
                 Spacer(modifier = Modifier.height(8.dp))
@@ -631,6 +720,14 @@ fun AdminConsoleScreen(
                 verificationMode = "PIN"
                 Toast.makeText(context, "密码设置成功！已自动切换为 PIN 码模式", Toast.LENGTH_SHORT).show()
             }
+        )
+    }
+
+    // 检查更新对话框
+    if (showUpdateDialog && latestReleaseInfo != null) {
+        UpdateDialog(
+            releaseInfo = latestReleaseInfo!!,
+            onDismiss = { showUpdateDialog = false }
         )
     }
 }
@@ -1330,6 +1427,292 @@ fun PinSetupDialog(
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Text("确定")
+                    }
+                }
+            }
+        }
+    }
+}
+
+data class ReleaseInfo(
+    val version: String,
+    val downloadUrl: String,
+    val changelog: String,
+    val releasePageUrl: String
+)
+
+suspend fun fetchLatestRelease(): ReleaseInfo? = withContext(Dispatchers.IO) {
+    runCatching {
+        val url = URL("https://api.github.com/repos/xxxily/child-kiosk-browser/releases/latest")
+        val conn = url.openConnection() as HttpURLConnection
+        conn.requestMethod = "GET"
+        conn.connectTimeout = 5000
+        conn.readTimeout = 5000
+        conn.setRequestProperty("Accept", "application/vnd.github.v3+json")
+        conn.setRequestProperty("User-Agent", "child-kiosk-browser")
+        
+        if (conn.responseCode == 200) {
+            val jsonText = conn.inputStream.bufferedReader().use { it.readText() }
+            val jsonObj = org.json.JSONObject(jsonText)
+            val tagName = jsonObj.optString("tag_name", "")
+            val htmlUrl = jsonObj.optString("html_url", "")
+            val body = jsonObj.optString("body", "")
+            
+            val assets = jsonObj.optJSONArray("assets")
+            var apkUrl = ""
+            if (assets != null && assets.length() > 0) {
+                for (i in 0 until assets.length()) {
+                    val asset = assets.getJSONObject(i)
+                    val name = asset.optString("name", "")
+                    if (name.endsWith(".apk")) {
+                        apkUrl = asset.optString("browser_download_url", "")
+                        break
+                    }
+                }
+            }
+            if (apkUrl.isEmpty()) {
+                apkUrl = htmlUrl
+            }
+            
+            ReleaseInfo(
+                version = tagName.trimStart('v'),
+                downloadUrl = apkUrl,
+                changelog = body,
+                releasePageUrl = htmlUrl
+            )
+        } else {
+            null
+        }
+    }.getOrNull()
+}
+
+fun isNewerVersion(current: String, latest: String): Boolean {
+    val currentParts = current.split(".").mapNotNull { it.toIntOrNull() }
+    val latestParts = latest.split(".").mapNotNull { it.toIntOrNull() }
+    val length = maxOf(currentParts.size, latestParts.size)
+    for (i in 0 until length) {
+        val currVal = currentParts.getOrElse(i) { 0 }
+        val latVal = latestParts.getOrElse(i) { 0 }
+        if (latVal > currVal) return true
+        if (latVal < currVal) return false
+    }
+    return false
+}
+
+@Composable
+fun AboutAndSystemCard(
+    currentVersion: String,
+    webViewInfo: String,
+    deviceInfo: String,
+    androidVersion: String,
+    protectionLevel: String,
+    isCheckingUpdate: Boolean,
+    onCheckUpdate: () -> Unit,
+    onCopyUrl: () -> Unit,
+    onOpenUrl: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = "关于与系统诊断",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("关于与系统诊断", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "关于项目",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("项目地址: https://github.com/xxxily/child-kiosk-browser", fontSize = 12.sp)
+                        Text("用户名称: Blaze", fontSize = 12.sp)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        IconButton(onClick = onCopyUrl) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = "复制地址",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        IconButton(onClick = onOpenUrl) {
+                            Icon(
+                                imageVector = Icons.Default.OpenInBrowser,
+                                contentDescription = "浏览器打开",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "系统与诊断信息",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                DiagnosticItem(label = "应用版本", value = currentVersion)
+                DiagnosticItem(label = "WebView 内核", value = webViewInfo)
+                DiagnosticItem(label = "设备型号", value = deviceInfo)
+                DiagnosticItem(label = "安卓版本", value = "Android $androidVersion")
+                DiagnosticItem(label = "防护等级", value = protectionLevel)
+            }
+
+            Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+            Button(
+                onClick = onCheckUpdate,
+                enabled = !isCheckingUpdate,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (isCheckingUpdate) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("正在检查更新...")
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.SystemUpdate,
+                        contentDescription = "检查更新",
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("检查最新版本")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DiagnosticItem(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            value,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            modifier = Modifier.padding(start = 16.dp).weight(1f, fill = false)
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun UpdateDialog(
+    releaseInfo: ReleaseInfo,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    text = "发现新版本 v${releaseInfo.version}",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Text(
+                    text = "更新日志：",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 200.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .padding(12.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        text = if (releaseInfo.changelog.isNullOrEmpty()) "暂无更新日志说明。" else releaseInfo.changelog,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("稍后再说")
+                    }
+
+                    Button(
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(releaseInfo.downloadUrl))
+                            Toast.makeText(context, "下载链接已复制到剪贴板！", Toast.LENGTH_SHORT).show()
+                            
+                            try {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(releaseInfo.releasePageUrl))
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "无法打开浏览器，请手动粘贴链接下载", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.weight(1.5f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("去下载更新")
                     }
                 }
             }

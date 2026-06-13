@@ -130,12 +130,7 @@ class WebViewActivity : ComponentActivity() {
         if (hasFocus) SystemUiHelper.enterImmersive(this)
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
-            return true
-        }
-        return super.onKeyDown(keyCode, event)
-    }
+
 
     override fun onDestroy() {
         rootWebView?.let {

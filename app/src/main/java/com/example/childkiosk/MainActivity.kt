@@ -255,14 +255,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** 拦截音量物理键，避免儿童误触造成系统音量条弹出 */
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        return if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
-            true
-        } else {
-            super.onKeyDown(keyCode, event)
-        }
-    }
+
 
     /** 阻断物理 Back 键，让 Compose BackHandler 接管 */
     override fun onBackPressed() {
