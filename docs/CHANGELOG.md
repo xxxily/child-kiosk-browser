@@ -6,6 +6,27 @@
 
 ## [Unreleased]
 
+## [0.0.20] - 2026-06-14
+
+### Added — 新增
+
+- **WebView 调试取证运行手册**：
+  - 新增 `docs/webview_debugging_runbook.md`，固化 logcat、Chrome Inspect、Network、Elements、Computed Style、Eruda/vConsole 注入检查和 Loading 卡住排查流程。
+  - README 项目结构同步补充 WebView 渲染复盘与调试手册入口。
+
+### Changed — 变更
+
+- **WebView 初次加载时序优化**：
+  - 主 WebView 不再在 Compose `remember` 创建阶段立即 `loadUrl()`，改为等 `AndroidView` attach 且完成有效尺寸布局后再加载真实 URL，降低页面以零尺寸/错误 viewport 启动导致懒加载、`visualViewport`、`IntersectionObserver` 判断异常的概率。
+- **WebView 运行时日志增强**：
+  - 增加 `ChildKioskWebView` 关键日志，覆盖初始布局后加载、页面开始/完成、主 frame 错误、HTTP 错误、广告拦截、SSL 拦截和热备历史清理，便于后续直接用 logcat 定位问题。
+
+### Fixed — 修复
+
+- **热备 WebView 返回空白页问题**：
+  - 修复启用空白 WebView 热备后，进入网页再手势返回会先回到 `about:blank`、需要再次返回才回首页的问题。
+  - 对热备和 URL 预加载接管场景清理初始空白历史栈，同时保留网页内部后续导航的正常返回能力。
+
 ## [0.0.19] - 2026-06-14
 
 ### Added — 新增
@@ -316,7 +337,8 @@
 - 调研报告 `docs/android_kiosk_research_report.md`
 - 需求规格 `docs/child_kiosk_browser_requirements.md`
 
-[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.19...HEAD
+[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.20...HEAD
+[0.0.20]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.19...v0.0.20
 [0.0.19]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.18...v0.0.19
 [0.0.18]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.17...v0.0.18
 [0.0.4]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.3...v0.0.4

@@ -1,3 +1,26 @@
+## Child Kiosk Browser v0.0.20
+
+本版本继续针对 WebView 加载与排查能力做修复：解决热备 WebView 返回空白页问题，并补齐 logcat + Chrome Inspect 标准取证手册。
+
+> **说明**：本 APK 使用 debug 签名，仅供调试与家庭内部部署。生产/商用请自行用正式 keystore 重新签名。
+
+### 本版本核心变化
+
+* **热备 WebView 返回修复**：
+  - 修复启用“保留 1 个空白 WebView 热备”后，网页内手势返回会先退到 `about:blank` 空白页、需要再次返回才回到首页的问题。
+  - 对热备和 URL 预加载接管场景清理初始空白历史栈，同时保留网页内部正常导航历史。
+* **WebView 初次加载时序优化**：
+  - 主 WebView 改为在 `AndroidView` attach 并拿到有效宽高后再加载真实 URL，避免页面过早以错误 viewport 启动。
+  - 该调整用于降低依赖 `visualViewport`、`IntersectionObserver`、懒加载和首屏可见性判断的页面出现局部渲染异常的概率。
+* **调试日志增强**：
+  - 新增 `ChildKioskWebView` 关键日志，覆盖页面开始/完成、主 frame 错误、HTTP 错误、广告/SSL 拦截、初始布局后加载和热备历史清理。
+  - 后续可以直接通过 logcat 对照页面生命周期和 App WebView 状态。
+* **调试文档固化**：
+  - 新增 `docs/webview_debugging_runbook.md`，记录 ADB/logcat、`chrome://inspect/#devices`、Network、Elements、Computed Style、Eruda/vConsole、Loading 卡住和 books 样本页的固定诊断脚本。
+  - `docs/webview_rendering_consistency.md` 和 README 已补充该调试手册入口。
+
+---
+
 ## Child Kiosk Browser v0.0.19
 
 本版本重点修复 WebView 与手机浏览器渲染不一致的问题，并将网页沙箱默认策略调整为“浏览器兼容优先，家长按需加严”。
