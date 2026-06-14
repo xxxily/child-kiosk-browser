@@ -59,7 +59,9 @@ object WebViewRuntime {
             textZoom = 100
             builtInZoomControls = false
             displayZoomControls = false
-            offscreenPreRaster = KioskPrefs.isWebViewOffscreenPreRasterEnabled(context)
+            // Keep this disabled for browser parity. On high-DPR devices it can increase
+            // Chromium tile pressure and reproduce partial rendering failures.
+            offscreenPreRaster = false
             safeBrowsingEnabled = true
 
             val defaultUserAgent = runCatching {
@@ -110,48 +112,24 @@ object WebViewRuntime {
 
     private const val BYTES_PER_MB = 1024L * 1024L
 
-    fun isHighDprRenderCompatEnabled(context: Context): Boolean {
-        return when (KioskPrefs.getWebViewHighDprCompatMode(context)) {
-            KioskPrefs.WEBVIEW_HIGH_DPR_COMPAT_ENABLED -> true
-            KioskPrefs.WEBVIEW_HIGH_DPR_COMPAT_DISABLED -> false
-            else -> isHighDprLargeSurface(context)
-        }
-    }
-
-    fun highDprRenderCompatReason(context: Context): String {
+    fun webViewDiagnosticSummary(context: Context): String {
         val metrics = context.resources.displayMetrics
-        return "mode=${KioskPrefs.getWebViewHighDprCompatMode(context)}, " +
-            "screen=${metrics.widthPixels}x${metrics.heightPixels}, density=${metrics.density}"
-    }
-
-    fun abDiagnosticSummary(context: Context): String {
-        val metrics = context.resources.displayMetrics
-        return "hostMode=${KioskPrefs.getWebViewHostMode(context)}, " +
+        return "host=NATIVE_FRAME_LAYOUT, " +
             "renderMode=${KioskPrefs.getWebViewRenderMode(context)}, " +
-            "highDprCompat=${KioskPrefs.getWebViewHighDprCompatMode(context)}, " +
-            "visualStateCallback=${KioskPrefs.isWebViewVisualStateCallbackEnabled(context)}, " +
-            "pageActivation=${KioskPrefs.isWebViewPageActivationEnabled(context)}, " +
-            "delayedInjectionPasses=${KioskPrefs.isWebViewDelayedInjectionPassesEnabled(context)}, " +
-            "nativeLoadingIndicator=${KioskPrefs.isLightweightNativeLoadingIndicatorEnabled(context)}, " +
+            "topProgress=${KioskPrefs.isWebViewTopProgressEnabled(context)}, " +
             "warmPool=${KioskPrefs.getWebViewWarmPoolEnabled(context)}, " +
             "urlPreload=${KioskPrefs.getWebPreloadEnabled(context)}, " +
-            "offscreenPreRaster=${KioskPrefs.isWebViewOffscreenPreRasterEnabled(context)}, " +
+            "offscreenPreRaster=false, " +
             "screen=${metrics.widthPixels}x${metrics.heightPixels}, density=${metrics.density}, " +
             "process=${ProcessUtils.currentProcessName(context)}, " +
             memorySummary(context)
     }
 
-    fun logAbDiagnostics(context: Context, event: String, url: String? = null) {
+    fun logWebViewDiagnostics(context: Context, event: String, url: String? = null) {
         Log.d(
             "ChildKioskWebView",
-            "AB diagnostics: event=$event, url=${url.orEmpty()}, ${abDiagnosticSummary(context)}"
+            "WebView diagnostics: event=$event, url=${url.orEmpty()}, ${webViewDiagnosticSummary(context)}"
         )
-    }
-
-    private fun isHighDprLargeSurface(context: Context): Boolean {
-        val metrics = context.resources.displayMetrics
-        val pixelCount = metrics.widthPixels.toLong() * metrics.heightPixels.toLong()
-        return metrics.density >= 3.5f && pixelCount >= 4_000_000L
     }
 
     fun isWebUrl(url: String): Boolean {

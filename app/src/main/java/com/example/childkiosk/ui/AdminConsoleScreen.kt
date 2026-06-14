@@ -794,7 +794,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Icon(imageVector = Icons.Default.Build, contentDescription = "性能配置", tint = MaterialTheme.colorScheme.primary)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("网页缓存与预加载优化（试验性）", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("网页缓存与性能优化", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 var cacheStats by remember { mutableStateOf<WebDataStats?>(null) }
@@ -805,24 +805,8 @@ fun AdminConsoleScreen(
                                 var showClearCacheConfirm by remember { mutableStateOf(false) }
                                 var webViewWarmPoolEnabled by remember { mutableStateOf(KioskPrefs.getWebViewWarmPoolEnabled(context)) }
                                 var webViewRenderMode by remember { mutableStateOf(KioskPrefs.getWebViewRenderMode(context)) }
-                                var webViewHostMode by remember { mutableStateOf(KioskPrefs.getWebViewHostMode(context)) }
-                                var webViewHighDprCompatMode by remember {
-                                    mutableStateOf(KioskPrefs.getWebViewHighDprCompatMode(context))
-                                }
-                                var webViewOffscreenPreRasterEnabled by remember {
-                                    mutableStateOf(KioskPrefs.isWebViewOffscreenPreRasterEnabled(context))
-                                }
-                                var webViewVisualStateCallbackEnabled by remember {
-                                    mutableStateOf(KioskPrefs.isWebViewVisualStateCallbackEnabled(context))
-                                }
-                                var webViewPageActivationEnabled by remember {
-                                    mutableStateOf(KioskPrefs.isWebViewPageActivationEnabled(context))
-                                }
-                                var webViewDelayedInjectionPassesEnabled by remember {
-                                    mutableStateOf(KioskPrefs.isWebViewDelayedInjectionPassesEnabled(context))
-                                }
-                                var lightweightNativeLoadingIndicatorEnabled by remember {
-                                    mutableStateOf(KioskPrefs.isLightweightNativeLoadingIndicatorEnabled(context))
+                                var webViewTopProgressEnabled by remember {
+                                    mutableStateOf(KioskPrefs.isWebViewTopProgressEnabled(context))
                                 }
 
                                 fun refreshCacheStats() {
@@ -875,130 +859,24 @@ fun AdminConsoleScreen(
                                     refreshCacheStats()
                                 }
 
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("WebView 承载模式（AB 测试）", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                    Text("标准模式保持当前 Compose AndroidView 承载；轻量原生模式直接用原生 FrameLayout + WebView，跳过 Compose 宿主、全屏 Loading、热备和 URL 预加载，用于定位宿主层是否放大渲染压力", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .horizontalScroll(rememberScrollState()),
-                                        horizontalArrangement = Arrangement.spacedBy(20.dp)
-                                    ) {
-                                        listOf(
-                                            KioskPrefs.WEBVIEW_HOST_MODE_COMPOSE to "标准 Compose",
-                                            KioskPrefs.WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE to "轻量原生"
-                                        ).forEach { (mode, label) ->
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                modifier = Modifier
-                                                    .widthIn(min = 128.dp)
-                                                    .clickable {
-                                                        webViewHostMode = mode
-                                                        KioskPrefs.setWebViewHostMode(context, mode)
-                                                        WebViewPool.clear()
-                                                        poolSnapshot = WebViewPool.snapshot()
-                                                    }
-                                            ) {
-                                                RadioButton(
-                                                    selected = webViewHostMode == mode,
-                                                    onClick = {
-                                                        webViewHostMode = mode
-                                                        KioskPrefs.setWebViewHostMode(context, mode)
-                                                        WebViewPool.clear()
-                                                        poolSnapshot = WebViewPool.snapshot()
-                                                    }
-                                                )
-                                                Text(label, fontSize = 13.sp)
-                                            }
-                                        }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("网页顶部进度条", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("默认关闭。开启后仅在网页顶部显示细进度条，不使用全屏加载遮罩", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
-                                }
-
-                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text("AB 诊断临时选项", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                    Text("这些开关用于快速定位 Loading、注入、页面激活事件或宿主 overlay 是否参与问题。测试时每次只改一个变量", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text("用视觉提交回调关闭 Loading", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                            Text("默认开启。WebView 提交一帧后再隐藏 Loading，减少 100% 遮罩误挡页面", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Switch(
+                                        checked = webViewTopProgressEnabled,
+                                        onCheckedChange = {
+                                            webViewTopProgressEnabled = it
+                                            KioskPrefs.setWebViewTopProgressEnabled(context, it)
+                                            WebViewPool.clear()
+                                            poolSnapshot = WebViewPool.snapshot()
                                         }
-                                        Switch(
-                                            checked = webViewVisualStateCallbackEnabled,
-                                            onCheckedChange = {
-                                                webViewVisualStateCallbackEnabled = it
-                                                KioskPrefs.setWebViewVisualStateCallbackEnabled(context, it)
-                                                WebViewPool.clear()
-                                                poolSnapshot = WebViewPool.snapshot()
-                                            }
-                                        )
-                                    }
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text("页面激活事件补发", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                            Text("默认开启。补发 resize/scroll/pageshow 等事件；关闭后可验证这些激活脚本是否影响问题页面", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                        Switch(
-                                            checked = webViewPageActivationEnabled,
-                                            onCheckedChange = {
-                                                webViewPageActivationEnabled = it
-                                                KioskPrefs.setWebViewPageActivationEnabled(context, it)
-                                                WebViewPool.clear()
-                                                poolSnapshot = WebViewPool.snapshot()
-                                            }
-                                        )
-                                    }
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text("延迟多轮脚本注入", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                            Text("默认开启。关闭后仅保留当前回调时机的一次注入，用于确认多轮注入是否增加页面负担", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                        Switch(
-                                            checked = webViewDelayedInjectionPassesEnabled,
-                                            onCheckedChange = {
-                                                webViewDelayedInjectionPassesEnabled = it
-                                                KioskPrefs.setWebViewDelayedInjectionPassesEnabled(context, it)
-                                                WebViewPool.clear()
-                                                poolSnapshot = WebViewPool.snapshot()
-                                            }
-                                        )
-                                    }
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text("轻量模式原生进度条", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                            Text("默认关闭。开启后轻量原生模式只显示顶部细进度条，不使用全屏遮罩", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                        Switch(
-                                            checked = lightweightNativeLoadingIndicatorEnabled,
-                                            onCheckedChange = {
-                                                lightweightNativeLoadingIndicatorEnabled = it
-                                                KioskPrefs.setLightweightNativeLoadingIndicatorEnabled(context, it)
-                                                WebViewPool.clear()
-                                                poolSnapshot = WebViewPool.snapshot()
-                                            }
-                                        )
-                                    }
+                                    )
                                 }
 
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
@@ -1032,7 +910,7 @@ fun AdminConsoleScreen(
 
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text("WebView 渲染模式", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                    Text("默认保持硬件合成路径，贴近手机浏览器。已移除高 DPR 自动切软件层策略；该策略会放大 WebView tile 内存压力，可能导致更多区域不绘制", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("默认保持系统硬件合成路径，贴近手机浏览器。通常无需调整；遇到厂商 WebView/驱动兼容问题时再对比测试", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -1077,79 +955,6 @@ fun AdminConsoleScreen(
 
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("高分屏渲染兼容模式", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                    Text("默认自动。DPR 很高时注入轻量渲染补丁，降低动画、阴影、will-change 和超宽内容带来的 Chromium tile 压力；如发现个别网页视觉降级，可手动关闭", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .horizontalScroll(rememberScrollState()),
-                                        horizontalArrangement = Arrangement.spacedBy(20.dp)
-                                    ) {
-                                        listOf(
-                                            KioskPrefs.WEBVIEW_HIGH_DPR_COMPAT_AUTO to "自动",
-                                            KioskPrefs.WEBVIEW_HIGH_DPR_COMPAT_ENABLED to "开启",
-                                            KioskPrefs.WEBVIEW_HIGH_DPR_COMPAT_DISABLED to "关闭"
-                                        ).forEach { (mode, label) ->
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                modifier = Modifier
-                                                    .widthIn(min = 92.dp)
-                                                    .clickable {
-                                                        webViewHighDprCompatMode = mode
-                                                        KioskPrefs.setWebViewHighDprCompatMode(context, mode)
-                                                        WebViewPool.clear()
-                                                        if (webViewWarmPoolEnabled) {
-                                                            WebViewPool.warmupBlank()
-                                                        }
-                                                        poolSnapshot = WebViewPool.snapshot()
-                                                    }
-                                            ) {
-                                                RadioButton(
-                                                    selected = webViewHighDprCompatMode == mode,
-                                                    onClick = {
-                                                        webViewHighDprCompatMode = mode
-                                                        KioskPrefs.setWebViewHighDprCompatMode(context, mode)
-                                                        WebViewPool.clear()
-                                                        if (webViewWarmPoolEnabled) {
-                                                            WebViewPool.warmupBlank()
-                                                        }
-                                                        poolSnapshot = WebViewPool.snapshot()
-                                                    }
-                                                )
-                                                Text(label, fontSize = 13.sp)
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("网页离屏预栅格化", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认关闭。开启可减少少数页面初显闪动，但会显著增加高分屏 WebView 的 tile 内存占用，可能导致页面局部不绘制", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Switch(
-                                        checked = webViewOffscreenPreRasterEnabled,
-                                        onCheckedChange = {
-                                            webViewOffscreenPreRasterEnabled = it
-                                            KioskPrefs.setWebViewOffscreenPreRasterEnabled(context, it)
-                                            WebViewPool.clear()
-                                            if (webViewWarmPoolEnabled) {
-                                                WebViewPool.warmupBlank()
-                                            }
-                                            poolSnapshot = WebViewPool.snapshot()
-                                        }
-                                    )
-                                }
-
-                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
                                 // 选项 2: 网页预加载开关
                                 var webPreloadEnabled by remember { mutableStateOf(KioskPrefs.getWebPreloadEnabled(context)) }
                                 Row(
@@ -1159,7 +964,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("网页后台预加载", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认关闭。WebView 独立进程下不跨进程复用主页预加载实例，通常不建议开启；保留此项仅用于后续兼容实验", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("默认关闭。会提前准备常用网页，设备内存充足且追求打开速度时再开启", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = webPreloadEnabled,

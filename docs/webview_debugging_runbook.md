@@ -98,7 +98,7 @@ adb logcat -v time ChildKioskWebView:D ChildKioskApp:D MainActivity:D chromium:I
 - 没有 `Initial load after layout`：说明真实页面可能在 WebView attach/layout 前后时序有问题。
 - `Page started` 后没有 `Page finished`：看 Network、SSL、主 frame 错误或页面跳转循环。
 - `Page finished` 后 Loading 仍卡住：重点排查 App 的 meaningful content 判断、页面是否 SPA 空壳、遮罩状态。
-- `Page finished` 前后出现 `tile memory limits exceeded`：优先排查 WebView tile 内存压力。先确认网页进程日志为 `com.example.childkiosk:webview`，`Render mode applied` 为 `actual=HARDWARE`，以及日志里的 `memoryClass/largeMemoryClass/heapMax`。如果宿主 heap 已经正常但 warning 仍来自 chromium renderer 子进程，说明不是 App Java heap 不足，而是 renderer tile cache 预算被页面绘制成本打爆。此时应保持“高分屏渲染兼容模式=自动/开启”，同时关闭“网页离屏预栅格化”、空白 WebView 热备和 URL 后台预加载，再对比是否恢复。如果看到 `actual=SOFTWARE`，应先退回硬件默认；实测软件层会放大 tile 压力。
+- `Page finished` 前后出现 `tile memory limits exceeded`：优先排查 WebView tile 内存压力。先确认网页进程日志为 `com.example.childkiosk:webview`，`Host mode applied: NATIVE_FRAME_LAYOUT`，`Render mode applied` 为 `actual=HARDWARE`，以及日志里的 `memoryClass/largeMemoryClass/heapMax`。如果宿主 heap 已经正常但 warning 仍来自 chromium renderer 子进程，说明不是 App Java heap 不足，而是 renderer tile cache 预算被页面绘制成本打爆。此时保持默认硬件合成、`offscreenPreRaster=false`，关闭空白 WebView 热备和 URL 后台预加载后再对比。不要再开启高分屏渲染兼容补丁；实测它会改写页面动画和样式。
 - 手势返回先到空白页：看 `canGoBack=true` 且是否出现 `Cleared initial blank history...`。
 - 出现 `Blocked ad request`、`SSL error blocked`：先确认当前限制开关是否符合预期。
 
@@ -355,21 +355,16 @@ if (window.visualViewport) {
 
 ---
 
-## 8. WebView 承载模式 AB 测试
+## 8. 当前 WebView 基线
 
-v0.0.25 起家长后台“网页性能优化”提供“WebView 承载模式（AB 测试）”：
+v0.0.25 实机 AB 测试结论：问题页面在原生 `FrameLayout + WebView` 承载下渲染正常，而旧的 Compose `AndroidView` 宿主、全屏 Loading overlay 和高 DPR 样式注入会放大渲染风险。当前正式基线如下：
 
-- **标准 Compose**：当前默认路径，`ComponentActivity -> Compose -> AndroidView -> WebView`，保留 Compose 全屏 Loading 和现有多窗口栈。
-- **轻量原生**：实验路径，`WebViewActivity -> FrameLayout -> WebView`，跳过 Compose 宿主、全屏 Loading、热备和 URL 预加载。
-
-推荐测试顺序：
-
-1. 标准 Compose + 高分屏渲染兼容关闭。
-2. 标准 Compose + 高分屏渲染兼容自动。
-3. 轻量原生 + 高分屏渲染兼容关闭。
-4. 轻量原生 + 高分屏渲染兼容自动。
-
-每次只改一个变量，打开同一个 URL，等待 5-10 秒后退出，再测试下一组。
+- `WebViewActivity -> FrameLayout -> WebView` 是唯一正式承载路径。
+- 不再提供“标准 Compose / 轻量原生”切换。
+- 不再注入高分屏渲染兼容 CSS/JS。该补丁会禁用动画、改写页面样式，导致交互效果和正常浏览器不一致。
+- `offscreenPreRaster=false` 固定关闭。
+- 只保留可选顶部细进度条，不使用全屏 Loading 遮罩。
+- 热备和网页后台预加载保留配置项，但默认关闭。
 
 重点收集这些日志：
 
@@ -381,25 +376,21 @@ adb logcat -v time ChildKioskWebView:D ChildKioskApp:D MainActivity:D chromium:I
 
 | 日志 | 含义 |
 | --- | --- |
-| `Host mode applied: STANDARD_COMPOSE` | 当前走 Compose + AndroidView 承载 |
-| `Host mode applied: LIGHTWEIGHT_NATIVE` | 当前走原生 FrameLayout + WebView 承载 |
-| `AB diagnostics` | 当前所有 AB 配置、屏幕、density、进程和 heap 摘要 |
+| `Host mode applied: NATIVE_FRAME_LAYOUT` | 当前走正式原生 FrameLayout + WebView 承载 |
+| `WebView diagnostics` | 当前渲染模式、顶部进度条、热备/预加载、屏幕、density、进程和 heap 摘要 |
 | `WebView surface` | WebView attach 状态、尺寸、layer、parent、context |
 | `Initial load after layout` | 页面是在 WebView 有有效尺寸后才开始加载 |
-| `Visual state callback requested` | App 请求等待 WebView 提交视觉帧后关闭 Loading |
-| `Visual state callback delivered` | WebView 已提交一帧，Loading 可以移除 |
-| `Visual state callback timeout` | 1.5 秒内没有收到视觉提交回调，走兜底关闭 Loading |
-| `High DPR render compat injected` | 高分屏兼容 CSS/站点补丁已注入 |
+| `Page started` / `Page finished` | 主 frame 生命周期 |
 | `tile memory limits exceeded` | Chromium renderer tile 预算不足，可能导致局部内容不绘制 |
 
 判读规则：
 
-- 如果轻量原生模式明显减少 `tile memory limits exceeded` 或页面恢复完整，说明 Compose 宿主/overlay/多层合成在放大压力，应优先把轻量模式完善成高 DPR 默认路径。
-- 如果轻量原生和标准 Compose 都一样报错，说明主要矛盾更可能是系统 WebView renderer tile 预算或页面自身合成成本。
-- 如果 `Visual state callback delivered` 已出现但画面仍被 Loading 挡住，说明 App overlay 状态还有 bug。
+- 如果缺少 `Host mode applied: NATIVE_FRAME_LAYOUT`，先排查是否安装了旧版本。
 - 如果 `WebView surface` 显示尺寸异常、未 attach 或 parent 不符合预期，优先排查 WebView 承载/布局时序。
+- 如果正式基线下仍有大量 `tile memory limits exceeded`，说明问题更可能来自页面自身合成成本、系统 WebView provider 或设备图形驱动限制。
+- 如果开启热备/后台预加载后才出现异常，先关闭对应开关并清理缓存/重启 App 复测。
 
----
+更多开发约束见 `docs/webview_development_guidelines.md`。
 
 ## 9. 对比手机浏览器
 

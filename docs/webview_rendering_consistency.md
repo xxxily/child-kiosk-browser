@@ -1,10 +1,10 @@
 # WebView 渲染异常复盘与一致性优化记录
 
-> 文档版本：1.3
+> 文档版本：1.4
 > 创建日期：2026-06-14  
-> 状态：已按 7.1 默认基线完成代码对齐；浏览器沙箱限制默认兼容优先；WebView tile 内存高压选项默认关闭
+> 状态：已按实机 AB 结果固化原生 `FrameLayout + WebView` 承载；浏览器沙箱限制默认兼容优先；高 DPR 样式注入和全屏 Loading overlay 已移除
 > 关联代码：[`WebViewRuntime.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewRuntime.kt)、[`WebViewActivity.kt`](../app/src/main/java/com/example/childkiosk/WebViewActivity.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/com/example/childkiosk/ui/AdminConsoleScreen.kt)  
-> 相关文档：[`webview_white_screen_optimization.md`](./webview_white_screen_optimization.md)、[`webview_debugging_runbook.md`](./webview_debugging_runbook.md)
+> 相关文档：[`webview_white_screen_optimization.md`](./webview_white_screen_optimization.md)、[`webview_debugging_runbook.md`](./webview_debugging_runbook.md)、[`webview_development_guidelines.md`](./webview_development_guidelines.md)
 
 ---
 
@@ -216,34 +216,19 @@ fun resolveUserAgent(context: Context, defaultUserAgent: String): String {
 
 同时在 `applySettings()` 中使用 `WebSettings.getDefaultUserAgent(context)` 作为基线，而不是复用 WebView 当前的 `userAgentString`。这样可以避免热备 WebView 重复 `applySettings()` 后把已经处理过的 UA 当成新默认值。
 
-### 5.3 页面完成后补偿视口/可见性事件
+### 5.3 页面事件补发验证结论
 
 文件：[`WebViewActivity.kt`](../app/src/main/java/com/example/childkiosk/WebViewActivity.kt)
 
-在 `onPageFinished()` 和 `onProgressChanged >= 100` 后调度：
+曾经为了验证懒加载、`IntersectionObserver`、`visualViewport` 或首屏状态不同步问题，在 `onPageFinished()` 和 `onProgressChanged >= 100` 后补发 `focus/pageshow/resize/scroll/visibilitychange` 等事件。
 
-```kotlin
-schedulePageActivation(view)
-```
+实机 AB 后该策略不再作为正式基线：
 
-实际注入逻辑会分几次触发：
+- 原生 `FrameLayout + WebView` 承载已经让问题页面恢复正常。
+- 页面事件补发属于宿主主动干预网页生命周期，可能掩盖真实问题，也可能影响依赖精确滚动/可见性状态的页面。
+- 当前只保留正常页面生命周期回调和调试/自定义脚本注入，不再做通用页面激活补丁。
 
-- `focus`
-- `pageshow`
-- `resize`
-- `scroll`
-- `visibilitychange`
-- `visualViewport.resize`
-- `visualViewport.scroll`
-- 极小幅度 `scrollTop + 1` 后回滚
-
-目的：
-
-- 让页面重新计算 viewport/visualViewport。
-- 触发依赖 scroll/resize/visibility 的组件初始化。
-- 促使 IntersectionObserver、懒加载图片、滚动进度条、目录定位等组件重新评估当前首屏。
-
-这是通用补偿，不硬编码 `pages.anzz.site` 或 `.wisdom-card`。如果未来其他页面也依赖滚动揭示、懒加载、可见性观察，仍可受益。
+如未来某个站点确实需要补发事件，应做成明确的站点级兼容配置，并记录证据，不应恢复为全局默认逻辑。
 
 ### 5.4 UA 可见、可编辑
 
@@ -323,36 +308,22 @@ WARNING: tile memory limits exceeded, some content may not draw
 - 移除网页完成后的全屏 loading 退出动画，并缩短最小覆盖时间，减少页面首绘阶段 WebView 与 Compose 全屏遮罩同时占用合成资源的时间窗口。
 - 如果宿主进程余量已经正常但 tile warning 仍来自 chromium renderer 子进程，应降低页面本身提交给 renderer 的 tile 成本，而不是继续增加 App Java heap 或切软件层。
 
-### 5.7 高分屏渲染兼容模式
+### 5.7 高分屏渲染兼容补丁验证结论
 
 文件：[`WebViewActivity.kt`](../app/src/main/java/com/example/childkiosk/WebViewActivity.kt)、[`WebViewRuntime.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewRuntime.kt)、[`KioskPrefs.kt`](../app/src/main/java/com/example/childkiosk/util/KioskPrefs.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/com/example/childkiosk/ui/AdminConsoleScreen.kt)
 
-v0.0.23 后续日志确认：
+v0.0.24 曾新增“高分屏渲染兼容模式”，尝试通过 CSS/JS 注入降低动画、阴影、`filter`、`will-change` 和超宽内容的 tile 成本。后续实机验证结论：
 
-```text
-Process started: com.example.childkiosk:webview, webViewProcess=true
-Render mode applied: requested=AUTO, actual=HARDWARE, process=com.example.childkiosk:webview, memoryClass=384MB, largeMemoryClass=512MB, heapMax=512MB
-chromium(...): WARNING: tile memory limits exceeded, some content may not draw
-```
+- 该补丁没有解决核心渲染异常。
+- 开启后会禁用网页动画、改写页面样式，导致交互动画消失，和手机浏览器输出不一致。
+- 它属于侵入第三方页面渲染的通用补丁，不适合作为浏览器容器默认基线。
 
-这说明 `largeHeap` 和独立 `:webview` 进程已生效，但 warning 仍来自 Chromium renderer 子进程。Android WebView 没有公开 API 可以直接调大 renderer tile cache，因此新增“高分屏渲染兼容模式”：
+当前处理：
 
-- **自动**：默认值。`density >= 3.5` 且物理像素超过 400 万时启用。
-- **开启**：无条件注入兼容补丁，用于手动验证问题站点。
-- **关闭**：完全禁用补丁，用于对比正常浏览器视觉效果或排查误伤。
-
-通用补丁：
-
-- 禁用网页内高成本动画/transition 的长时间合成。
-- 清理 `will-change`、`filter`、`backdrop-filter` 等容易制造合成层的样式。
-- 保持 WebView 硬件默认合成路径，不再使用 `LAYER_TYPE_SOFTWARE`。
-
-已知站点补丁：
-
-- `pages.anzz.site/app/piano`：隐藏特效层，降低运行时键宽到 32px，移除键盘大阴影，并重排黑键位置。该页默认 88 键、52 个白键、`keyWidth=44px`，在 `DPR=4` 下横向内容约 9000+ 物理像素宽，是典型 tile 高压页面。
-- `pages.anzz.site/books`：停用全屏渐变动画、卡片 hover transform 和大阴影，降低首屏文章/卡片页的合成成本。
-
----
+- 配置界面移除“高分屏渲染兼容模式”。
+- 运行时不再注入高 DPR CSS/JS。
+- 旧版本保存过的高 DPR 配置不再影响页面加载。
+- 继续保持硬件合成和 `offscreenPreRaster=false`，通过降低宿主层负担而不是改写网页内容来保持浏览器一致性。
 
 ## 6. 当前仍可能导致渲染异常的风险点
 
@@ -403,14 +374,14 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 - 输出 CSS env safe area 的实际表现
 - 横屏和竖屏分别截图对比
 
-### 6.5 WebView 生命周期与 Compose AndroidView 时序
+### 6.5 WebView 生命周期与承载时序
 
-`AndroidView` attach、measure、layout 与 WebView 页面加载不是一个同步过程。`onPageFinished()` 只是主 frame 加载回调，不等于视觉上已经稳定。复杂 SPA 还会在 `onPageFinished()` 后继续拉数据、hydrate、懒加载。
+WebView attach、measure、layout 与页面加载不是一个同步过程。当前正式路径会等待 WebView 有有效尺寸后再 `loadUrl()`。`onPageFinished()` 只是主 frame 加载回调，不等于复杂 SPA 已完成 hydrate、接口请求和懒加载。
 
 后续可考虑使用：
 
-- `WebView.postVisualStateCallback()` 或 `WebViewCompat.postVisualStateCallback()` 等视觉状态回调，作为“页面可见/遮罩消失”的更强依据。
 - 页面诊断 JS：持续采样 DOM 节点数、body 文本长度、可见元素数、首屏非透明元素数。
+- 如果未来重新引入 Loading overlay，再评估 `WebView.postVisualStateCallback()` 或 `WebViewCompat.postVisualStateCallback()`；当前正式路径不使用全屏 overlay。
 
 ### 6.6 真实页面 WebView 复用
 
@@ -441,7 +412,6 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 - 是否开启 `offscreenPreRaster`。
 - 是否开启空白 WebView 热备或 URL 预加载。
 - 是否同时 attach 多个 WebView。
-- 是否启用了“高分屏渲染兼容模式”。如果日志中宿主进程已经是 `:webview` 且 `heapMax` 正常，但 warning 仍来自 chromium renderer 子进程，应通过兼容模式降低页面提交给 renderer 的 tile 成本。
 - 是否页面本身使用大量 Canvas/WebGL、CSS filter、固定背景、大图、复杂 transform 或超大阴影。
 - 设备是否为高 DPR、高分辨率且内存紧张。
 
@@ -471,10 +441,10 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 | `mixedContentMode` | 兼容模式 | 已满足，可配置严格阻止 | 默认兼容旧网页；安全需要时再严格 |
 | `hardwareAccelerated` | Activity 开启 | 已满足 | Canvas、视频、CSS 动画、合成层依赖 |
 | WebView 渲染模式 | 自动默认硬件 | 已修正，可切换硬件默认 | 保持 WebView 默认硬件合成路径；已禁用高 DPR 自动切软件层策略 |
-| 高分屏渲染兼容模式 | 自动 | 已新增，可强制开启/关闭 | 高 DPR 大屏设备自动注入轻量 CSS/JS 补丁，降低动画、阴影、filter、will-change 和超宽内容的 tile 成本 |
+| 高分屏渲染兼容补丁 | 不启用 | 已移除 | 实测会禁用动画、改写页面样式，导致交互效果和浏览器不一致 |
 | `largeHeap` | `true` | 已满足 | WebView-heavy、高 DPR 场景下增加宿主进程内存余量，降低 App 侧内存压力 |
 | WebView 进程 | 独立 `:webview` | 已满足 | 给 WebView 宿主单独进程预算，避免与主页/后台管理共享同一进程内存 |
-| `offscreenPreRaster` | `false` | 已满足，可配置开启 | 默认关闭以降低 tile 内存压力；只在确认需要预栅格化时手动开启 |
+| `offscreenPreRaster` | `false` | 已固定关闭 | 降低 tile 内存压力；旧保存项不再影响运行时 |
 | 空白 WebView 热备 | 默认关闭 | 已满足，可配置开启 | 热备提升冷启动速度，但会占用 WebView/Chromium 资源，高分屏或低内存设备优先保障真实页面绘制 |
 | URL 后台预加载 | 默认关闭 | 已满足，可配置开启 | 避免无感占用网络、内存和网站会话 |
 | UA | 默认显示并可切换/自定义 | 已满足 | 便于站点分流问题排查 |
@@ -487,7 +457,7 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 | 多窗口/`window.open` | 默认允许 | 已调整，可配置禁用 | `target=_blank`、OAuth、文档预览等常依赖新窗口 |
 | `file/content` 访问 | 默认允许 | 已调整，可配置限制 | 文件上传、预览、本地内容交互需要标准访问能力 |
 
-本轮基线复核结论：原有核心 WebSettings 渲染项已满足，但 `offscreenPreRaster=true`、默认空白 WebView 热备、URL 后台预加载和全屏 loading 退出动画都会在高分屏设备上放大首绘阶段的内存/合成压力，已经按“渲染稳定优先”调整为默认关闭或缩短。v0.0.22 验证过的高 DPR 自动切软件层策略会让 `tile memory limits exceeded` 更严重，已回退为硬件默认。v0.0.23 进一步验证 `largeHeap` 和独立 `:webview` 进程只能扩大宿主进程余量，不能直接调大 chromium renderer 的 tile cache；因此新增“高分屏渲染兼容模式”，用注入补丁降低页面本身的 renderer tile 成本。多个“网页浏览器沙箱限制”的默认值也已改为“默认按正常浏览器兼容基线放开，后台保留配置项，用户需要更严格儿童安全策略时再主动开启”。
+本轮基线复核结论：原有核心 WebSettings 渲染项已满足，但 `offscreenPreRaster=true`、默认空白 WebView 热备、URL 后台预加载、Compose `AndroidView` 宿主和全屏 Loading overlay 都会在高分屏设备上放大首绘阶段的内存/合成压力。v0.0.25 AB 测试确认原生 `FrameLayout + WebView` 承载可恢复问题页面渲染，因此已固化为正式路径。v0.0.22 的高 DPR 自动切软件层策略会让 `tile memory limits exceeded` 更严重；v0.0.24 的高 DPR CSS/JS 注入会破坏页面动画和样式；两者均不再作为默认基线。多个“网页浏览器沙箱限制”的默认值也已改为“默认按正常浏览器兼容基线放开，后台保留配置项，用户需要更严格儿童安全策略时再主动开启”。
 
 ### 7.2 调试基线
 
@@ -527,8 +497,8 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 
 - **资源拦截日志面板**：记录每个被 App 拦截的请求 URL、原因、mime、是否主 frame。
 - **WebView 环境诊断页**：一键展示 UA、viewport、visualViewport、DPR、Cookie、Storage、prefers-color-scheme。
-- **视觉状态回调接入**：用 `postVisualStateCallback` 改进 Loading 遮罩消失时机。
-- **站点兼容配置增强**：当前已支持高 DPR 渲染兼容补丁，后续可继续扩展为按域名覆盖 viewport、UA、mixed content、第三方 Cookie、多窗口等策略。
+- **document start 注入**：调试面板或用户自定义脚本如需更早注入，优先研究 AndroidX WebKit `DOCUMENT_START_SCRIPT`，不要恢复多轮延迟注入作为默认负担。
+- **站点兼容配置增强**：后续可扩展为按域名覆盖 viewport、UA、mixed content、第三方 Cookie、多窗口等策略；不要做全局视觉样式改写。
 - **截图对比回归**：同一 URL 用设备浏览器和 App WebView 截图比对，避免发布后才发现渲染退化。
 - **调试脚本健康检查**：Eruda/vConsole 注入后记录是否成功创建全局对象和面板 DOM。
 

@@ -29,7 +29,6 @@ object WebViewPool {
         val ctx = appContext ?: return
         if (Looper.myLooper() != Looper.getMainLooper()) return
         if (!ProcessUtils.isWebViewProcess(ctx)) return
-        if (KioskPrefs.getWebViewHostMode(ctx) == KioskPrefs.WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE) return
         if (!KioskPrefs.getWebViewWarmPoolEnabled(ctx)) return
 
         repeat((count - warmPool.size).coerceAtLeast(0)) {
@@ -44,7 +43,6 @@ object WebViewPool {
         val ctx = appContext ?: return
         if (Looper.myLooper() != Looper.getMainLooper()) return // WebView must be created on main thread
         if (!ProcessUtils.isWebViewProcess(ctx)) return
-        if (KioskPrefs.getWebViewHostMode(ctx) == KioskPrefs.WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE) return
         if (!KioskPrefs.getWebPreloadEnabled(ctx)) return
         val cleanUrl = url.trim()
         if (cleanUrl.isEmpty() || cleanUrl == "about:blank") return
@@ -136,7 +134,6 @@ object WebViewPool {
     fun acquire(url: String): PreloadEntry? {
         val ctx = appContext ?: return null
         if (!ProcessUtils.isWebViewProcess(ctx)) return null
-        if (KioskPrefs.getWebViewHostMode(ctx) == KioskPrefs.WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE) return null
         val cleanUrl = url.trim()
         pool.remove(cleanUrl)?.let { return it }
 
@@ -158,7 +155,6 @@ object WebViewPool {
         val ctx = appContext ?: return false
         if (Looper.myLooper() != Looper.getMainLooper()) return false
         if (!ProcessUtils.isWebViewProcess(ctx)) return false
-        if (KioskPrefs.getWebViewHostMode(ctx) == KioskPrefs.WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE) return false
         if (!KioskPrefs.getWebViewWarmPoolEnabled(ctx)) return false
         if (warmPool.any { it === webView } || pool.values.any { it.webView === webView }) return true
         if (warmPool.size >= MAX_WARM_POOL_SIZE) return false
@@ -211,9 +207,6 @@ object WebViewPool {
 
     fun snapshot(): String {
         val ctx = appContext
-        if (ctx != null && KioskPrefs.getWebViewHostMode(ctx) == KioskPrefs.WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE) {
-            return "轻量原生承载：热备/预加载已跳过"
-        }
         if (ctx != null && !ProcessUtils.isWebViewProcess(ctx)) {
             return "独立 WebView 进程：主页进程不保留热备/预加载"
         }

@@ -1,23 +1,27 @@
 # Tauri Android WebView 对比研究
 
-> 日期：2026-06-14  
+> 日期：2026-06-14
 > 背景：当前 App 在高 DPR 设备上打开部分网页时出现局部不绘制、交互异常或 loading 遮罩卡住；同一设备的系统浏览器或 Tauri 生成 APK 表现更正常。本文用于判断 Tauri 是否换了浏览器内核，以及本项目能借鉴什么。
+> 更新：v0.0.25 AB 测试已确认，原生 `FrameLayout + WebView` 承载下问题页面渲染正常；后续不迁移 Tauri，而是把该承载方式固化为正式路径。
 
 ## 1. 结论摘要
 
-1. **Tauri Android 不是内置另一套 Chromium，也不是绕开 Android WebView。**  
+1. **Tauri Android 不是内置另一套 Chromium，也不是绕开 Android WebView。**
    Tauri 官方文档明确说明 Android 上使用系统 `Android WebView`，不随 APK 打包 WebView，运行时版本取决于设备当前 WebView provider。
 
-2. **Tauri 表现更正常，主要不是内核差异，而是宿主差异。**  
+2. **Tauri 表现更正常，主要不是内核差异，而是宿主差异。**
    WRY/Tauri 的 Android WebView 是直接继承系统 `android.webkit.WebView` 的 `RustWebView`，然后在 Activity 中直接 `setContentView(webview)`。它没有 Compose `AndroidView`、Compose overlay、动画 loading、多 WebView 热备池这些额外层。
 
-3. **Tauri/WRY 的可借鉴点是“轻量、直接、标准化”的 WebView 宿主。**  
-   重点不是迁移到 Tauri，而是在本项目中实现一个“轻量原生 WebView 承载模式”：原生 `FrameLayout + WebView`，首屏直接挂真实 WebView，loading 尽快移除或改用 `postVisualStateCallback`，关闭热备/预加载，避免 Compose 合成层参与网页首绘。
+3. **Tauri/WRY 的可借鉴点是“轻量、直接、标准化”的 WebView 宿主。**
+   重点不是迁移到 Tauri，而是让本项目的真实网页直接由原生 `FrameLayout + WebView` 承载，避免 Compose `AndroidView`、全屏 Loading overlay 和额外动画层参与网页首绘。
 
-4. **Tauri 不能解决 Chromium renderer tile cache 本身的上限。**  
+4. **Tauri 不能解决 Chromium renderer tile cache 本身的上限。**
    如果日志仍然是 `tile memory limits exceeded, some content may not draw`，Tauri 也同样受系统 WebView renderer 预算约束。它最多通过更轻的宿主层降低额外压力，不提供公开方式“扩展 WebView renderer tile 内存”。
 
-5. **本项目还有一个和 Tauri/Android 官方基线不一致的点：WebViewPool 使用 application context 创建 WebView。**  
+5. **高分屏渲染兼容补丁不应作为默认策略。**
+   实机测试发现该补丁会禁用动画、改写页面样式，导致交互动画消失。当前正式路径已移除该补丁，优先用更轻的宿主结构解决问题。
+
+6. **本项目还有一个和 Tauri/Android 官方基线不一致的点：WebViewPool 使用 application context 创建 WebView。**
    Android 官方文档建议 WebView 应始终使用 Activity Context 创建，否则 JS dialog、autofill 等功能可能不完整。当前默认热备已关闭，所以它不是当前必然根因，但后续如果继续做复用，需要改成 Activity 级复用或 `MutableContextWrapper` 严格换绑 Activity。
 
 ## 2. 资料来源与已确认事实
@@ -124,135 +128,88 @@ Android 官方 `WebSettings.setOffscreenPreRaster` 文档说明：该模式会�
 
 ### 已确认
 
-1. **不是 Tauri 换了 Chromium。**  
+1. **不是 Tauri 换了 Chromium。**
    Tauri Android 仍是系统 Android WebView。
 
-2. **Tauri 的宿主链路更短。**  
+2. **Tauri 的宿主链路更短。**
    WRY 直接把 WebView 作为 Activity content view，本项目则通过 Compose `AndroidView` 承载，并叠加多个 Compose overlay/动画状态。
 
-3. **Tauri 的初始化脚本时机更早。**  
+3. **Tauri 的初始化脚本时机更早。**
    WRY 在支持时使用 AndroidX `DOCUMENT_START_SCRIPT`。本项目目前主要通过 `evaluateJavascript` 在 `onPageStarted`、`onPageFinished` 和延迟 pass 注入，时机更晚，对早期 feature probing、首屏计算、调试面板注入稳定性不如 document start。
 
-4. **Tauri 面向的是“一个 App 的前端壳”，不是“任意网页浏览器”。**  
+4. **Tauri 面向的是“一个 App 的前端壳”，不是“任意网页浏览器”。**
    Tauri 的网页通常是自己打包的前端，资源、CSP、权限、页面复杂度都可控。本项目要加载任意白名单远程网页，还要做沙箱、拦截、下载、权限、返回栈、家长控制、限时等额外逻辑。
 
 ### 需要 A/B 验证
 
-1. **Compose `AndroidView` 是否放大 tile 压力。**  
+1. **Compose `AndroidView` 是否放大 tile 压力。**
    目前日志显示 Chromium renderer tile memory 超限。Compose 本身不直接控制 renderer tile cache，但它可能通过额外 Surface/RenderNode/overlay、首屏 attach 时序、动态背景和动画，让 WebView 首帧附近的整体合成压力变高。
 
-2. **Loading overlay 是否只是视觉遮挡。**  
+2. **Loading overlay 是否只是视觉遮挡。**
    有些“卡在 100%”可能不是网页未渲染，而是 App overlay 状态没有及时消失。当前已有 12 秒兜底，但仍建议用 `postVisualStateCallback` 替代单纯依赖 `onPageFinished/progress=100`。
 
-3. **多 WebView stack 是否增加峰值内存。**  
+3. **多 WebView stack 是否增加峰值内存。**
    `target="_blank"`、热备、预加载、旧 WebView 未完全销毁时，可能让 renderer 同时服务多个 WebView。Tauri 多窗口更多走独立 Activity，生命周期边界更清晰。
 
 ## 5. 不建议直接迁移 Tauri 的原因
 
-1. **不能保证解决当前 tile memory warning。**  
+1. **不能保证解决当前 tile memory warning。**
    因为 Tauri 使用同一个系统 WebView provider。只要页面复杂度、DPR、屏幕像素和 Chromium renderer tile 预算相同，底层限制仍在。
 
-2. **Kiosk/Device Owner 能力迁移成本很高。**  
+2. **Kiosk/Device Owner 能力迁移成本很高。**
    当前项目已有 Device Owner、Lock Task、系统限制、白名单、限时、家长验证、缓存管理、UA 配置、调试注入等 Android 原生能力。迁到 Tauri 后仍要在 Kotlin 插件里重新接入这些能力。
 
-3. **Tauri 适合“自有前端 App”，不是最适合“儿童白名单浏览器”。**  
+3. **Tauri 适合“自有前端 App”，不是最适合“儿童白名单浏览器”。**
    本项目核心是受控浏览器和设备管控，不只是一个 HTML 前端壳。Tauri 的安全模型、capabilities、插件机制很有价值，但不是直接替代当前原生 Android 架构的低成本方案。
 
-4. **包体、构建链和调试复杂度会上升。**  
+4. **包体、构建链和调试复杂度会上升。**
    Tauri 引入 Rust、cargo、NDK、移动端桥接和插件体系。对当前问题而言，先做 Tauri-like 原生轻量宿主，收益/成本比更好。
 
-## 6. 推荐借鉴方案：轻量原生 WebView 承载模式
+## 6. 已采纳方案：原生 WebView 承载
 
-建议新增一个实验配置：
+v0.0.25 AB 测试后，本项目已不再把该方案作为“实验模式”，而是固化为正式 WebViewActivity 路径。
 
-```text
-网页性能优化 -> WebView 承载模式
-- 标准 Compose 承载：当前实现，兼容已有 UI/overlay/多窗口逻辑
-- 轻量原生承载：实验模式，直接原生 View 承载 WebView
-```
+当前基线：
 
-### 6.1 轻量原生承载目标
+1. Activity 内不使用 Compose `setContent` 承载真实网页。
+2. 根布局使用原生 `FrameLayout`。
+3. WebView 作为根布局第一个全屏子 View。
+4. 不使用全屏 Loading overlay；仅保留可选顶部细进度条。
+5. 不再注入高 DPR CSS/JS 补丁。
+6. `offscreenPreRaster=false` 固定关闭。
+7. 空白热备、URL 后台预加载、顶部进度条和 WebView 渲染模式保留为用户配置项，默认仍偏保守。
+8. 继续沿用当前安全、下载、权限、WebChromeClient、WebViewClient 和多窗口能力。
 
-1. Activity 内不使用 Compose `setContent`。
-2. 根布局使用 `FrameLayout`。
-3. WebView 用 Activity context 创建，并作为根布局第一个全屏子 View。
-4. Loading 使用普通 Android View 或尽量不显示全屏 overlay；如果显示，`postVisualStateCallback` 后立即移除。
-5. 默认禁用热备和 URL 预加载；轻量模式下每次打开真实页面都创建新 WebView，退出直接销毁。
-6. 沿用当前 `WebViewRuntime.applySettings()`，保证 WebSettings 基线一致。
-7. 沿用当前安全/下载/权限/WebChromeClient/WebViewClient 能力，但先避免多 WebView stack，`target="_blank"` 可先同 WebView 顶层导航或单独 Activity 打开。
-
-### 6.2 轻量原生承载的验证日志
-
-新增日志字段：
+当前关键日志：
 
 ```text
-Host mode applied: LIGHTWEIGHT_NATIVE
-WebView context: WebViewActivity
-Root container: FrameLayout
-Compose host: false
-Overlay mode: NONE | NATIVE_MINIMAL
-Warm pool: disabled
-Url preload: disabled
-```
-
-继续保留：
-
-```text
-Render mode applied: requested=..., actual=HARDWARE, screen=..., density=..., process=...
-High DPR render compat injected: result=...
+Host mode applied: NATIVE_FRAME_LAYOUT
+WebView diagnostics: event=..., renderMode=..., topProgress=..., warmPool=..., urlPreload=..., offscreenPreRaster=false, screen=..., density=..., process=...
+WebView surface: event=..., attached=..., size=..., layer=..., parent=FrameLayout, context=...
+Initial load after layout: ...
 Page started / Page finished
 chromium tile_manager WARNING
 ```
 
-### 6.3 A/B 判定方法
-
-同一设备、同一 WebView provider、清缓存后按如下顺序测试：
-
-1. `标准 Compose 承载 + 高分屏兼容自动`
-2. `标准 Compose 承载 + 高分屏兼容关闭`
-3. `轻量原生承载 + 高分屏兼容自动`
-4. `轻量原生承载 + 高分屏兼容关闭`
-
-每组打开：
-
-- `https://pages.anzz.site/app/piano/`
-- `https://pages.anzz.site/books`
-- `https://img-playground.anzz.site/`
-
-观察：
-
-- 首屏是否完整。
-- 是否还有 loading 100% 遮挡。
-- 5 秒内 `tile memory limits exceeded` 次数。
-- Chrome Inspect 的 `innerWidth/innerHeight/dpr/docScrollHeight` 是否一致。
-- 手势返回是否出现空白页。
-
-判定：
-
-| 结果 | 解释 | 下一步 |
-| --- | --- | --- |
-| 轻量模式明显减少 warning / 页面恢复 | 宿主层和 overlay 确实放大了压力 | 将轻量模式作为高 DPR 默认或推荐 |
-| 轻量模式 warning 数量接近，但兼容注入有效 | 主要是页面合成成本问题 | 继续做页面侧高 DPR 兼容策略 |
-| 轻量模式和兼容注入都无效 | 系统 WebView renderer 预算/驱动限制占主导 | 评估 Chrome Custom Tabs、GeckoView 或站点侧降复杂度 |
-| 只有 Tauri 正常、本项目轻量仍异常 | 继续对比 Tauri 具体 WebSettings/UA/系统栏/viewport/权限差异 | 抽样生成 Tauri demo 加载同 URL，抓同样日志 |
+这套基线的目标不是“模拟 Tauri”，而是吸收 Tauri/WRY 对 Android WebView 的关键启发：真实网页由尽量薄的原生宿主直接承载，宿主层不要额外参与网页首绘和视觉状态。
 
 ## 7. WebView 复用策略修正建议
 
 当前默认已经关闭热备和 URL 预加载，这是正确方向。后续如果继续做复用，应按以下规则收敛：
 
-1. **不要在全局 application context 下创建 WebView。**  
+1. **不要在全局 application context 下创建 WebView。**
    Android 官方文档要求 WebView 使用 Activity Context。当前 `WebViewPool.init(context.applicationContext)` 后创建热备 WebView，与官方基线不一致。
 
-2. **复用只做“同 Activity 生命周期内”的短周期复用。**  
+2. **复用只做“同 Activity 生命周期内”的短周期复用。**
    不跨 Activity、不卡全局静态池。Activity 销毁时 WebView 全部销毁。
 
-3. **优先复用初始化配置，不复用真实页面状态。**  
+3. **优先复用初始化配置，不复用真实页面状态。**
    真实 URL WebView 不回池。避免 history、service worker、JS 全局状态、权限状态污染下一个页面。
 
-4. **高 DPR 设备默认禁用复用。**  
+4. **高 DPR 设备默认禁用复用。**
    对 `density>=3.5` 且物理像素超过 400 万的设备，默认把内存预算全部留给当前可见页面。
 
-5. **如果必须预热，使用 `MutableContextWrapper` 并在 attach 前切换到 Activity context。**  
+5. **如果必须预热，使用 `MutableContextWrapper` 并在 attach 前切换到 Activity context。**
    这条需要谨慎实现和充分测试；比起直接全局热备，风险更低，但仍不建议作为默认策略。
 
 ## 8. 其他可借鉴点
@@ -310,35 +267,35 @@ Tauri mobile 的多窗口方案强调 Android Activity 边界。当前项目在�
 | GeckoView | 是，Firefox/Gecko | 可能绕开 Chromium tile 问题 | 包体大、兼容/调试/安全策略重做 | 作为最后备选 |
 | CEF Android | 是/半成品生态 | 不确定 | 维护成本很高 | 不建议 |
 
-## 10. 下一步推荐执行顺序
+## 10. 当前执行状态
 
-1. **实现轻量原生 WebView 承载模式。**  
-   这是最接近 Tauri/WRY 的低成本验证，不改变核心业务架构。v0.0.25 起已按 AB 测试路径实现，可在“网页性能优化 -> WebView 承载模式（AB 测试）”中切换。
+1. **原生 WebView 承载已验证并固化。**
+   v0.0.25 AB 测试确认，`FrameLayout + WebView` 路径下问题页面渲染正常。后续配置界面不再暴露“承载模式”概念，原生承载就是正式路径。
 
-2. **修正 WebViewPool 的 Context 基线。**  
-   禁止 application context 创建真实 WebView；高 DPR 下保持默认无热备、无 URL 预加载。
+2. **高分屏渲染兼容补丁已移除。**
+   该补丁虽然试图降低 tile 压力，但会禁用动画、改写页面样式，导致交互效果和正常浏览器不一致。后续不再作为通用兼容方案。
 
-3. **接入 document start 注入。**  
-   对调试面板、高 DPR CSS 和自定义脚本优先使用 AndroidX `DOCUMENT_START_SCRIPT`，保留现有多 pass 兜底。
+3. **保留但默认关闭的能力。**
+   空白 WebView 热备、网页后台预加载、顶部进度条和 WebView 渲染模式仍保留配置项，用于设备性能充足或兼容排查场景。
 
-4. **接入 `postVisualStateCallback` 控制 loading 消失。**  
-   用视觉提交回调判断 WebView 已经提交一帧，减少 100% overlay 卡住。
+4. **仍需谨慎的复用方向。**
+   如果继续优化 WebViewPool，应优先解决 Activity context / `MutableContextWrapper` 换绑和生命周期边界，避免复用旧 Activity context 或带入 `about:blank` 历史栈。
 
-5. **建立 Tauri demo 对照样本。**  
-   只做最小 Tauri Android demo，加载同一远程 URL，抓相同 logcat 和 Inspect 数据。若 Tauri demo 仍无 warning，再继续逐项 diff WebSettings、Activity theme、system UI、UA、viewport 和页面缩放。
+5. **脚本注入方向。**
+   如果后续需要更稳定的 Eruda/vConsole 或自定义脚本注入，应研究 AndroidX WebKit `DOCUMENT_START_SCRIPT`，不要恢复多轮延迟注入作为默认负担。
 
 ## 11. 当前判断
 
-当前最合理的工程判断是：
+当前工程判断：
 
 ```text
-不要先迁移 Tauri。
-先把本项目的 WebViewActivity 做出一个 Tauri-like 的轻量原生承载模式。
-如果轻量模式能解决或显著缓解，再把它作为高 DPR 设备默认路径。
-如果轻量模式无效，再证明问题主要在 Chromium renderer tile 预算或页面本身合成成本，届时再评估 GeckoView / Custom Tabs / 站点侧降复杂度。
+不迁移 Tauri。
+保留系统 Android WebView 内核。
+把 Tauri-like 的原生轻量宿主固化为正式 WebViewActivity 路径。
+避免宿主层 overlay、Compose wrapper 和通用样式注入干扰网页自己的渲染输出。
 ```
 
-这个路线能最快回答一个关键问题：**问题到底是宿主层放大了 WebView 压力，还是系统 WebView renderer 对这些页面在该设备上本身就扛不住。**
+这次验证回答了关键问题：异常主要由本项目旧宿主层放大 WebView 首绘/合成压力导致，而不是必须通过更换浏览器体系解决。
 
 ## 12. 参考链接
 

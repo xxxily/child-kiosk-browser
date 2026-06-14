@@ -21,6 +21,8 @@ object KioskPrefs {
     private const val KEY_ADMIN_ICON_ALPHA = "admin_icon_alpha"
     private const val KEY_MAIN_TITLE_TEXT = "main_title_text"
     private const val KEY_HIDE_MAIN_TITLE = "hide_main_title"
+    private const val KEY_BROWSER_SANDBOX_BASELINE_VERSION = "browser_sandbox_baseline_version"
+    private const val BROWSER_SANDBOX_BASELINE_VERSION = 1
 
     /** 屏幕固定软锁：调用 startLockTask() 触发系统「屏幕固定」，拦截 Home/最近任务。 */
     const val MODE_SOFT_LOCK = "SOFT_LOCK"
@@ -43,12 +45,9 @@ object KioskPrefs {
     const val WEBVIEW_RENDER_MODE_HARDWARE = "HARDWARE"
     const val WEBVIEW_RENDER_MODE_SOFTWARE = "SOFTWARE"
 
-    const val WEBVIEW_HIGH_DPR_COMPAT_AUTO = "AUTO"
-    const val WEBVIEW_HIGH_DPR_COMPAT_ENABLED = "ENABLED"
-    const val WEBVIEW_HIGH_DPR_COMPAT_DISABLED = "DISABLED"
-
-    const val WEBVIEW_HOST_MODE_COMPOSE = "COMPOSE"
-    const val WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE = "LIGHTWEIGHT_NATIVE"
+    private const val KEY_WEBVIEW_TOP_PROGRESS_ENABLED = "webview_top_progress_enabled"
+    private const val KEY_LEGACY_LIGHTWEIGHT_NATIVE_LOADING_INDICATOR_ENABLED =
+        "webview_lightweight_native_loading_indicator_enabled"
 
     fun getProtectionMode(context: Context): String {
         return prefs(context).getString(KEY_PROTECTION_MODE, DEFAULT_MODE) ?: DEFAULT_MODE
@@ -114,6 +113,18 @@ object KioskPrefs {
         prefs(context).edit().putBoolean(KEY_HIDE_MAIN_TITLE, hide).apply()
     }
 
+    fun applyBrowserSandboxDefaultBaseline(context: Context) {
+        val storage = prefs(context)
+        val appliedVersion = storage.getInt(KEY_BROWSER_SANDBOX_BASELINE_VERSION, 0)
+        if (appliedVersion >= BROWSER_SANDBOX_BASELINE_VERSION) return
+
+        storage.edit()
+            .putBoolean("limit_ad_block", false)
+            .putBoolean("limit_url_redirect", false)
+            .putInt(KEY_BROWSER_SANDBOX_BASELINE_VERSION, BROWSER_SANDBOX_BASELINE_VERSION)
+            .apply()
+    }
+
     fun getWebPreloadEnabled(context: Context): Boolean {
         return prefs(context).getBoolean("web_preload_enabled", false)
     }
@@ -130,12 +141,6 @@ object KioskPrefs {
         prefs(context).edit().putBoolean("webview_warm_pool_enabled", enabled).apply()
     }
 
-    fun isWebViewOffscreenPreRasterEnabled(context: Context): Boolean =
-        prefs(context).getBoolean("webview_offscreen_preraster_enabled", false)
-
-    fun setWebViewOffscreenPreRasterEnabled(context: Context, enabled: Boolean) =
-        prefs(context).edit().putBoolean("webview_offscreen_preraster_enabled", enabled).apply()
-
     fun getWebViewRenderMode(context: Context): String {
         return when (prefs(context).getString("webview_render_mode", WEBVIEW_RENDER_MODE_AUTO)) {
             WEBVIEW_RENDER_MODE_HARDWARE -> WEBVIEW_RENDER_MODE_HARDWARE
@@ -151,61 +156,20 @@ object KioskPrefs {
         prefs(context).edit().putString("webview_render_mode", normalized).apply()
     }
 
-    fun getWebViewHighDprCompatMode(context: Context): String {
-        return when (prefs(context).getString("webview_high_dpr_compat_mode", WEBVIEW_HIGH_DPR_COMPAT_AUTO)) {
-            WEBVIEW_HIGH_DPR_COMPAT_ENABLED -> WEBVIEW_HIGH_DPR_COMPAT_ENABLED
-            WEBVIEW_HIGH_DPR_COMPAT_DISABLED -> WEBVIEW_HIGH_DPR_COMPAT_DISABLED
-            else -> WEBVIEW_HIGH_DPR_COMPAT_AUTO
+    fun isWebViewTopProgressEnabled(context: Context): Boolean {
+        val storage = prefs(context)
+        return if (storage.contains(KEY_WEBVIEW_TOP_PROGRESS_ENABLED)) {
+            storage.getBoolean(KEY_WEBVIEW_TOP_PROGRESS_ENABLED, false)
+        } else {
+            storage.getBoolean(KEY_LEGACY_LIGHTWEIGHT_NATIVE_LOADING_INDICATOR_ENABLED, false)
         }
     }
 
-    fun setWebViewHighDprCompatMode(context: Context, mode: String) {
-        val normalized = when (mode) {
-            WEBVIEW_HIGH_DPR_COMPAT_ENABLED -> WEBVIEW_HIGH_DPR_COMPAT_ENABLED
-            WEBVIEW_HIGH_DPR_COMPAT_DISABLED -> WEBVIEW_HIGH_DPR_COMPAT_DISABLED
-            else -> WEBVIEW_HIGH_DPR_COMPAT_AUTO
-        }
-        prefs(context).edit().putString("webview_high_dpr_compat_mode", normalized).apply()
-    }
-
-    fun getWebViewHostMode(context: Context): String {
-        return when (prefs(context).getString("webview_host_mode", WEBVIEW_HOST_MODE_COMPOSE)) {
-            WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE -> WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE
-            else -> WEBVIEW_HOST_MODE_COMPOSE
-        }
-    }
-
-    fun setWebViewHostMode(context: Context, mode: String) {
-        val normalized = when (mode) {
-            WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE -> WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE
-            else -> WEBVIEW_HOST_MODE_COMPOSE
-        }
-        prefs(context).edit().putString("webview_host_mode", normalized).apply()
-    }
-
-    fun isWebViewVisualStateCallbackEnabled(context: Context): Boolean =
-        prefs(context).getBoolean("webview_visual_state_callback_enabled", true)
-
-    fun setWebViewVisualStateCallbackEnabled(context: Context, enabled: Boolean) =
-        prefs(context).edit().putBoolean("webview_visual_state_callback_enabled", enabled).apply()
-
-    fun isWebViewPageActivationEnabled(context: Context): Boolean =
-        prefs(context).getBoolean("webview_page_activation_enabled", true)
-
-    fun setWebViewPageActivationEnabled(context: Context, enabled: Boolean) =
-        prefs(context).edit().putBoolean("webview_page_activation_enabled", enabled).apply()
-
-    fun isWebViewDelayedInjectionPassesEnabled(context: Context): Boolean =
-        prefs(context).getBoolean("webview_delayed_injection_passes_enabled", true)
-
-    fun setWebViewDelayedInjectionPassesEnabled(context: Context, enabled: Boolean) =
-        prefs(context).edit().putBoolean("webview_delayed_injection_passes_enabled", enabled).apply()
-
-    fun isLightweightNativeLoadingIndicatorEnabled(context: Context): Boolean =
-        prefs(context).getBoolean("webview_lightweight_native_loading_indicator_enabled", false)
-
-    fun setLightweightNativeLoadingIndicatorEnabled(context: Context, enabled: Boolean) =
-        prefs(context).edit().putBoolean("webview_lightweight_native_loading_indicator_enabled", enabled).apply()
+    fun setWebViewTopProgressEnabled(context: Context, enabled: Boolean) =
+        prefs(context).edit()
+            .putBoolean(KEY_WEBVIEW_TOP_PROGRESS_ENABLED, enabled)
+            .remove(KEY_LEGACY_LIGHTWEIGHT_NATIVE_LOADING_INDICATOR_ENABLED)
+            .apply()
 
     fun getLastCacheClearTime(context: Context): Long {
         return prefs(context).getLong("last_cache_clear_time", 0L)
