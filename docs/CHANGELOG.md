@@ -6,6 +6,35 @@
 
 ## [Unreleased]
 
+## [0.0.18] - 2026-06-14
+
+### Added — 新增
+
+- **空白 WebView 热备池**：
+  - 默认保留 1 个已初始化的空白 WebView，打开网页时优先复用，降低冷创建成本。
+  - 保留 URL 级预加载开关，但将其默认关闭，避免无感占用网络、内存和网站会话。
+- **缓存大小统计与清理反馈**：
+  - 家长后台“网页性能优化”新增 WebView 数据、HTTP 缓存、代码缓存和合计大小统计。
+  - 清理缓存与 Cookie 后展示本次大致释放空间。
+- **首页 sticky 分类栏**：
+  - 首页标题随应用列表滚动消失，分类栏吸顶固定；列表回到顶部继续下拉时标题自然恢复。
+
+### Changed — 变更
+
+- **WebView 运行时配置统一化**：
+  - 统一抽取 WebView 设置，补充第三方 Cookie、混合内容兼容模式、浏览器 User-Agent 等选项，提升现代网页兼容性。
+  - 调试工具和自定义脚本注入默认改为多时机兜底，提升 Eruda/vConsole 在多页面、SPA 与重定向场景下的成功率。
+- **刘海屏系统信息显示策略**：
+  - Device Owner + Lock Task 模式下保留状态栏系统信息（时间、电量、网络），减少顶部黑条浪费。
+  - 非 Device Owner 场景仍保持沉浸式系统栏隐藏，避免无法可靠禁止通知栏下拉而带来逃逸风险。
+
+### Fixed — 修复
+
+- **Loading 100% 卡住问题**：
+  - 优化 Loading 遮罩状态与完成回调兜底，减少网页已渲染但仍停留在 App 加载遮罩的问题。
+- **白名单编辑横向选择不可达问题**：
+  - 新增/编辑白名单应用时，分类与代表图标选择支持横向滚动，超出可视范围的选项可正常选择。
+
 ## [0.0.12] - 2026-06-13
 
 ### Added — 新增
@@ -256,7 +285,8 @@
 - 调研报告 `docs/android_kiosk_research_report.md`
 - 需求规格 `docs/child_kiosk_browser_requirements.md`
 
-[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.18...HEAD
+[0.0.18]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.17...v0.0.18
 [0.0.4]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.1...v0.0.2
