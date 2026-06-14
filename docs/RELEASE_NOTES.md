@@ -1,3 +1,25 @@
+## Child Kiosk Browser v0.0.24
+
+本版本先把“高分屏渲染兼容模式”发出来用于实机验证。它不再继续尝试强行扩展 WebView renderer 的 tile 内存预算，而是提供一个可开关的兼容层，在高 DPR 大屏设备上降低页面高成本合成路径，重点验证 `tile memory limits exceeded, some content may not draw` 是否能被缓解。
+
+> **说明**：本 APK 使用 debug 签名，仅供调试与家庭内部部署。生产/商用请自行用正式 keystore 重新签名。
+
+### 本版本核心变化
+
+* **新增高分屏渲染兼容模式**：
+  - 家长后台“网页性能优化”新增“高分屏渲染兼容模式”，支持“自动 / 开启 / 关闭”。
+  - 自动模式会在 `DPR>=3.5` 且物理像素较高的设备上生效，用户当前 `1440x3056 / DPR=4` 设备会命中。
+  - 兼容层会降低长动画、`will-change`、`filter`、`backdrop-filter` 等高成本合成路径，减少 Chromium WebView renderer 的 tile 压力。
+* **站点级验证补丁**：
+  - 针对 `pages.anzz.site/app/piano`，降低运行时键宽、隐藏特效层、移除键盘大阴影并重排黑键，用于验证超宽钢琴键盘在高 DPR WebView 下的局部不绘制问题。
+  - 针对 `pages.anzz.site/books`，停用首屏渐变动画和卡片 hover transform，降低全屏渐变、阴影和动画带来的合成成本。
+* **诊断预期**：
+  - 测试时可继续抓取 `ChildKioskWebView:D chromium:I cr_WebView:I` 日志。
+  - 如果命中兼容层，日志应出现 `High DPR render compat injected`，并显示 `result=piano`、`result=books` 或 `result=generic`。
+  - 如果仍然出现大量 tile warning，下一步将实现“轻量原生 WebView 承载模式”，用于 A/B 对比 Compose/宿主层是否额外放大首绘压力。
+
+---
+
 ## Child Kiosk Browser v0.0.23
 
 本版本回滚 v0.0.22 的软件渲染 fallback，并按“扩展 WebView 可用进程内存”的方向做测试版修复：WebView 页面现在运行在独立 `:webview` 进程，应用启用 `largeHeap`，减少主页/后台管理对网页渲染进程预算的挤占。
