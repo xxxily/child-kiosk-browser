@@ -1,8 +1,8 @@
 # WebView 渲染异常复盘与一致性优化记录
 
-> 文档版本：1.1  
+> 文档版本：1.2
 > 创建日期：2026-06-14  
-> 状态：已按 7.1 默认基线完成代码对齐；浏览器沙箱限制默认兼容优先，可由用户主动加严  
+> 状态：已按 7.1 默认基线完成代码对齐；浏览器沙箱限制默认兼容优先；WebView tile 内存高压选项默认关闭
 > 关联代码：[`WebViewRuntime.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewRuntime.kt)、[`WebViewActivity.kt`](../app/src/main/java/com/example/childkiosk/WebViewActivity.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/com/example/childkiosk/ui/AdminConsoleScreen.kt)  
 > 相关文档：[`webview_white_screen_optimization.md`](./webview_white_screen_optimization.md)、[`webview_debugging_runbook.md`](./webview_debugging_runbook.md)
 
@@ -17,7 +17,7 @@
 - `https://pages.anzz.site/books`
 - `https://pages.anzz.site/books/人生哲理/老祖宗留下的10句话，说尽人生百态.html`
 
-其中 `pages.anzz.site/books` 系列页面的表现最典型：首屏布局异常，进入文章页后内容卡片、目录等模块看起来“没有渲染出来”。Eruda/Chrome Inspect 控制台没有明显 JavaScript 报错。
+其中 `pages.anzz.site/books` 系列页面的表现最典型：首屏布局异常，进入文章页后内容卡片、目录等模块看起来“没有渲染出来”。`pages.anzz.site/app/piano/` 的最新取证则显示：页面已经 `readyState=complete`，Network 与 Console 均无异常，但 logcat 出现 Chromium tile 内存超限。
 
 这类问题和传统“白屏”不同：
 
@@ -28,7 +28,7 @@
 
 ## 2. 直接根因
 
-本次问题由两类因素叠加触发。
+已确认的问题来源不止一类。早期修复处理的是视口/懒显示触发问题；最新 logcat 证据进一步确认，部分页面还会被 WebView 合成器 tile 内存预算影响。
 
 ### 2.1 WebView 被配置成了非手机浏览器式视口
 
@@ -90,6 +90,28 @@ cards.forEach(card => observer.observe(card));
 
 MDN 对 Intersection Observer 的定义也说明了这一点：它是异步观察目标元素与祖先元素或顶层文档 viewport 交叉变化的 API。换句话说，它非常依赖 viewport、滚动状态、布局完成时机和浏览器生命周期事件。
 
+### 2.3 Chromium tile 内存预算被打爆，导致内容跳过绘制
+
+用户针对 `https://pages.anzz.site/app/piano/` 提供的 logcat 中，关键证据是：
+
+```text
+Page finished: progress=100, canGoBack=false, url=https://pages.anzz.site/app/piano/
+WARNING: tile memory limits exceeded, some content may not draw
+```
+
+同一次 Chrome Inspect 采集结果显示：
+
+- `readyState=complete`
+- `innerWidth=360`、`innerHeight=764`、`devicePixelRatio=4`
+- `visualViewport.scale=1`
+- `bodyChildren=2`、`bodyTextLength=645`
+- `IntersectionObserver/ResizeObserver/visualViewport/WebGL` 均存在
+- Network 无异常，Console 无脚本报错
+
+这说明该页面不是没加载、不是 UA 分流错误、不是 viewport 为 0，也不是脚本崩溃。页面已经完成主 frame 加载，DOM 与运行环境正常，但 Chromium 的 compositor/tile manager 在栅格化阶段因为内存预算不足，选择跳过部分 tile 绘制，所以用户看到的是“加载完成但一部分界面没画出来”。
+
+本项目此前把 `WebSettings.offscreenPreRaster` 全局设为 `true`。该选项会让 WebView 对屏幕外内容提前栅格化，适合少数即将滑入可见区域的 WebView，但会增加 tile 内存占用。对 `DPR=4`、物理尺寸 `1440x3056` 这类高分屏设备来说，每个可见区域和离屏区域的 tile 都更贵；再叠加空白 WebView 热备、页面自身 Canvas/CSS 合成层，就可能触发 `tile memory limits exceeded`。
+
 ---
 
 ## 3. 为什么控制台没有报错
@@ -143,7 +165,7 @@ WebView 创建成本较高，复用可以改善性能，但复用真实加载过
 - UA、history、JS bridge、缓存、scroll、页面进程状态可能残留。
 - WebView parent/visibility/destroy 时序不正确时，会出现第二个页面卡 0%、加载回调丢失、旧页面状态污染新页面等问题。
 
-当前项目已经调整为：真实页面 WebView 不回收到全局热备池；只保留空白 WebView 热备。
+当前项目已经调整为：真实页面 WebView 不回收到全局热备池；空白 WebView 热备默认关闭，仅在用户手动开启时保留。
 
 ---
 
@@ -234,6 +256,31 @@ schedulePageActivation(view)
 
 这样后续遇到站点按 UA 分流时，可以快速确认真实请求头/JS 环境，而不是只能猜。
 
+### 5.5 降低 WebView tile 内存压力
+
+文件：[`WebViewRuntime.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewRuntime.kt)、[`KioskPrefs.kt`](../app/src/main/java/com/example/childkiosk/util/KioskPrefs.kt)、[`WebViewPool.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewPool.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/com/example/childkiosk/ui/AdminConsoleScreen.kt)
+
+最新修复后：
+
+```kotlin
+offscreenPreRaster = KioskPrefs.isWebViewOffscreenPreRasterEnabled(context)
+```
+
+默认值为 `false`，并在“网页性能优化”里作为高级开关提供。原因：
+
+- 它不是浏览器兼容必需项。
+- 它会增加 WebView tile 预栅格化内存。
+- 高分屏设备上 `DPR=4` 会显著放大 tile 成本。
+- logcat 已经明确出现 `tile memory limits exceeded, some content may not draw`。
+
+同时，空白 WebView 热备池默认值从开启调整为关闭。热备只优化冷创建耗时，但会提前初始化 Chromium/WebView 资源；当系统已经触发 `Trim memory critical` 时，默认热备会挤占真实页面的绘制预算。现在策略是：
+
+- 默认不保留热备 WebView。
+- 用户设备内存充足、追求打开速度时可手动开启。
+- 真实页面 WebView 仍然关闭即销毁，不回收到全局池。
+
+多窗口栈也改为只把当前顶层 WebView attach 到 Compose/Window。底层 WebView 实例保留在栈里，但不继续作为隐藏原生 View 参与窗口测量和绘制，降低多个 WebView surface 同时存在时的 tile 压力。
+
 ---
 
 ## 6. 当前仍可能导致渲染异常的风险点
@@ -307,7 +354,24 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 - 已 `clearHistory()`
 - 不保留真实页面的 history、scroll、storage、JS 全局状态
 
-当前项目采取保守策略：真实页面销毁，空白热备保留。
+当前项目采取保守策略：真实页面销毁；空白热备默认关闭，仅作为用户手动开启的启动速度优化项。
+
+### 6.7 Chromium tile 内存压力
+
+症状：
+
+- `onPageFinished()` 已到达，进度 100%。
+- Inspect 中 DOM、CSS、Network、Console 基本正常。
+- logcat 出现 `tile memory limits exceeded, some content may not draw`。
+- 页面不是整体白屏，而是部分模块、Canvas、背景、按钮或某些区域不绘制。
+
+优先排查：
+
+- 是否开启 `offscreenPreRaster`。
+- 是否开启空白 WebView 热备或 URL 预加载。
+- 是否同时 attach 多个 WebView。
+- 是否页面本身使用大量 Canvas/WebGL、CSS filter、固定背景、大图、复杂 transform 或超大阴影。
+- 设备是否为高 DPR、高分辨率且内存紧张。
 
 ---
 
@@ -334,6 +398,9 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 | `thirdPartyCookies` | 默认允许 | 已满足，可配置关闭 | 提升登录、嵌入组件、跨域鉴权兼容性 |
 | `mixedContentMode` | 兼容模式 | 已满足，可配置严格阻止 | 默认兼容旧网页；安全需要时再严格 |
 | `hardwareAccelerated` | Activity 开启 | 已满足 | Canvas、视频、CSS 动画、合成层依赖 |
+| `offscreenPreRaster` | `false` | 已满足，可配置开启 | 默认关闭以降低 tile 内存压力；只在确认需要预栅格化时手动开启 |
+| 空白 WebView 热备 | 默认关闭 | 已满足，可配置开启 | 热备提升冷启动速度，但会占用 WebView/Chromium 资源，高分屏或低内存设备优先保障真实页面绘制 |
+| URL 后台预加载 | 默认关闭 | 已满足，可配置开启 | 避免无感占用网络、内存和网站会话 |
 | UA | 默认显示并可切换/自定义 | 已满足 | 便于站点分流问题排查 |
 | 广告/弹窗过滤 | 默认关闭 | 已调整，可配置开启 | 避免误拦截脚本、CSS、字体、统计脚本依赖等子资源 |
 | 下载能力 | 默认允许 | 已调整，可配置禁用 | 正常浏览器应能处理下载；禁用时需要用户明确选择 |
@@ -344,7 +411,7 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 | 多窗口/`window.open` | 默认允许 | 已调整，可配置禁用 | `target=_blank`、OAuth、文档预览等常依赖新窗口 |
 | `file/content` 访问 | 默认允许 | 已调整，可配置限制 | 文件上传、预览、本地内容交互需要标准访问能力 |
 
-本轮基线复核结论：原有核心 WebSettings 渲染项已满足，但多个“网页浏览器沙箱限制”的默认值偏安全，容易让新用户首次打开页面就遇到资源缺失、跳转失败、长按/下载/新窗口/媒体能力异常。已将这些限制改为“默认按正常浏览器兼容基线放开，后台保留配置项，用户需要更严格儿童安全策略时再主动开启”。
+本轮基线复核结论：原有核心 WebSettings 渲染项已满足，但 `offscreenPreRaster=true` 和默认空白 WebView 热备会在高分屏设备上放大 Chromium tile 内存压力，已经按“渲染稳定优先”调整为默认关闭。多个“网页浏览器沙箱限制”的默认值也已改为“默认按正常浏览器兼容基线放开，后台保留配置项，用户需要更严格儿童安全策略时再主动开启”。
 
 ### 7.2 调试基线
 
@@ -420,20 +487,17 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 
 ## 9. 本次结论
 
-这次不是 WebView 版本过旧，也不是页面完全没加载，而是宿主 WebView 配置和页面懒显示机制之间的兼容性问题。
+这次不是 WebView 版本过旧，也不是页面完全没加载。已经确认存在两类不同问题：
 
-核心链路：
+1. 视口/生命周期触发问题：wide viewport、overview mode、attach/layout 时机可能让依赖 IntersectionObserver、懒加载和滚动揭示的页面停在隐藏态。
+2. tile 内存问题：页面加载完成、Inspect 无异常时，如果 logcat 出现 `tile memory limits exceeded, some content may not draw`，就是 Chromium 合成器在栅格化阶段因为内存预算不足跳过部分绘制。
 
-1. App 全局启用了 wide viewport + overview mode。
-2. 现代移动页期望真实手机 viewport。
-3. 启动视口/缩放/首屏高度与手机浏览器不同。
-4. 页面核心内容默认 `opacity: 0`。
-5. IntersectionObserver 没有按预期触发 `.visible`。
-6. 用户看到“内容模块没渲染”，但控制台没有报错。
+对 `pages.anzz.site/app/piano/`，最新证据更符合第二类：Inspect 显示 UA、viewport、DOM、功能 API、Network、Console 都正常；logcat 在 `Page finished` 后立刻提示 tile memory exceeded。
 
 当前修复的原则是：
 
 - 默认贴近手机浏览器视口。
+- 默认关闭高内存的离屏预栅格化和 WebView 热备。
 - UA 真实可见、可控制。
 - 页面完成后补偿通用生命周期和 viewport 事件。
 - 不对目标站点写特例。

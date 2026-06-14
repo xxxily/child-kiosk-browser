@@ -54,7 +54,7 @@ object WebViewRuntime {
             textZoom = 100
             builtInZoomControls = false
             displayZoomControls = false
-            offscreenPreRaster = true
+            offscreenPreRaster = KioskPrefs.isWebViewOffscreenPreRasterEnabled(context)
             safeBrowsingEnabled = true
 
             val defaultUserAgent = runCatching {

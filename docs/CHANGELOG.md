@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### Changed — 变更
+
+- **WebView 渲染内存基线收紧**：
+  - 默认关闭 `offscreenPreRaster`，避免高 DPR 设备上离屏预栅格化放大 Chromium tile 内存压力。
+  - 空白 WebView 热备默认改为关闭，保留后台开关供内存充足设备手动开启。
+  - 多窗口 WebView 栈只 attach 当前顶层 WebView，底层实例不再作为隐藏原生 View 继续参与窗口测量和绘制。
+
+### Fixed — 修复
+
+- **WebView 局部内容不绘制排查修正**：
+  - 根据 logcat 中 `tile memory limits exceeded, some content may not draw` 的证据，修正此前只按视口/懒加载方向排查的判断。
+  - 更新 WebView 渲染一致性文档与调试手册，将 tile 内存超限列为进度 100%、无网络/JS 错误但局部不绘制时的优先排查项。
+
 ## [0.0.20] - 2026-06-14
 
 ### Added — 新增

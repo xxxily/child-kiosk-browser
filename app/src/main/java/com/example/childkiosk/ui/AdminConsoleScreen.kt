@@ -804,6 +804,9 @@ fun AdminConsoleScreen(
                                 var lastClearSummary by remember { mutableStateOf<String?>(null) }
                                 var showClearCacheConfirm by remember { mutableStateOf(false) }
                                 var webViewWarmPoolEnabled by remember { mutableStateOf(KioskPrefs.getWebViewWarmPoolEnabled(context)) }
+                                var webViewOffscreenPreRasterEnabled by remember {
+                                    mutableStateOf(KioskPrefs.isWebViewOffscreenPreRasterEnabled(context))
+                                }
 
                                 fun refreshCacheStats() {
                                     isCacheStatsLoading = true
@@ -871,7 +874,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("保留 1 个空白 WebView 热备", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("不提前加载具体网站，仅复用已初始化的 WebView 容器，降低每次打开页面的创建成本", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("默认关闭。设备内存充足时可开启以降低冷创建耗时；低内存或高分屏设备建议关闭，避免挤占网页绘制预算", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = webViewWarmPoolEnabled,
@@ -882,6 +885,31 @@ fun AdminConsoleScreen(
                                                 WebViewPool.warmupBlank()
                                             } else {
                                                 WebViewPool.clear()
+                                            }
+                                            poolSnapshot = WebViewPool.snapshot()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("网页离屏预栅格化", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("默认关闭。开启可减少少数页面初显闪动，但会显著增加高分屏 WebView 的 tile 内存占用，可能导致页面局部不绘制", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = webViewOffscreenPreRasterEnabled,
+                                        onCheckedChange = {
+                                            webViewOffscreenPreRasterEnabled = it
+                                            KioskPrefs.setWebViewOffscreenPreRasterEnabled(context, it)
+                                            WebViewPool.clear()
+                                            if (webViewWarmPoolEnabled) {
+                                                WebViewPool.warmupBlank()
                                             }
                                             poolSnapshot = WebViewPool.snapshot()
                                         }

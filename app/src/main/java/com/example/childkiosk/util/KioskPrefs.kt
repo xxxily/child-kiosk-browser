@@ -112,12 +112,18 @@ object KioskPrefs {
     }
 
     fun getWebViewWarmPoolEnabled(context: Context): Boolean {
-        return prefs(context).getBoolean("webview_warm_pool_enabled", true)
+        return prefs(context).getBoolean("webview_warm_pool_enabled", false)
     }
 
     fun setWebViewWarmPoolEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean("webview_warm_pool_enabled", enabled).apply()
     }
+
+    fun isWebViewOffscreenPreRasterEnabled(context: Context): Boolean =
+        prefs(context).getBoolean("webview_offscreen_preraster_enabled", false)
+
+    fun setWebViewOffscreenPreRasterEnabled(context: Context, enabled: Boolean) =
+        prefs(context).edit().putBoolean("webview_offscreen_preraster_enabled", enabled).apply()
 
     fun getLastCacheClearTime(context: Context): Long {
         return prefs(context).getLong("last_cache_clear_time", 0L)

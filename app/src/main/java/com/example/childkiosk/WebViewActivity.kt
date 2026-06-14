@@ -28,7 +28,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
@@ -507,21 +506,21 @@ fun WebViewScreen(
             .background(Color(0xFFFFF8E1)) // 暖色底色兜底
     ) {
         if (webApp != null) {
-            webViewStack.forEachIndexed { index, wv ->
-                val isTop = index == webViewStack.lastIndex
-                AndroidView(
-                    factory = {
-                        scheduleMainInitialLoadIfNeeded(wv)
-                        wv
-                    },
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .alpha(if (isTop) 1f else 0f),
-                    update = { view ->
-                        scheduleMainInitialLoadIfNeeded(view)
-                        view.visibility = if (isTop) android.view.View.VISIBLE else android.view.View.GONE
-                    }
-                )
+            webViewRef?.let { topWebView ->
+                key(topWebView) {
+                    AndroidView(
+                        factory = {
+                            scheduleMainInitialLoadIfNeeded(topWebView)
+                            topWebView
+                        },
+                        modifier = Modifier
+                            .fillMaxSize(),
+                        update = { view ->
+                            scheduleMainInitialLoadIfNeeded(view)
+                            view.visibility = android.view.View.VISIBLE
+                        }
+                    )
+                }
             }
         }
 
