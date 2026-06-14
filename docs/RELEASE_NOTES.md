@@ -1,3 +1,24 @@
+## Child Kiosk Browser v0.0.22
+
+本版本继续针对 WebView 局部不绘制问题做验证型修复：当页面加载完成、JS/Network 正常，但 Chromium 仍报 `tile memory limits exceeded` 时，新增 WebView 渲染模式兜底，用软件兼容绘制绕开硬件 tile/GPU 合成预算不足。
+
+> **说明**：本 APK 使用 debug 签名，仅供调试与家庭内部部署。生产/商用请自行用正式 keystore 重新签名。
+
+### 本版本核心变化
+
+* **WebView 渲染模式兜底**：
+  - 家长后台“网页性能优化”新增“WebView 渲染模式”，支持“自动兼容 / 硬件默认 / 软件兼容”。
+  - 自动兼容模式会在高 DPR 大屏设备上自动切到软件兼容绘制；用户当前 `DPR=4`、`1440x3056` 的设备会命中该策略。
+  - 如果页面依赖 WebGL、复杂动画或高性能视频，可手动切回“硬件默认”做 A/B 测试。
+* **诊断日志增强**：
+  - 新增 `Render mode applied` 日志，显示请求模式、实际模式、屏幕像素和 density。
+  - 测试时优先确认日志里是否为 `actual=SOFTWARE`，再观察 `tile memory limits exceeded` 是否消失。
+* **文档修正**：
+  - 明确 `tile memory limits exceeded` 不是简单等同设备 RAM 不足，而是 WebView/Chromium 合成器 tile/GPU 栅格化预算不足。
+  - 调试手册补充软件兼容渲染模式的排查和切换步骤。
+
+---
+
 ## Child Kiosk Browser v0.0.21
 
 本版本针对用户通过 logcat 与 Chrome Inspect 捕获到的 WebView 局部不绘制问题做定向修复：当页面已加载完成、Network/Console 均正常，但 Chromium 报 `tile memory limits exceeded` 时，优先降低宿主 WebView 的 tile 内存压力。
