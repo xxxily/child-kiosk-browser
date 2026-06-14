@@ -6,6 +6,26 @@
 
 ## [Unreleased]
 
+## [0.0.28] - 2026-06-14
+
+### Fixed — 修复
+
+- **首屏认证弹窗横屏适配**：
+  - 首屏右上角管理锁触发的 PIN/口算认证弹窗增加高度约束和纵向滚动，固定横屏或短高度设备下按钮不再被裁切。
+  - 首屏 PIN 和口算认证均改为内置数字键盘，避免系统软键盘挤占横屏空间导致无法完整操作。
+
+### Changed — 变更
+
+- **运行时文案中性化**：
+  - 应用内可见文案弱化“家长”表述，统一改为“认证”“配置后台”“管理员”等更中性的说法。
+  - 菜单文案调整：“返回乐园”改为“返回空间”，“进入系统白名单及时间配置后台”改为“进入配置后台”，“退出并安全解锁（返回系统桌面）”改为“返回系统桌面”。
+
+### Documentation — 文档
+
+- **新增 Agent 公共开发规则**：
+  - 新增仓库级 `AGENTS.md`，记录横竖屏 UI 可达性、配置项生效反馈、WebView 独立进程配置快照、Android/Kiosk/WebView 生命周期与发布纪律等公共开发规范。
+  - 明确不应在项目规则中写入个人机器路径、本地工具别名、凭据或私有环境信息。
+
 ## [0.0.27] - 2026-06-14
 
 ### Fixed — 修复
@@ -442,7 +462,8 @@
 - 调研报告 `docs/android_kiosk_research_report.md`
 - 需求规格 `docs/child_kiosk_browser_requirements.md`
 
-[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.27...HEAD
+[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.28...HEAD
+[0.0.28]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.27...v0.0.28
 [0.0.27]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.26...v0.0.27
 [0.0.26]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.25...v0.0.26
 [0.0.25]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.24...v0.0.25
