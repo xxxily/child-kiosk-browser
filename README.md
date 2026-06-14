@@ -243,7 +243,7 @@ adb uninstall com.example.childkiosk
 
 ## 安全模型说明
 
-> 下表为 **Tier 1（Device Owner）** 下的完整防御矩阵。Tier 2（屏幕固定软锁）只覆盖 Home/最近任务拦截一项；WebView 沙箱相关的防御（window.open / Scheme / 跨域 / 广告 / 下载 / 权限 / SSL / OOM）在所有档位下均一致生效。
+> 下表为 **Tier 1（Device Owner）** 下的完整防御矩阵。Tier 2（屏幕固定软锁）只覆盖 Home/最近任务拦截一项；WebView 沙箱相关能力在所有档位下均可配置。为优先保证网页渲染和交互接近手机浏览器，广告过滤、跨域跳转、多窗口、下载、长按、定位、摄像头/麦克风、文件访问等限制默认关闭，家长可在“安全沙箱与限制”里按需加严。
 
 | 风险 | 防御方式 |
 | :--- | :--- |
@@ -253,12 +253,12 @@ adb uninstall com.example.childkiosk
 | 语音助手呼出 | `DISALLOW_VOICE_ASSISTANTS` 用户限制 |
 | ADB 远程注入 | `DISALLOW_DEBUGGING_FEATURES` 限制 |
 | 截屏分享逃逸 | `FLAG_SECURE` + `setScreenCaptureDisabled(true)` |
-| 网页 window.open | `setSupportMultipleWindows(false)` + `onCreateWindow` 返回 false |
+| 网页 window.open | 默认允许并由 App 内 WebView 栈承载；可配置为拦截 |
 | 外部 Scheme | `shouldOverrideUrlLoading` 仅放行 http/https |
-| 跨域跳转到广告站 | 主域同源校验，非同源直接拦截显示警告页 |
-| 网页内广告/追踪 | `shouldInterceptRequest` 命中 AdBlocker 黑名单返回空响应 |
-| 静默下载 APK | `setDownloadListener` 拦截，不写入磁盘 |
-| 麦克风/摄像头/位置 | `WebChromeClient.onPermissionRequest` 默认 deny |
+| 跨域跳转到广告站 | 默认允许正常跨域导航；可配置为主域同源校验，非同源直接拦截显示警告页 |
+| 网页内广告/追踪 | 默认不拦截子资源；可配置为 `shouldInterceptRequest` 命中 AdBlocker 黑名单返回空响应 |
+| 静默下载 APK | 默认交给系统 DownloadManager；可配置为拦截下载 |
+| 麦克风/摄像头/位置 | 默认允许网页按浏览器能力申请；可分别配置为直接拒绝 |
 | SSL 证书错误 | `handler.cancel()` + 应用内安全警告页 |
 | WebView OOM | 独立 `:webview` 子进程，崩溃不影响主进程 Kiosk 状态 |
 

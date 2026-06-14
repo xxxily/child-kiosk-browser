@@ -6,6 +6,37 @@
 
 ## [Unreleased]
 
+## [0.0.19] - 2026-06-14
+
+### Added — 新增
+
+- **WebView 渲染一致性复盘文档**：
+  - 新增 `docs/webview_rendering_consistency.md`，系统记录 WebView 与手机浏览器渲染不一致的根因、修复策略、基线配置和后续排查流程。
+- **User-Agent 可视化与自定义配置**：
+  - 家长后台“安全沙箱与限制”新增系统默认 UA、当前实际 UA 展示，并支持输入自定义 User-Agent。
+- **网页摄像头与麦克风限制配置**：
+  - 新增独立的“禁用网页摄像头与麦克风”开关，避免继续把媒体采集权限错误绑定到定位限制上。
+
+### Changed — 变更
+
+- **WebView 默认基线改为浏览器兼容优先**：
+  - 关闭全局 `useWideViewPort/loadWithOverviewMode`，避免现代移动响应式页面被缩放成非预期视口。
+  - 广告过滤、下载限制、长按限制、外链跳转限制、定位限制、多窗口限制、文件/content 访问限制默认改为关闭；相关限制仍保留在后台供家长按需加严。
+  - 下载默认交给系统 DownloadManager 处理，禁用下载时才阻断。
+- **浏览器沙箱说明文案调整**：
+  - “网页浏览器沙箱限制”顶部新增兼容基线说明，并逐项标明开启限制可能影响的网页能力。
+
+### Fixed — 修复
+
+- **WebView 局部内容不显示/交互异常问题**：
+  - 针对依赖 `IntersectionObserver`、滚动揭示、懒加载和可见性事件的页面，在页面完成后补发 `resize/scroll/pageshow/visibilitychange` 等通用事件，降低 DOM 已加载但内容保持透明或未激活的概率。
+- **多次打开网页后卡 0% 问题**：
+  - 真实页面 WebView 不再回收到全局热备池，退出页面时直接销毁，只保留空白 WebView 热备，避免旧页面状态污染新页面。
+- **缓存清理误触问题**：
+  - 清理网页缓存与 Cookie 前增加确认弹窗，并显示当前统计缓存大小。
+- **刘海屏与横屏系统栏显示问题**：
+  - 优化 Device Owner 场景下的状态栏策略，竖屏保留系统时间信息，横屏避免顶部半透明黑条。
+
 ## [0.0.18] - 2026-06-14
 
 ### Added — 新增
@@ -285,7 +316,8 @@
 - 调研报告 `docs/android_kiosk_research_report.md`
 - 需求规格 `docs/child_kiosk_browser_requirements.md`
 
-[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.18...HEAD
+[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.19...HEAD
+[0.0.19]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.18...v0.0.19
 [0.0.18]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.17...v0.0.18
 [0.0.4]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.2...v0.0.3
