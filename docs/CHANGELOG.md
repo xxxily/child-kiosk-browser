@@ -6,6 +6,23 @@
 
 ## [Unreleased]
 
+## [0.0.27] - 2026-06-14
+
+### Fixed — 修复
+
+- **横屏家长验证显示不完整**：
+  - WebView 退出/延时验证中的 PIN 和动态口算验证均改为 App 内置数字键盘，不再依赖系统软键盘。
+  - 验证内容放入可滚动容器，固定横屏、小高度设备下也能完整访问数字键、确认和取消按钮。
+- **WebView 设置变更后不立即生效**：
+  - 打开网站时从主页进程生成 WebView 运行时配置快照，并通过 Intent 传给独立 `:webview` 进程。
+  - “退出网站时需要验证”、下载限制、跳转限制、广告拦截、SSL 检查、媒体权限、地理位置、User-Agent、调试注入等 WebView 相关选项不再依赖 WebView 进程里的旧 SharedPreferences 缓存。
+  - WebView 启动时显式传递当前横/竖屏设置，固定方向下新打开的网站会按最新设置显示。
+
+### Changed — 变更
+
+- **管理锁图标默认透明度调整**：
+  - 新安装默认透明度从 40% 降为 20%，降低主页右上角锁图标对儿童使用界面的干扰。
+
 ## [0.0.26] - 2026-06-14
 
 ### Changed — 变更
@@ -425,7 +442,8 @@
 - 调研报告 `docs/android_kiosk_research_report.md`
 - 需求规格 `docs/child_kiosk_browser_requirements.md`
 
-[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.26...HEAD
+[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.27...HEAD
+[0.0.27]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.26...v0.0.27
 [0.0.26]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.25...v0.0.26
 [0.0.25]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.24...v0.0.25
 [0.0.24]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.23...v0.0.24
