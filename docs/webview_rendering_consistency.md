@@ -4,7 +4,7 @@
 > 创建日期：2026-06-14  
 > 状态：已按 7.1 默认基线完成代码对齐；浏览器沙箱限制默认兼容优先，可由用户主动加严  
 > 关联代码：[`WebViewRuntime.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewRuntime.kt)、[`WebViewActivity.kt`](../app/src/main/java/com/example/childkiosk/WebViewActivity.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/com/example/childkiosk/ui/AdminConsoleScreen.kt)  
-> 相关文档：[`webview_white_screen_optimization.md`](./webview_white_screen_optimization.md)
+> 相关文档：[`webview_white_screen_optimization.md`](./webview_white_screen_optimization.md)、[`webview_debugging_runbook.md`](./webview_debugging_runbook.md)
 
 ---
 
@@ -392,6 +392,8 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 ---
 
 ## 8. 后续遇到类似问题的排查流程
+
+详细操作命令和 Chrome Inspect 固定诊断脚本见 [`webview_debugging_runbook.md`](./webview_debugging_runbook.md)。本节只保留判断顺序。
 
 1. 先确认是否是 Loading 遮罩未消失，而不是网页没渲染。
 2. 打开 Chrome Inspect，看 Console 与 Network。

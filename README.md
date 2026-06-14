@@ -77,6 +77,8 @@ app/
 docs/
 ├── child_kiosk_browser_requirements.md   # 产品需求规格
 ├── android_kiosk_research_report.md      # 技术调研报告
+├── webview_rendering_consistency.md      # WebView 渲染一致性复盘
+├── webview_debugging_runbook.md          # logcat + Chrome Inspect 调试手册
 ├── CHANGELOG.md                          # 版本变更日志
 └── RELEASE_NOTES.md                      # 当前发布说明（用于 CI 推送 Release）
 ```

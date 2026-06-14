@@ -65,6 +65,7 @@ import org.json.JSONObject
 import java.lang.ref.WeakReference
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 class WebViewActivity : ComponentActivity() {
 
@@ -363,6 +364,13 @@ fun WebViewScreen(
     var loadProgress by remember(preloadEntry) { mutableIntStateOf(preloadEntry?.progress ?: 0) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var overlayShownTime by remember { mutableLongStateOf(if (preloadEntry?.isLoaded == true) 0L else System.currentTimeMillis()) }
+    val mainInitialLoadScheduled = remember(targetUrl) {
+        AtomicBoolean(preloadEntry?.isUrlPreload == true)
+    }
+    val shouldClearPreloadedHistoryNow = preloadEntry?.let {
+        it.isUrlPreload && (it.isLoaded || it.progress >= 100)
+    } == true
+    val shouldClearHistoryOnFirstFinish = preloadEntry?.webView != null && !shouldClearPreloadedHistoryNow
 
     // 多 Tab WebView 栈管理
     val webViewStack = remember { mutableStateListOf<WebView>() }
@@ -416,6 +424,7 @@ fun WebViewScreen(
                 onProgressUpdate = { progress -> loadProgress = progress },
                 onError = { error -> loadError = error },
                 existingWebView = preloadEntry?.webView,
+                clearHistoryOnFirstRealPageFinish = shouldClearHistoryOnFirstFinish,
                 onShowFileChooser = { callback, params ->
                     (context as? WebViewActivity)?.openFileChooser(callback, params) ?: false
                 },
@@ -426,17 +435,26 @@ fun WebViewScreen(
                 onWebViewReady(wv)
                 if (preloadEntry?.isUrlPreload == true) {
                     wv.post {
+                        if (shouldClearPreloadedHistoryNow) {
+                            clearInitialBlankHistory(wv, wv.url ?: targetUrl)
+                        }
                         scheduleInjectionPasses(wv, context)
+                        schedulePageActivation(wv)
                         if (wv.progress >= 100 || preloadEntry.isLoaded) {
                             loadProgress = 100
                             isPageLoading = false
                         }
                     }
-                } else {
-                    wv.loadUrl(targetUrl)
                 }
             }
         } else null
+    }
+
+    fun scheduleMainInitialLoadIfNeeded(view: WebView) {
+        if (view != mainWebView || targetUrl == "about:blank" || !mainInitialLoadScheduled.compareAndSet(false, true)) {
+            return
+        }
+        loadInitialUrlAfterFirstLayout(view, targetUrl)
     }
 
     LaunchedEffect(mainWebView) {
@@ -492,11 +510,15 @@ fun WebViewScreen(
             webViewStack.forEachIndexed { index, wv ->
                 val isTop = index == webViewStack.lastIndex
                 AndroidView(
-                    factory = { wv },
+                    factory = {
+                        scheduleMainInitialLoadIfNeeded(wv)
+                        wv
+                    },
                     modifier = Modifier
                         .fillMaxSize()
                         .alpha(if (isTop) 1f else 0f),
                     update = { view ->
+                        scheduleMainInitialLoadIfNeeded(view)
                         view.visibility = if (isTop) android.view.View.VISIBLE else android.view.View.GONE
                     }
                 )
@@ -735,10 +757,12 @@ private fun createSecureWebView(
     onProgressUpdate: (Int) -> Unit,
     onError: (String) -> Unit,
     existingWebView: WebView? = null,
+    clearHistoryOnFirstRealPageFinish: Boolean = false,
     onShowFileChooser: (ValueCallback<Array<Uri>>, WebChromeClient.FileChooserParams?) -> Boolean,
     onCreateWindow: (WebView) -> Unit
 ): WebView {
     val webView = existingWebView ?: WebView(ctx)
+    val shouldClearInitialHistory = AtomicBoolean(clearHistoryOnFirstRealPageFinish)
 
     return webView.apply {
         WebViewRuntime.applySettings(this, ctx, targetUrl)
@@ -754,6 +778,7 @@ private fun createSecureWebView(
         webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
+                Log.d("ChildKioskWebView", "Page started: $url")
                 onProgressUpdate(0)
                 view?.setBackgroundColor(android.graphics.Color.parseColor("#FFF8E1"))
                 if (view != null && view.progress < 100) {
@@ -766,10 +791,23 @@ private fun createSecureWebView(
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                Log.d(
+                    "ChildKioskWebView",
+                    "Page finished: progress=${view?.progress}, canGoBack=${view?.canGoBack()}, url=$url"
+                )
                 // 网页载入完成后恢复白色背景，防止无背景网页的文字无法看清
                 view?.setBackgroundColor(android.graphics.Color.WHITE)
 
                 if (view != null) {
+                    if (
+                        url != null &&
+                        WebViewRuntime.isWebUrl(url) &&
+                        shouldClearInitialHistory.compareAndSet(true, false)
+                    ) {
+                        view.post {
+                            clearInitialBlankHistory(view, url)
+                        }
+                    }
                     scheduleInjectionPasses(view, ctx, "PAGE_FINISHED")
                     schedulePageActivation(view)
                 }
@@ -790,6 +828,10 @@ private fun createSecureWebView(
             ) {
                 super.onReceivedError(view, request, error)
                 if (request?.isForMainFrame == true) {
+                    Log.w(
+                        "ChildKioskWebView",
+                        "Main frame error: ${error?.errorCode}, ${error?.description}, url=${request.url}"
+                    )
                     onLoadingStateChanged(false)
                     onError(error?.description?.toString() ?: "网络连接异常")
                 }
@@ -804,6 +846,10 @@ private fun createSecureWebView(
                 if (request?.isForMainFrame == true) {
                     val code = errorResponse?.statusCode ?: 200
                     if (code >= 400) {
+                        Log.w(
+                            "ChildKioskWebView",
+                            "Main frame HTTP error: HTTP $code, url=${request.url}"
+                        )
                         onLoadingStateChanged(false)
                         onError("服务器返回异常: HTTP $code")
                     }
@@ -842,6 +888,7 @@ private fun createSecureWebView(
                 val url = request?.url?.toString()
                 val host = request?.url?.host
                 if (KioskPrefs.isLimitAdBlockEnabled(ctx) && AdBlocker.isAdRequest(url ?: host)) {
+                    Log.d("ChildKioskWebView", "Blocked ad request: ${url ?: host}")
                     return WebResourceResponse(
                         "text/plain",
                         "utf-8",
@@ -858,6 +905,7 @@ private fun createSecureWebView(
                 error: SslError?
             ) {
                 if (KioskPrefs.isLimitSslCheckEnabled(ctx)) {
+                    Log.w("ChildKioskWebView", "SSL error blocked: ${error?.url}")
                     handler?.cancel()
                     onLoadingStateChanged(false)
                     onSslError(error?.url ?: "未知链接")
@@ -997,6 +1045,37 @@ private fun enqueueDownload(
     }.onFailure { e ->
         Toast.makeText(context, "无法开始下载：${e.message}", Toast.LENGTH_SHORT).show()
     }
+}
+
+private fun loadInitialUrlAfterFirstLayout(webView: WebView, targetUrl: String) {
+    fun attempt(remainingAttempts: Int) {
+        if (!webView.isAttachedToWindow || webView.width <= 0 || webView.height <= 0) {
+            if (remainingAttempts > 0) {
+                webView.postDelayed({ attempt(remainingAttempts - 1) }, 50)
+            } else {
+                webView.post { webView.loadUrl(targetUrl) }
+            }
+            return
+        }
+        webView.post {
+            Log.d(
+                "ChildKioskWebView",
+                "Initial load after layout: ${webView.width}x${webView.height}, url=$targetUrl"
+            )
+            webView.loadUrl(targetUrl)
+            schedulePageActivation(webView)
+        }
+    }
+    webView.post { attempt(20) }
+}
+
+private fun clearInitialBlankHistory(webView: WebView, currentUrl: String) {
+    if (!WebViewRuntime.isWebUrl(currentUrl)) return
+    webView.clearHistory()
+    Log.d(
+        "ChildKioskWebView",
+        "Cleared initial blank history for warm WebView: $currentUrl"
+    )
 }
 
 @Composable
