@@ -1,3 +1,25 @@
+## Child Kiosk Browser v0.0.23
+
+本版本回滚 v0.0.22 的软件渲染 fallback，并按“扩展 WebView 可用进程内存”的方向做测试版修复：WebView 页面现在运行在独立 `:webview` 进程，应用启用 `largeHeap`，减少主页/后台管理对网页渲染进程预算的挤占。
+
+> **说明**：本 APK 使用 debug 签名，仅供调试与家庭内部部署。生产/商用请自行用正式 keystore 重新签名。
+
+### 本版本核心变化
+
+* **扩展 WebView 可用内存路径**：
+  - `WebViewActivity` 切换到独立 `:webview` 进程，避免 WebView 与主页 Compose、Room、图片加载和后台管理页共享同一个 App 进程内存预算。
+  - 应用声明 `android:largeHeap="true"`，提高 WebView-heavy、高 DPR 设备上的宿主进程内存上限。
+  - WebView 进程启动时设置独立 data directory suffix，避免多进程 WebView 数据目录冲突。
+* **回滚错误的软件渲染 fallback**：
+  - 禁用 v0.0.22 的高 DPR 自动切 `LAYER_TYPE_SOFTWARE` 策略；你的日志已经证明 `actual=SOFTWARE` 会让 `tile memory limits exceeded` 大量刷屏。
+  - “WebView 渲染模式”后台选项收敛为“自动默认 / 硬件默认”，旧配置保存过 `SOFTWARE` 时自动退回 `AUTO`。
+* **首绘与诊断优化**：
+  - 主进程不再创建 WebView 热备/预加载实例，热备只允许在 `:webview` 进程内生效。
+  - 页面加载完成后移除全屏 loading 退出淡出，并将最小遮罩时间降到 120ms，减少首绘阶段额外合成压力。
+  - `Render mode applied` 日志新增进程名、`memoryClass/largeMemoryClass/heapMax/heapTotal/heapFree`，测试时应看到 `process=com.example.childkiosk:webview` 和 `actual=HARDWARE`。
+
+---
+
 ## Child Kiosk Browser v0.0.22
 
 本版本继续针对 WebView 局部不绘制问题做验证型修复：当页面加载完成、JS/Network 正常，但 Chromium 仍报 `tile memory limits exceeded` 时，新增 WebView 渲染模式兜底，用软件兼容绘制绕开硬件 tile/GPU 合成预算不足。

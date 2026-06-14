@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [0.0.23] - 2026-06-14
+
 ### Changed — 变更
 
 - **WebView tile 内存策略回滚**：
@@ -385,7 +387,8 @@
 - 调研报告 `docs/android_kiosk_research_report.md`
 - 需求规格 `docs/child_kiosk_browser_requirements.md`
 
-[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.22...HEAD
+[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.23...HEAD
+[0.0.23]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.22...v0.0.23
 [0.0.22]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.21...v0.0.22
 [0.0.21]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.20...v0.0.21
 [0.0.20]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.19...v0.0.20
