@@ -49,17 +49,18 @@ object WebViewRuntime {
             }
 
             cacheMode = WebSettings.LOAD_DEFAULT
-            useWideViewPort = true
-            loadWithOverviewMode = true
+            useWideViewPort = false
+            loadWithOverviewMode = false
             textZoom = 100
             builtInZoomControls = false
             displayZoomControls = false
             offscreenPreRaster = true
             safeBrowsingEnabled = true
 
-            if (KioskPrefs.isUseBrowserUserAgentEnabled(context)) {
-                userAgentString = browserLikeUserAgent(userAgentString)
-            }
+            val defaultUserAgent = runCatching {
+                WebSettings.getDefaultUserAgent(context)
+            }.getOrDefault(userAgentString)
+            userAgentString = resolveUserAgent(context, defaultUserAgent)
         }
 
         val limitLongClick = KioskPrefs.isLimitLongClickEnabled(context)
@@ -94,7 +95,19 @@ object WebViewRuntime {
         return host == originalHost || host.endsWith(".$originalHost")
     }
 
-    private fun browserLikeUserAgent(defaultUserAgent: String): String {
+    fun resolveUserAgent(context: Context, defaultUserAgent: String): String {
+        val customUserAgent = KioskPrefs.getCustomUserAgent(context).trim()
+        if (customUserAgent.isNotEmpty()) {
+            return customUserAgent
+        }
+        return if (KioskPrefs.isUseBrowserUserAgentEnabled(context)) {
+            browserLikeUserAgent(defaultUserAgent)
+        } else {
+            defaultUserAgent
+        }
+    }
+
+    fun browserLikeUserAgent(defaultUserAgent: String): String {
         return defaultUserAgent
             .replace("; wv", "")
             .replace("Version/4.0 ", "")

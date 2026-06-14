@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.UserManager
 import android.provider.Settings
+import android.content.res.Configuration
 import android.util.Log
 import android.view.KeyEvent
 import android.view.WindowManager
@@ -145,6 +146,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         applySystemUiMode()
+        WebViewPool.warmupBlank()
         triggerKioskIfNeeded()
     }
 
@@ -235,7 +237,7 @@ class MainActivity : ComponentActivity() {
         return ::dpm.isInitialized &&
             dpm.isDeviceOwnerApp(packageName) &&
             KioskPrefs.isLimitStatusBarEnabled(this) &&
-            isInLockTaskMode()
+            resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE
     }
 
     private fun applyUserRestriction(admin: ComponentName, restriction: String, enabled: Boolean) {

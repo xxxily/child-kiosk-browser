@@ -215,7 +215,10 @@ fun KioskMainScreen(
                         categories = categories,
                         selectedCategory = selectedCategory,
                         onCategorySelected = { selectedCategory = it },
-                        tabPaddingVertical = tabPaddingVertical
+                        tabPaddingVertical = tabPaddingVertical,
+                        backgroundBrush = Brush.verticalGradient(
+                            colors = listOf(Color(0xFFFFEE58), Color(0xFFFDD835))
+                        )
                     )
                 }
 
@@ -367,12 +370,13 @@ private fun CategoryStickyTabs(
     categories: List<Pair<String, String>>,
     selectedCategory: String,
     onCategorySelected: (String) -> Unit,
-    tabPaddingVertical: androidx.compose.ui.unit.Dp
+    tabPaddingVertical: androidx.compose.ui.unit.Dp,
+    backgroundBrush: Brush
 ) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFFFDD835))
+            .background(backgroundBrush)
             .padding(bottom = 2.dp)
     ) {
         Row(

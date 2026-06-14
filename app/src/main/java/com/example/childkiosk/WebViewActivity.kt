@@ -2,11 +2,13 @@ package com.example.childkiosk
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.net.http.SslError
 import android.os.Bundle
+import android.os.Environment
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
@@ -189,9 +191,7 @@ class WebViewActivity : ComponentActivity() {
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
         rootWebView?.let { webView ->
-            if (!WebViewPool.recycleBlank(webView)) {
-                destroyWebViewSafely(webView)
-            }
+            destroyWebViewSafely(webView)
         }
         rootWebView = null
         super.onDestroy()
@@ -450,9 +450,7 @@ fun WebViewScreen(
         onDispose {
             webViewStack.forEach { wv ->
                 if (wv == mainWebView) {
-                    if (!WebViewPool.recycleBlank(wv)) {
-                        destroyWebViewSafely(wv)
-                    }
+                    destroyWebViewSafely(wv)
                     onWebViewReleased(wv)
                 } else {
                     destroyWebViewSafely(wv)
@@ -773,6 +771,7 @@ private fun createSecureWebView(
 
                 if (view != null) {
                     scheduleInjectionPasses(view, ctx, "PAGE_FINISHED")
+                    schedulePageActivation(view)
                 }
 
                 waitForMeaningfulContent(view) { hasContent ->
@@ -874,6 +873,7 @@ private fun createSecureWebView(
                 onProgressUpdate(newProgress)
                 if (newProgress >= 100) {
                     view?.postDelayed({
+                        schedulePageActivation(view)
                         waitForMeaningfulContent(view) { onLoadingStateChanged(false) }
                     }, 250)
                 }
@@ -885,7 +885,7 @@ private fun createSecureWebView(
                 val allowed = requested.filter { resource ->
                     when (resource) {
                         PermissionRequest.RESOURCE_VIDEO_CAPTURE,
-                        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> !KioskPrefs.isLimitGeolocationEnabled(ctx)
+                        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> !KioskPrefs.isLimitMediaCaptureEnabled(ctx)
                         else -> true
                     }
                 }.toTypedArray()
@@ -894,6 +894,13 @@ private fun createSecureWebView(
                 } else {
                     request.grant(allowed)
                 }
+            }
+
+            override fun onGeolocationPermissionsShowPrompt(
+                origin: String?,
+                callback: GeolocationPermissions.Callback?
+            ) {
+                callback?.invoke(origin, !KioskPrefs.isLimitGeolocationEnabled(ctx), false)
             }
 
             override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
@@ -950,11 +957,45 @@ private fun createSecureWebView(
             }
         }
 
-        setDownloadListener { _, _, _, _, _ ->
-            if (com.example.childkiosk.util.KioskPrefs.isLimitDownloadEnabled(ctx)) {
+        setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+            if (KioskPrefs.isLimitDownloadEnabled(ctx)) {
                 onDownloadBlocked()
+            } else {
+                enqueueDownload(ctx, url, userAgent, contentDisposition, mimeType)
             }
         }
+    }
+}
+
+private fun enqueueDownload(
+    context: Context,
+    url: String?,
+    userAgent: String?,
+    contentDisposition: String?,
+    mimeType: String?
+) {
+    if (url.isNullOrBlank()) return
+    runCatching {
+        val uri = Uri.parse(url)
+        val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
+        val request = DownloadManager.Request(uri).apply {
+            setMimeType(mimeType)
+            addRequestHeader("User-Agent", userAgent.orEmpty())
+            CookieManager.getInstance().getCookie(url)?.let { cookie ->
+                addRequestHeader("Cookie", cookie)
+            }
+            setTitle(fileName)
+            setDescription(uri.host ?: url)
+            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+            setAllowedOverMetered(true)
+            setAllowedOverRoaming(true)
+        }
+        val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        manager.enqueue(request)
+        Toast.makeText(context, "已开始下载：$fileName", Toast.LENGTH_SHORT).show()
+    }.onFailure { e ->
+        Toast.makeText(context, "无法开始下载：${e.message}", Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -1220,6 +1261,60 @@ private fun scheduleInjectionPasses(webView: WebView, context: Context, primaryT
             injectCustomScriptIfNeeded(webView, context, "BOTH")
         }, delayMs)
     }
+}
+
+private fun schedulePageActivation(webView: WebView?) {
+    webView ?: return
+    listOf(0L, 120L, 450L, 1200L).forEach { delayMs ->
+        webView.postDelayed({
+            refreshPageViewportState(webView)
+        }, delayMs)
+    }
+}
+
+private fun refreshPageViewportState(webView: WebView) {
+    val js = """
+        (function() {
+            function fire(target, name) {
+                try { target.dispatchEvent(new Event(name)); } catch(e) {}
+            }
+            function pulse() {
+                fire(window, 'focus');
+                fire(window, 'pageshow');
+                fire(window, 'resize');
+                fire(window, 'scroll');
+                fire(document, 'visibilitychange');
+                if (window.visualViewport) {
+                    fire(window.visualViewport, 'resize');
+                    fire(window.visualViewport, 'scroll');
+                }
+                try {
+                    var root = document.scrollingElement || document.documentElement || document.body;
+                    if (root) {
+                        var x = window.scrollX || root.scrollLeft || 0;
+                        var y = window.scrollY || root.scrollTop || 0;
+                        root.getBoundingClientRect();
+                        if (root.scrollHeight > root.clientHeight) {
+                            root.scrollTop = y + 1;
+                            root.scrollTop = y;
+                            window.scrollTo(x, y);
+                        }
+                    }
+                } catch(e) {}
+            }
+            pulse();
+            try {
+                requestAnimationFrame(function() {
+                    pulse();
+                    setTimeout(pulse, 80);
+                });
+            } catch(e) {
+                setTimeout(pulse, 80);
+            }
+            return true;
+        })();
+    """.trimIndent()
+    webView.evaluateJavascript(js, null)
 }
 
 private fun waitForMeaningfulContent(webView: WebView?, onResult: (Boolean) -> Unit) {

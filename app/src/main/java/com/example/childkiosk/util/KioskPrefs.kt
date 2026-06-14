@@ -160,29 +160,32 @@ object KioskPrefs {
     fun setLimitVolumeKeysEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_volume_keys", enabled).apply()
 
     // 3. 网页浏览器沙箱限制
-    fun isLimitAdBlockEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_ad_block", true)
+    fun isLimitAdBlockEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_ad_block", false)
     fun setLimitAdBlockEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_ad_block", enabled).apply()
 
-    fun isLimitDownloadEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_download", true)
+    fun isLimitDownloadEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_download", false)
     fun setLimitDownloadEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_download", enabled).apply()
 
-    fun isLimitLongClickEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_long_click", true)
+    fun isLimitLongClickEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_long_click", false)
     fun setLimitLongClickEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_long_click", enabled).apply()
 
-    fun isLimitUrlRedirectEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_url_redirect", true)
+    fun isLimitUrlRedirectEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_url_redirect", false)
     fun setLimitUrlRedirectEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_url_redirect", enabled).apply()
 
-    fun isLimitGeolocationEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_geolocation", true)
+    fun isLimitGeolocationEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_geolocation", false)
     fun setLimitGeolocationEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_geolocation", enabled).apply()
 
     fun isLimitSslCheckEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_ssl_check", true)
     fun setLimitSslCheckEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_ssl_check", enabled).apply()
 
-    fun isLimitMultiWindowEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_multi_window", true)
+    fun isLimitMultiWindowEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_multi_window", false)
     fun setLimitMultiWindowEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_multi_window", enabled).apply()
 
-    fun isLimitFileAccessEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_file_access", true)
+    fun isLimitFileAccessEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_file_access", false)
     fun setLimitFileAccessEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_file_access", enabled).apply()
+
+    fun isLimitMediaCaptureEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_media_capture", false)
+    fun setLimitMediaCaptureEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_media_capture", enabled).apply()
 
     fun isThirdPartyCookiesEnabled(context: Context): Boolean = prefs(context).getBoolean("third_party_cookies_enabled", true)
     fun setThirdPartyCookiesEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("third_party_cookies_enabled", enabled).apply()
@@ -192,6 +195,9 @@ object KioskPrefs {
 
     fun isUseBrowserUserAgentEnabled(context: Context): Boolean = prefs(context).getBoolean("use_browser_user_agent", true)
     fun setUseBrowserUserAgentEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("use_browser_user_agent", enabled).apply()
+
+    fun getCustomUserAgent(context: Context): String = prefs(context).getString("custom_user_agent", "") ?: ""
+    fun setCustomUserAgent(context: Context, userAgent: String) = prefs(context).edit().putString("custom_user_agent", userAgent).apply()
 
     // 4. 网页调试与开发配置
     fun getWebDebugTool(context: Context): String = prefs(context).getString("web_debug_tool", "NONE") ?: "NONE"

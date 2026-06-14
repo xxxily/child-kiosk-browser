@@ -37,6 +37,7 @@ import com.example.childkiosk.util.HashUtils
 import com.example.childkiosk.util.KioskPrefs
 import com.example.childkiosk.util.WebDataManager
 import com.example.childkiosk.util.WebDataStats
+import com.example.childkiosk.util.WebViewRuntime
 import com.example.childkiosk.util.WebViewPool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -801,6 +802,8 @@ fun AdminConsoleScreen(
                                 var isCacheStatsLoading by remember { mutableStateOf(false) }
                                 var isClearingCache by remember { mutableStateOf(false) }
                                 var lastClearSummary by remember { mutableStateOf<String?>(null) }
+                                var showClearCacheConfirm by remember { mutableStateOf(false) }
+                                var webViewWarmPoolEnabled by remember { mutableStateOf(KioskPrefs.getWebViewWarmPoolEnabled(context)) }
 
                                 fun refreshCacheStats() {
                                     isCacheStatsLoading = true
@@ -814,12 +817,53 @@ fun AdminConsoleScreen(
                                     }
                                 }
 
+                                fun clearWebCache() {
+                                    if (isClearingCache) return
+                                    isClearingCache = true
+                                    val beforeBytes = cacheStats?.totalBytes
+                                    WebViewPool.clear()
+                                    scope.launch {
+                                        runCatching {
+                                            withContext(Dispatchers.Main) {
+                                                android.webkit.WebView(context).apply {
+                                                    clearCache(true)
+                                                    destroy()
+                                                }
+                                                android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                                                android.webkit.CookieManager.getInstance().flush()
+                                            }
+                                            withContext(Dispatchers.IO) {
+                                                WebDataManager.clearKnownWebCacheFiles(context)
+                                            }
+                                        }.onSuccess {
+                                            if (webViewWarmPoolEnabled) {
+                                                WebViewPool.warmupBlank()
+                                            }
+                                            val after = withContext(Dispatchers.IO) {
+                                                WebDataManager.collectStats(context)
+                                            }
+                                            cacheStats = after
+                                            poolSnapshot = WebViewPool.snapshot()
+                                            KioskPrefs.setLastCacheClearTime(context, System.currentTimeMillis())
+                                            val released = beforeBytes?.let { (it - after.totalBytes).coerceAtLeast(0L) }
+                                            lastClearSummary = if (released != null) {
+                                                "本次清理释放约 ${WebDataManager.formatBytes(released)}"
+                                            } else {
+                                                "清理完成，当前合计 ${WebDataManager.formatBytes(after.totalBytes)}"
+                                            }
+                                            Toast.makeText(context, "网页缓存和 Cookie 已清理", Toast.LENGTH_SHORT).show()
+                                        }.onFailure { e ->
+                                            Toast.makeText(context, "清理失败：${e.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                        isClearingCache = false
+                                    }
+                                }
+
                                 LaunchedEffect(Unit) {
                                     refreshCacheStats()
                                 }
 
                                 // 选项 1: WebView 热备开关
-                                var webViewWarmPoolEnabled by remember { mutableStateOf(KioskPrefs.getWebViewWarmPoolEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -941,52 +985,49 @@ fun AdminConsoleScreen(
                                     ) {
                                         TextButton(
                                             enabled = !isClearingCache,
-                                            onClick = {
-                                                isClearingCache = true
-                                                val beforeBytes = cacheStats?.totalBytes
-                                                WebViewPool.clear()
-                                                scope.launch {
-                                                    runCatching {
-                                                        withContext(Dispatchers.Main) {
-                                                            android.webkit.WebView(context).apply {
-                                                                clearCache(true)
-                                                                destroy()
-                                                            }
-                                                            android.webkit.CookieManager.getInstance().removeAllCookies(null)
-                                                            android.webkit.CookieManager.getInstance().flush()
-                                                        }
-                                                        withContext(Dispatchers.IO) {
-                                                            WebDataManager.clearKnownWebCacheFiles(context)
-                                                        }
-                                                    }.onSuccess {
-                                                        if (webViewWarmPoolEnabled) {
-                                                            WebViewPool.warmupBlank()
-                                                        }
-                                                        val after = withContext(Dispatchers.IO) {
-                                                            WebDataManager.collectStats(context)
-                                                        }
-                                                        cacheStats = after
-                                                        poolSnapshot = WebViewPool.snapshot()
-                                                        KioskPrefs.setLastCacheClearTime(context, System.currentTimeMillis())
-                                                        val released = beforeBytes?.let { (it - after.totalBytes).coerceAtLeast(0L) }
-                                                        lastClearSummary = if (released != null) {
-                                                            "本次清理释放约 ${WebDataManager.formatBytes(released)}"
-                                                        } else {
-                                                            "清理完成，当前合计 ${WebDataManager.formatBytes(after.totalBytes)}"
-                                                        }
-                                                        Toast.makeText(context, "网页缓存和 Cookie 已清理", Toast.LENGTH_SHORT).show()
-                                                    }.onFailure { e ->
-                                                        Toast.makeText(context, "清理失败：${e.message}", Toast.LENGTH_SHORT).show()
-                                                    }
-                                                    isClearingCache = false
-                                                }
-                                            }
+                                            onClick = { showClearCacheConfirm = true }
                                         ) {
                                             Icon(imageVector = Icons.Default.Delete, contentDescription = "清理")
                                             Spacer(modifier = Modifier.width(4.dp))
                                             Text(if (isClearingCache) "清理中" else "清理缓存与 Cookie")
                                         }
                                     }
+                                }
+
+                                if (showClearCacheConfirm) {
+                                    val currentCacheText = cacheStats?.let {
+                                        WebDataManager.formatBytes(it.totalBytes)
+                                    } ?: "尚未统计"
+                                    AlertDialog(
+                                        onDismissRequest = {
+                                            if (!isClearingCache) showClearCacheConfirm = false
+                                        },
+                                        title = { Text("确认清理网页缓存？") },
+                                        text = {
+                                            Text(
+                                                "当前统计缓存约 $currentCacheText。确认后会清理 WebView 缓存、本地数据和 Cookie，已登录的网站可能需要重新登录。"
+                                            )
+                                        },
+                                        confirmButton = {
+                                            TextButton(
+                                                enabled = !isClearingCache,
+                                                onClick = {
+                                                    showClearCacheConfirm = false
+                                                    clearWebCache()
+                                                }
+                                            ) {
+                                                Text(if (isClearingCache) "清理中" else "确认清理")
+                                            }
+                                        },
+                                        dismissButton = {
+                                            TextButton(
+                                                enabled = !isClearingCache,
+                                                onClick = { showClearCacheConfirm = false }
+                                            ) {
+                                                Text("取消")
+                                            }
+                                        }
+                                    )
                                 }
                             }
                         }
@@ -1014,9 +1055,11 @@ fun AdminConsoleScreen(
                     var limitSslCheck by remember { mutableStateOf(KioskPrefs.isLimitSslCheckEnabled(context)) }
                     var limitMultiWindow by remember { mutableStateOf(KioskPrefs.isLimitMultiWindowEnabled(context)) }
                     var limitFileAccess by remember { mutableStateOf(KioskPrefs.isLimitFileAccessEnabled(context)) }
+                    var limitMediaCapture by remember { mutableStateOf(KioskPrefs.isLimitMediaCaptureEnabled(context)) }
                     var thirdPartyCookies by remember { mutableStateOf(KioskPrefs.isThirdPartyCookiesEnabled(context)) }
                     var strictMixedContent by remember { mutableStateOf(KioskPrefs.isStrictMixedContentEnabled(context)) }
                     var useBrowserUserAgent by remember { mutableStateOf(KioskPrefs.isUseBrowserUserAgentEnabled(context)) }
+                    var customUserAgent by remember { mutableStateOf(KioskPrefs.getCustomUserAgent(context)) }
 
                     var chromeInspect by remember { mutableStateOf(KioskPrefs.isChromeInspectEnabled(context)) }
                     var debugTool by remember { mutableStateOf(KioskPrefs.getWebDebugTool(context)) }
@@ -1332,7 +1375,9 @@ fun AdminConsoleScreen(
                                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Text("调试面板注入时机", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                         Row(
-                                            modifier = Modifier.fillMaxWidth(),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
                                             horizontalArrangement = Arrangement.spacedBy(24.dp)
                                         ) {
                                             listOf(
@@ -1340,11 +1385,16 @@ fun AdminConsoleScreen(
                                                 "PAGE_STARTED" to "页面开始加载",
                                                 "PAGE_FINISHED" to "页面加载完成"
                                             ).forEach { (key, label) ->
-                                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable {
-                                                    timingMode = key
-                                                    KioskPrefs.setInjectTimingMode(context, key)
-                                                    onSandboxLimitsChanged()
-                                                }) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier
+                                                        .widthIn(min = 132.dp)
+                                                        .clickable {
+                                                            timingMode = key
+                                                            KioskPrefs.setInjectTimingMode(context, key)
+                                                            onSandboxLimitsChanged()
+                                                        }
+                                                ) {
                                                     RadioButton(
                                                         selected = timingMode == key,
                                                         onClick = {
@@ -1444,7 +1494,9 @@ fun AdminConsoleScreen(
                                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Text("自定义脚本注入时机", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                         Row(
-                                            modifier = Modifier.fillMaxWidth(),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
                                             horizontalArrangement = Arrangement.spacedBy(24.dp)
                                         ) {
                                             listOf(
@@ -1452,11 +1504,16 @@ fun AdminConsoleScreen(
                                                 "PAGE_STARTED" to "页面开始加载",
                                                 "PAGE_FINISHED" to "页面加载完成"
                                             ).forEach { (key, label) ->
-                                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable {
-                                                    customJsInjectTiming = key
-                                                    KioskPrefs.setCustomJsInjectTiming(context, key)
-                                                    onSandboxLimitsChanged()
-                                                }) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier
+                                                        .widthIn(min = 132.dp)
+                                                        .clickable {
+                                                            customJsInjectTiming = key
+                                                            KioskPrefs.setCustomJsInjectTiming(context, key)
+                                                            onSandboxLimitsChanged()
+                                                        }
+                                                ) {
                                                     RadioButton(
                                                         selected = customJsInjectTiming == key,
                                                         onClick = {
@@ -1583,6 +1640,14 @@ fun AdminConsoleScreen(
                                     Text("🌐 网页浏览器沙箱限制", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
+                                Text(
+                                    "默认按移动浏览器兼容基线放开网页能力，优先保证页面渲染与交互正常；如需更严格的儿童安全限制，可在这里逐项开启。",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
                                 // 选项 1: 广告过滤
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -1591,7 +1656,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("网页广告与弹窗过滤", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("在网络拦截层智能匹配并阻断第三方广告、弹窗及不当 Host 请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("默认关闭以避免误拦截脚本、样式、字体等子资源；开启后会在网络拦截层阻断疑似广告与弹窗请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitAdBlock,
@@ -1613,7 +1678,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("完全禁用网页文件下载", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("禁用网页内的文件下载监听，防止儿童点击链接下载未知应用程序", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("默认允许并交给系统下载管理器处理；开启后阻断网页下载，防止儿童保存未知文件或安装包", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitDownload,
@@ -1635,7 +1700,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("禁用长按文本选择与复制", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("阻断在网页长按时弹出系统「复制/分享/搜索」工具条以确保纯净浏览", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("默认允许，保持阅读、复制、图片保存等浏览器交互；开启后阻断系统长按工具条", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitLongClick,
@@ -1657,7 +1722,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("仅允许白名单域名跳转", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("启用后，网页内点击链接将限制在当前宿主域名内，防止跳转至第三方无关外网", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("默认允许正常跨域导航、CDN 与 OAuth 跳转；开启后把主页面跳转限制在当前域名及其子域名内", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitUrlRedirect,
@@ -1679,7 +1744,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("禁用网页定位 (Geolocation)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("直接拒绝网页申请设备地理位置的权限，保护儿童隐私安全", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("默认按浏览器能力允许网页申请定位；开启后直接拒绝网页地理位置权限，保护儿童隐私", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitGeolocation,
@@ -1693,7 +1758,29 @@ fun AdminConsoleScreen(
 
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-                                // 选项 6: 强制 SSL 校验
+                                // 选项 6: 摄像头/麦克风限制
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁用网页摄像头与麦克风", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("默认允许网页按需申请媒体采集能力；开启后拒绝 WebRTC、拍照、录音、扫码等摄像头/麦克风请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitMediaCapture,
+                                        onCheckedChange = {
+                                            limitMediaCapture = it
+                                            KioskPrefs.setLimitMediaCaptureEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 7: 强制 SSL 校验
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1715,7 +1802,7 @@ fun AdminConsoleScreen(
 
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-                                // 选项 7: 禁止弹窗新窗口
+                                // 选项 8: 禁止弹窗新窗口
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1723,7 +1810,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("禁止网页自动弹出新窗口", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("拦截 window.open() 类型的网页多窗口新开请求，使浏览行为限制在单页面内", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("默认允许并在 App 内 WebView 栈承载新窗口；开启后拦截 window.open() 与 target=_blank 等新开请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitMultiWindow,
@@ -1737,7 +1824,7 @@ fun AdminConsoleScreen(
 
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-                                // 选项 8: 禁止文件系统访问
+                                // 选项 9: 禁止文件系统访问
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1745,7 +1832,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("禁止网页读取本地文件系统", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("限制 WebView 访问 file:// 协议以及本地多媒体资源，防御本地沙箱突破", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("默认允许 WebView 标准 file/content 能力；开启后限制 file:// 与 content:// 访问，可能影响本地文件预览或上传", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitFileAccess,
@@ -1801,23 +1888,87 @@ fun AdminConsoleScreen(
 
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("使用手机浏览器 User-Agent", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("移除 WebView 专属标识，避免部分网页按内嵌浏览器降级或隐藏功能；调试内核版本仍可在系统诊断查看", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Switch(
-                                        checked = useBrowserUserAgent,
-                                        onCheckedChange = {
-                                            useBrowserUserAgent = it
-                                            KioskPrefs.setUseBrowserUserAgentEnabled(context, it)
-                                            onSandboxLimitsChanged()
+                                val defaultUserAgent = remember {
+                                    runCatching { android.webkit.WebSettings.getDefaultUserAgent(context) }
+                                        .getOrDefault("")
+                                }
+                                val effectiveUserAgent = remember(useBrowserUserAgent, customUserAgent, defaultUserAgent) {
+                                    WebViewRuntime.resolveUserAgent(context, defaultUserAgent)
+                                }
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("使用手机浏览器 User-Agent", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                            Text("移除 WebView 专属标识；如填写自定义 UA，将优先使用自定义内容", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
+                                        Switch(
+                                            checked = useBrowserUserAgent,
+                                            onCheckedChange = {
+                                                useBrowserUserAgent = it
+                                                KioskPrefs.setUseBrowserUserAgentEnabled(context, it)
+                                                onSandboxLimitsChanged()
+                                            }
+                                        )
+                                    }
+
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.65f))
+                                            .padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text("当前实际 UA", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            text = effectiveUserAgent.ifBlank { "无法读取" },
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                                        Text("系统默认 WebView UA", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            text = defaultUserAgent.ifBlank { "无法读取" },
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    OutlinedTextField(
+                                        value = customUserAgent,
+                                        onValueChange = {
+                                            customUserAgent = it
+                                            KioskPrefs.setCustomUserAgent(context, it)
+                                            onSandboxLimitsChanged()
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        label = { Text("自定义 User-Agent（可选）") },
+                                        placeholder = { Text("留空则按上方开关自动生成", fontSize = 12.sp) },
+                                        minLines = 2,
+                                        maxLines = 4,
+                                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                                     )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.End
+                                    ) {
+                                        TextButton(
+                                            enabled = customUserAgent.isNotBlank(),
+                                            onClick = {
+                                                customUserAgent = ""
+                                                KioskPrefs.setCustomUserAgent(context, "")
+                                                onSandboxLimitsChanged()
+                                            }
+                                        ) {
+                                            Text("清空自定义 UA", fontSize = 12.sp)
+                                        }
+                                    }
                                 }
                             }
                         }

@@ -10,7 +10,8 @@ data class PreloadEntry(
     val webView: WebView,
     var progress: Int = 0,
     var isLoaded: Boolean = false,
-    val isUrlPreload: Boolean = true
+    val isUrlPreload: Boolean = true,
+    val shouldDestroyOnDispose: Boolean = true
 )
 
 object WebViewPool {
@@ -138,7 +139,12 @@ object WebViewPool {
 
         return warmPool.removeFirstOrNull()?.let { webView ->
             WebViewRuntime.applySettings(webView, ctx, cleanUrl)
-            PreloadEntry(webView = webView, isLoaded = false, isUrlPreload = false)
+            PreloadEntry(
+                webView = webView,
+                isLoaded = false,
+                isUrlPreload = false,
+                shouldDestroyOnDispose = true
+            )
         }
     }
 
