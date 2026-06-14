@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+## [0.0.26] - 2026-06-14
+
+### Changed — 变更
+
+- **WebView 原生承载固化**：
+  - 根据 v0.0.25 实机 AB 结果，正式采用 `FrameLayout + WebView` 承载真实网页，不再在配置界面暴露“标准 Compose / 轻量原生”切换。
+  - 移除 WebView 页面中的 Compose `AndroidView` 宿主和全屏 Loading overlay，保留可选顶部细进度条。
+  - 清理 AB 诊断临时开关：视觉提交回调关闭 Loading、页面激活事件补发、延迟多轮脚本注入。
+  - 移除高分屏渲染兼容 CSS/JS 注入和配置项，避免禁用网页动画、改写第三方页面样式。
+  - 固定 `offscreenPreRaster=false`，避免旧保存项继续放大高 DPR WebView tile 压力。
+  - 新增 `docs/webview_development_guidelines.md`，记录 WebView 开发基线、禁止项和排查日志。
+- **首页分类导航样式调整**：
+  - 首页分类 sticky 导航去掉独立渐变背景，改为透明承接页面背景，避免和底部背景产生割裂。
+- **网页沙箱默认基线调整**：
+  - “网页广告与弹窗过滤”默认关闭，降低误拦截脚本、样式、字体和统计资源的概率。
+  - “仅允许白名单域名跳转”默认关闭，默认允许正常跨域导航、CDN 和 OAuth 跳转。
+  - 增加一次性基线迁移，旧版本升级后会把这两个开关重置为关闭。
+
 ## [0.0.25] - 2026-06-14
 
 ### Added — 新增
@@ -407,7 +425,8 @@
 - 调研报告 `docs/android_kiosk_research_report.md`
 - 需求规格 `docs/child_kiosk_browser_requirements.md`
 
-[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.25...HEAD
+[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.26...HEAD
+[0.0.26]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.25...v0.0.26
 [0.0.25]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.24...v0.0.25
 [0.0.24]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.23...v0.0.24
 [0.0.23]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.22...v0.0.23

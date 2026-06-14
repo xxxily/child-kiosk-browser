@@ -1,3 +1,47 @@
+## Child Kiosk Browser v0.0.26
+
+本版本将 v0.0.25 验证有效的原生 WebView 承载路径固化为正式模式，并清理 AB 测试期的临时开关。首页分类导航和网页沙箱默认基线也做了收敛，优先保证页面渲染、交互和正常浏览器行为一致。
+
+> **说明**：本 APK 使用 debug 签名，仅供调试与家庭内部部署。生产/商用请自行用正式 keystore 重新签名。
+
+### 本版本核心变化
+
+* **WebView 正式切换为原生承载**：
+  - 真实网页统一走 `WebViewActivity -> FrameLayout -> WebView`。
+  - 不再展示“标准 Compose / 轻量原生”承载模式切换，原生承载就是正式路径。
+  - 移除 WebView 页面中的 Compose `AndroidView` 宿主和全屏 Loading overlay，只保留可选顶部细进度条。
+* **清理 AB 诊断和高 DPR 临时补丁**：
+  - 移除视觉提交回调、页面激活事件补发、延迟多轮注入等临时诊断开关。
+  - 移除高分屏渲染兼容 CSS/JS 注入，避免禁用网页动画或改写第三方页面样式。
+  - 固定 `offscreenPreRaster=false`，旧保存项不再影响运行时。
+* **配置界面收敛**：
+  - “网页缓存与性能优化”只保留顶部进度条、空白 WebView 热备、WebView 渲染模式、网页后台预加载、缓存统计/清理。
+  - 首页分类 sticky 导航去掉独立渐变背景，改为透明承接页面背景。
+* **网页沙箱默认基线调整**：
+  - “网页广告与弹窗过滤”默认关闭。
+  - “仅允许白名单域名跳转”默认关闭。
+  - 升级后执行一次性基线迁移，把旧版本遗留的这两个开关重置为关闭。
+* **文档同步**：
+  - 新增 `docs/webview_development_guidelines.md`。
+  - 更新 WebView 调试手册、Tauri 对比结论和渲染一致性复盘。
+
+### 建议验证
+
+重点测试：
+
+1. `https://pages.anzz.site/app/piano/` 首屏渲染、动画和交互。
+2. `https://pages.anzz.site/books` 及文章页内容渲染。
+3. 首页分类导航滚动时背景是否与页面底色一致。
+4. 家长后台“网页浏览器沙箱限制”中广告过滤和白名单域名跳转是否默认关闭。
+
+继续使用：
+
+```bash
+adb logcat -v time ChildKioskWebView:D ChildKioskApp:D MainActivity:D chromium:I cr_WebView:I AndroidRuntime:E '*:S'
+```
+
+---
+
 ## Child Kiosk Browser v0.0.25
 
 本版本用于 WebView 渲染异常 AB 测试，不迁移 Tauri，也不继续调整高分屏兼容补丁。重点是去掉宿主层冗余负担，增加轻量原生 WebView 承载路径和诊断日志，用于判断问题到底来自 Compose/overlay/复用宿主，还是系统 WebView renderer tile 预算本身。
