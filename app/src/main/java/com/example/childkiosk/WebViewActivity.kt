@@ -14,7 +14,10 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.*
+import android.widget.FrameLayout
+import android.widget.ProgressBar
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
@@ -72,6 +75,9 @@ class WebViewActivity : ComponentActivity() {
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var fullscreenView: View? = null
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
+    private val lightweightWebViews = mutableListOf<WebView>()
+    private var lightweightRoot: FrameLayout? = null
+    private var lightweightProgress: ProgressBar? = null
 
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -138,6 +144,18 @@ class WebViewActivity : ComponentActivity() {
         }
 
         val webAppId = intent.getIntExtra(EXTRA_WEB_APP_ID, -1)
+        val hostMode = KioskPrefs.getWebViewHostMode(this)
+        WebViewRuntime.logAbDiagnostics(this, "activity_created", "webAppId=$webAppId")
+
+        if (hostMode == KioskPrefs.WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE) {
+            startLightweightNativeWebView(webAppId)
+            return
+        }
+
+        Log.d(
+            "ChildKioskWebView",
+            "Host mode applied: STANDARD_COMPOSE, composeHost=true, overlay=COMPOSE_FULLSCREEN, webAppId=$webAppId"
+        )
 
         setContent {
             ChildKioskTheme {
@@ -190,9 +208,16 @@ class WebViewActivity : ComponentActivity() {
         exitFullscreenView()
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
-        rootWebView?.let { webView ->
-            destroyWebViewSafely(webView)
+        if (lightweightWebViews.isNotEmpty()) {
+            lightweightWebViews.toList().forEach { destroyWebViewSafely(it) }
+            lightweightWebViews.clear()
+        } else {
+            rootWebView?.let { webView ->
+                destroyWebViewSafely(webView)
+            }
         }
+        lightweightProgress = null
+        lightweightRoot = null
         rootWebView = null
         super.onDestroy()
     }
@@ -257,6 +282,156 @@ class WebViewActivity : ComponentActivity() {
         fullscreenCallback = null
         rootWebView?.visibility = View.VISIBLE
         SystemUiHelper.enterImmersive(this)
+    }
+
+    private fun startLightweightNativeWebView(webAppId: Int) {
+        WebViewPool.clear()
+
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(android.graphics.Color.WHITE)
+        }
+        lightweightRoot = root
+        setContentView(root)
+
+        val showNativeProgress = KioskPrefs.isLightweightNativeLoadingIndicatorEnabled(this)
+        if (showNativeProgress) {
+            lightweightProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 100
+                progress = 0
+                visibility = View.GONE
+            }
+            root.addView(
+                lightweightProgress,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    (3 * resources.displayMetrics.density).toInt().coerceAtLeast(3)
+                )
+            )
+        }
+
+        Log.d(
+            "ChildKioskWebView",
+            "Host mode applied: LIGHTWEIGHT_NATIVE, composeHost=false, root=FrameLayout, " +
+                "overlay=${if (showNativeProgress) "NATIVE_TOP_PROGRESS" else "NONE"}, webAppId=$webAppId"
+        )
+        WebViewRuntime.logAbDiagnostics(this, "lightweight_native_start", "webAppId=$webAppId")
+
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    handleLightweightBack()
+                }
+            }
+        )
+
+        lifecycleScope.launch {
+            val db = AppDatabase.getInstance(this@WebViewActivity)
+            val webApp = withContext(Dispatchers.IO) {
+                db.webAppDao().getWebAppById(webAppId)
+            }
+            if (webApp == null) {
+                Log.w("ChildKioskWebView", "Lightweight native abort: web app not found, id=$webAppId")
+                Toast.makeText(this@WebViewActivity, "网页应用不存在", Toast.LENGTH_SHORT).show()
+                finish()
+                return@launch
+            }
+            attachLightweightWebView(root, webApp)
+        }
+    }
+
+    private fun attachLightweightWebView(root: FrameLayout, webApp: WebAppEntity) {
+        val targetUrl = webApp.url
+        val originalHost = WebViewRuntime.hostOf(targetUrl)
+        val webView = createSecureWebView(
+            ctx = this,
+            targetUrl = targetUrl,
+            originalHost = originalHost,
+            onSslError = { url ->
+                Log.w("ChildKioskWebView", "Lightweight native SSL error: $url")
+                Toast.makeText(this, "SSL 证书异常：$url", Toast.LENGTH_LONG).show()
+                hideLightweightProgress()
+            },
+            onBlocked = { url ->
+                Log.w("ChildKioskWebView", "Lightweight native blocked navigation: $url")
+                Toast.makeText(this, "已拦截跳转：$url", Toast.LENGTH_LONG).show()
+                hideLightweightProgress()
+            },
+            onDownloadBlocked = {
+                Toast.makeText(this, "下载功能已受阻，若要下载应用请联系家长。", Toast.LENGTH_LONG).show()
+            },
+            onLoadingStateChanged = { loading ->
+                Log.d(
+                    "ChildKioskWebView",
+                    "Lightweight loading state: loading=$loading, progress=${rootWebView?.progress ?: -1}, url=${rootWebView?.url}"
+                )
+                if (loading) showLightweightProgress() else hideLightweightProgress()
+            },
+            onProgressUpdate = { progress ->
+                lightweightProgress?.progress = progress.coerceIn(0, 100)
+            },
+            onError = { error ->
+                Log.w("ChildKioskWebView", "Lightweight native main frame error: $error")
+                Toast.makeText(this, "网页加载异常：$error", Toast.LENGTH_LONG).show()
+                hideLightweightProgress()
+            },
+            onShowFileChooser = { callback, params -> openFileChooser(callback, params) },
+            onCreateWindow = { newWebView ->
+                Log.d("ChildKioskWebView", "Lightweight native child window created: parent=${rootWebView?.url}")
+                attachLightweightChildWebView(root, newWebView)
+            }
+        )
+
+        attachLightweightChildWebView(root, webView)
+        WebViewRuntime.logAbDiagnostics(this, "lightweight_webview_attached", targetUrl)
+        loadInitialUrlAfterFirstLayout(webView, targetUrl)
+    }
+
+    private fun attachLightweightChildWebView(root: FrameLayout, webView: WebView) {
+        rootWebView?.visibility = View.GONE
+        root.addView(
+            webView,
+            0,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        rootWebView = webView
+        lightweightWebViews.add(webView)
+        logWebViewSurfaceState(webView, "lightweight_attached")
+    }
+
+    private fun handleLightweightBack() {
+        val current = rootWebView
+        if (current != null && current.canGoBack()) {
+            Log.d("ChildKioskWebView", "Lightweight back: webView.goBack, url=${current.url}")
+            current.goBack()
+            return
+        }
+
+        if (lightweightWebViews.size > 1) {
+            val removed = lightweightWebViews.removeLast()
+            Log.d("ChildKioskWebView", "Lightweight back: destroy child webview, url=${removed.url}")
+            destroyWebViewSafely(removed)
+            rootWebView = lightweightWebViews.lastOrNull()
+            rootWebView?.visibility = View.VISIBLE
+            return
+        }
+
+        if (KioskPrefs.getVerifyOnWebExit(this) && KioskPrefs.getVerifyAdminActions(this)) {
+            Log.w("ChildKioskWebView", "Lightweight native exit verification is not shown; closing for AB test mode")
+            Toast.makeText(this, "轻量测试模式暂不显示退出验证", Toast.LENGTH_SHORT).show()
+        }
+        finish()
+    }
+
+    private fun showLightweightProgress() {
+        lightweightProgress?.visibility = View.VISIBLE
+    }
+
+    private fun hideLightweightProgress() {
+        lightweightProgress?.visibility = View.GONE
     }
 
     companion object {
@@ -762,6 +937,8 @@ private fun createSecureWebView(
 
     return webView.apply {
         WebViewRuntime.applySettings(this, ctx, targetUrl)
+        WebViewRuntime.logAbDiagnostics(ctx, "create_secure_webview", targetUrl)
+        logWebViewSurfaceState(this, "created_after_settings")
 
         // 仅在网页未加载完成时设置暖色底色以防止白屏；已加载完的实例直接使用白色底色
         val initialBgColor = if (existingWebView != null && existingWebView.progress == 100) {
@@ -808,13 +985,7 @@ private fun createSecureWebView(
                     schedulePageActivation(view)
                 }
 
-                waitForMeaningfulContent(view) { hasContent ->
-                    if (hasContent) {
-                        onLoadingStateChanged(false)
-                    } else {
-                        view?.postDelayed({ onLoadingStateChanged(false) }, 800)
-                    }
-                }
+                finishLoadingWhenVisuallyReady(view, "PAGE_FINISHED", onLoadingStateChanged)
             }
 
             override fun onReceivedError(
@@ -918,7 +1089,7 @@ private fun createSecureWebView(
                 if (newProgress >= 100) {
                     view?.postDelayed({
                         schedulePageActivation(view)
-                        waitForMeaningfulContent(view) { onLoadingStateChanged(false) }
+                        finishLoadingWhenVisuallyReady(view, "PROGRESS_100", onLoadingStateChanged)
                     }, 250)
                 }
             }
@@ -1054,6 +1225,7 @@ private fun loadInitialUrlAfterFirstLayout(webView: WebView, targetUrl: String) 
             return
         }
         webView.post {
+            logWebViewSurfaceState(webView, "initial_load_after_layout")
             Log.d(
                 "ChildKioskWebView",
                 "Initial load after layout: ${webView.width}x${webView.height}, url=$targetUrl"
@@ -1063,6 +1235,23 @@ private fun loadInitialUrlAfterFirstLayout(webView: WebView, targetUrl: String) 
         }
     }
     webView.post { attempt(20) }
+}
+
+private fun logWebViewSurfaceState(webView: WebView, event: String) {
+    val parent = webView.parent?.javaClass?.simpleName ?: "none"
+    val contextName = webView.context.javaClass.name
+    val layer = when (webView.layerType) {
+        View.LAYER_TYPE_NONE -> "HARDWARE_DEFAULT"
+        View.LAYER_TYPE_HARDWARE -> "HARDWARE"
+        View.LAYER_TYPE_SOFTWARE -> "SOFTWARE"
+        else -> webView.layerType.toString()
+    }
+    Log.d(
+        "ChildKioskWebView",
+        "WebView surface: event=$event, attached=${webView.isAttachedToWindow}, " +
+            "size=${webView.width}x${webView.height}, layer=$layer, parent=$parent, " +
+            "context=$contextName, progress=${webView.progress}, url=${webView.url}"
+    )
 }
 
 private fun clearInitialBlankHistory(webView: WebView, currentUrl: String) {
@@ -1331,6 +1520,11 @@ private fun scheduleInjectionPasses(webView: WebView, context: Context, primaryT
     injectDebugToolIfNeeded(webView, context, primaryTiming)
     injectCustomScriptIfNeeded(webView, context, primaryTiming)
 
+    if (!KioskPrefs.isWebViewDelayedInjectionPassesEnabled(context)) {
+        Log.d("ChildKioskWebView", "Delayed injection passes skipped: url=${webView.url}")
+        return
+    }
+
     listOf(250L, 1000L, 2500L).forEach { delayMs ->
         webView.postDelayed({
             injectHighDprRenderCompatIfNeeded(webView, context)
@@ -1431,6 +1625,10 @@ private fun injectHighDprRenderCompatIfNeeded(webView: WebView, context: Context
 
 private fun schedulePageActivation(webView: WebView?) {
     webView ?: return
+    if (!KioskPrefs.isWebViewPageActivationEnabled(webView.context)) {
+        Log.d("ChildKioskWebView", "Page activation skipped: url=${webView.url}")
+        return
+    }
     listOf(0L, 120L, 450L, 1200L).forEach { delayMs ->
         webView.postDelayed({
             refreshPageViewportState(webView)
@@ -1501,6 +1699,62 @@ private fun waitForMeaningfulContent(webView: WebView?, onResult: (Boolean) -> U
     webView.evaluateJavascript(js) { result ->
         onResult(result == "true" || result == "\"true\"")
     }
+}
+
+private fun finishLoadingWhenVisuallyReady(
+    webView: WebView?,
+    reason: String,
+    onLoadingStateChanged: (Boolean) -> Unit
+) {
+    if (webView == null) {
+        onLoadingStateChanged(false)
+        return
+    }
+
+    if (!KioskPrefs.isWebViewVisualStateCallbackEnabled(webView.context)) {
+        waitForMeaningfulContent(webView) { hasContent ->
+            Log.d(
+                "ChildKioskWebView",
+                "Loading finish fallback: reason=$reason, hasContent=$hasContent, url=${webView.url}"
+            )
+            if (hasContent) {
+                onLoadingStateChanged(false)
+            } else {
+                webView.postDelayed({ onLoadingStateChanged(false) }, 800)
+            }
+        }
+        return
+    }
+
+    val delivered = AtomicBoolean(false)
+    val requestId = System.nanoTime()
+    Log.d(
+        "ChildKioskWebView",
+        "Visual state callback requested: id=$requestId, reason=$reason, progress=${webView.progress}, url=${webView.url}"
+    )
+    webView.postVisualStateCallback(
+        requestId,
+        object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) {
+                if (delivered.compareAndSet(false, true)) {
+                    Log.d(
+                        "ChildKioskWebView",
+                        "Visual state callback delivered: id=$requestId, reason=$reason, progress=${webView.progress}, url=${webView.url}"
+                    )
+                    onLoadingStateChanged(false)
+                }
+            }
+        }
+    )
+    webView.postDelayed({
+        if (delivered.compareAndSet(false, true)) {
+            Log.w(
+                "ChildKioskWebView",
+                "Visual state callback timeout: id=$requestId, reason=$reason, progress=${webView.progress}, url=${webView.url}"
+            )
+            onLoadingStateChanged(false)
+        }
+    }, 1500)
 }
 
 private val HIGH_DPR_RENDER_COMPAT_CSS = """

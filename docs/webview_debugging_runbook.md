@@ -355,7 +355,53 @@ if (window.visualViewport) {
 
 ---
 
-## 8. 对比手机浏览器
+## 8. WebView 承载模式 AB 测试
+
+v0.0.25 起家长后台“网页性能优化”提供“WebView 承载模式（AB 测试）”：
+
+- **标准 Compose**：当前默认路径，`ComponentActivity -> Compose -> AndroidView -> WebView`，保留 Compose 全屏 Loading 和现有多窗口栈。
+- **轻量原生**：实验路径，`WebViewActivity -> FrameLayout -> WebView`，跳过 Compose 宿主、全屏 Loading、热备和 URL 预加载。
+
+推荐测试顺序：
+
+1. 标准 Compose + 高分屏渲染兼容关闭。
+2. 标准 Compose + 高分屏渲染兼容自动。
+3. 轻量原生 + 高分屏渲染兼容关闭。
+4. 轻量原生 + 高分屏渲染兼容自动。
+
+每次只改一个变量，打开同一个 URL，等待 5-10 秒后退出，再测试下一组。
+
+重点收集这些日志：
+
+```bash
+adb logcat -v time ChildKioskWebView:D ChildKioskApp:D MainActivity:D chromium:I cr_WebView:I AndroidRuntime:E '*:S'
+```
+
+关键字段解释：
+
+| 日志 | 含义 |
+| --- | --- |
+| `Host mode applied: STANDARD_COMPOSE` | 当前走 Compose + AndroidView 承载 |
+| `Host mode applied: LIGHTWEIGHT_NATIVE` | 当前走原生 FrameLayout + WebView 承载 |
+| `AB diagnostics` | 当前所有 AB 配置、屏幕、density、进程和 heap 摘要 |
+| `WebView surface` | WebView attach 状态、尺寸、layer、parent、context |
+| `Initial load after layout` | 页面是在 WebView 有有效尺寸后才开始加载 |
+| `Visual state callback requested` | App 请求等待 WebView 提交视觉帧后关闭 Loading |
+| `Visual state callback delivered` | WebView 已提交一帧，Loading 可以移除 |
+| `Visual state callback timeout` | 1.5 秒内没有收到视觉提交回调，走兜底关闭 Loading |
+| `High DPR render compat injected` | 高分屏兼容 CSS/站点补丁已注入 |
+| `tile memory limits exceeded` | Chromium renderer tile 预算不足，可能导致局部内容不绘制 |
+
+判读规则：
+
+- 如果轻量原生模式明显减少 `tile memory limits exceeded` 或页面恢复完整，说明 Compose 宿主/overlay/多层合成在放大压力，应优先把轻量模式完善成高 DPR 默认路径。
+- 如果轻量原生和标准 Compose 都一样报错，说明主要矛盾更可能是系统 WebView renderer tile 预算或页面自身合成成本。
+- 如果 `Visual state callback delivered` 已出现但画面仍被 Loading 挡住，说明 App overlay 状态还有 bug。
+- 如果 `WebView surface` 显示尺寸异常、未 attach 或 parent 不符合预期，优先排查 WebView 承载/布局时序。
+
+---
+
+## 9. 对比手机浏览器
 
 同一个 URL，在手机自带浏览器和 App WebView 分别采集：
 
@@ -378,7 +424,7 @@ if (window.visualViewport) {
 
 ---
 
-## 9. 建议提交给开发的最小证据包
+## 10. 建议提交给开发的最小证据包
 
 每次反馈一个 WebView 渲染问题，尽量提供：
 

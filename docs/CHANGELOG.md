@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### Added — 新增
+
+- **WebView 承载模式 AB 测试**：
+  - 家长后台“网页性能优化”新增“WebView 承载模式（AB 测试）”，支持“标准 Compose / 轻量原生”切换。
+  - 轻量原生模式使用原生 `FrameLayout + WebView` 直接承载页面，跳过 Compose `AndroidView` 宿主、全屏 Loading、热备池和 URL 预加载，用于定位宿主层是否放大 Chromium tile 压力。
+  - 新增 AB 诊断临时选项：视觉提交回调关闭 Loading、页面激活事件补发、延迟多轮脚本注入、轻量模式顶部原生进度条。
+  - 新增 `AB diagnostics`、`Host mode applied`、`WebView surface`、`Visual state callback requested/delivered/timeout` 等日志，便于 logcat 对比标准模式与轻量模式。
+
 ## [0.0.24] - 2026-06-14
 
 ### Added — 新增

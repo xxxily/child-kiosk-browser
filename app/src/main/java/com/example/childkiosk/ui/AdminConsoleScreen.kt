@@ -805,11 +805,24 @@ fun AdminConsoleScreen(
                                 var showClearCacheConfirm by remember { mutableStateOf(false) }
                                 var webViewWarmPoolEnabled by remember { mutableStateOf(KioskPrefs.getWebViewWarmPoolEnabled(context)) }
                                 var webViewRenderMode by remember { mutableStateOf(KioskPrefs.getWebViewRenderMode(context)) }
+                                var webViewHostMode by remember { mutableStateOf(KioskPrefs.getWebViewHostMode(context)) }
                                 var webViewHighDprCompatMode by remember {
                                     mutableStateOf(KioskPrefs.getWebViewHighDprCompatMode(context))
                                 }
                                 var webViewOffscreenPreRasterEnabled by remember {
                                     mutableStateOf(KioskPrefs.isWebViewOffscreenPreRasterEnabled(context))
+                                }
+                                var webViewVisualStateCallbackEnabled by remember {
+                                    mutableStateOf(KioskPrefs.isWebViewVisualStateCallbackEnabled(context))
+                                }
+                                var webViewPageActivationEnabled by remember {
+                                    mutableStateOf(KioskPrefs.isWebViewPageActivationEnabled(context))
+                                }
+                                var webViewDelayedInjectionPassesEnabled by remember {
+                                    mutableStateOf(KioskPrefs.isWebViewDelayedInjectionPassesEnabled(context))
+                                }
+                                var lightweightNativeLoadingIndicatorEnabled by remember {
+                                    mutableStateOf(KioskPrefs.isLightweightNativeLoadingIndicatorEnabled(context))
                                 }
 
                                 fun refreshCacheStats() {
@@ -861,6 +874,134 @@ fun AdminConsoleScreen(
                                 LaunchedEffect(Unit) {
                                     refreshCacheStats()
                                 }
+
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("WebView 承载模式（AB 测试）", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    Text("标准模式保持当前 Compose AndroidView 承载；轻量原生模式直接用原生 FrameLayout + WebView，跳过 Compose 宿主、全屏 Loading、热备和 URL 预加载，用于定位宿主层是否放大渲染压力", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(20.dp)
+                                    ) {
+                                        listOf(
+                                            KioskPrefs.WEBVIEW_HOST_MODE_COMPOSE to "标准 Compose",
+                                            KioskPrefs.WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE to "轻量原生"
+                                        ).forEach { (mode, label) ->
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier
+                                                    .widthIn(min = 128.dp)
+                                                    .clickable {
+                                                        webViewHostMode = mode
+                                                        KioskPrefs.setWebViewHostMode(context, mode)
+                                                        WebViewPool.clear()
+                                                        poolSnapshot = WebViewPool.snapshot()
+                                                    }
+                                            ) {
+                                                RadioButton(
+                                                    selected = webViewHostMode == mode,
+                                                    onClick = {
+                                                        webViewHostMode = mode
+                                                        KioskPrefs.setWebViewHostMode(context, mode)
+                                                        WebViewPool.clear()
+                                                        poolSnapshot = WebViewPool.snapshot()
+                                                    }
+                                                )
+                                                Text(label, fontSize = 13.sp)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Text("AB 诊断临时选项", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    Text("这些开关用于快速定位 Loading、注入、页面激活事件或宿主 overlay 是否参与问题。测试时每次只改一个变量", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("用视觉提交回调关闭 Loading", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                            Text("默认开启。WebView 提交一帧后再隐藏 Loading，减少 100% 遮罩误挡页面", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        Switch(
+                                            checked = webViewVisualStateCallbackEnabled,
+                                            onCheckedChange = {
+                                                webViewVisualStateCallbackEnabled = it
+                                                KioskPrefs.setWebViewVisualStateCallbackEnabled(context, it)
+                                                WebViewPool.clear()
+                                                poolSnapshot = WebViewPool.snapshot()
+                                            }
+                                        )
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("页面激活事件补发", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                            Text("默认开启。补发 resize/scroll/pageshow 等事件；关闭后可验证这些激活脚本是否影响问题页面", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        Switch(
+                                            checked = webViewPageActivationEnabled,
+                                            onCheckedChange = {
+                                                webViewPageActivationEnabled = it
+                                                KioskPrefs.setWebViewPageActivationEnabled(context, it)
+                                                WebViewPool.clear()
+                                                poolSnapshot = WebViewPool.snapshot()
+                                            }
+                                        )
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("延迟多轮脚本注入", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                            Text("默认开启。关闭后仅保留当前回调时机的一次注入，用于确认多轮注入是否增加页面负担", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        Switch(
+                                            checked = webViewDelayedInjectionPassesEnabled,
+                                            onCheckedChange = {
+                                                webViewDelayedInjectionPassesEnabled = it
+                                                KioskPrefs.setWebViewDelayedInjectionPassesEnabled(context, it)
+                                                WebViewPool.clear()
+                                                poolSnapshot = WebViewPool.snapshot()
+                                            }
+                                        )
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("轻量模式原生进度条", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                            Text("默认关闭。开启后轻量原生模式只显示顶部细进度条，不使用全屏遮罩", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        Switch(
+                                            checked = lightweightNativeLoadingIndicatorEnabled,
+                                            onCheckedChange = {
+                                                lightweightNativeLoadingIndicatorEnabled = it
+                                                KioskPrefs.setLightweightNativeLoadingIndicatorEnabled(context, it)
+                                                WebViewPool.clear()
+                                                poolSnapshot = WebViewPool.snapshot()
+                                            }
+                                        )
+                                    }
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 1: WebView 热备开关
                                 Row(

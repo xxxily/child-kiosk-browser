@@ -47,6 +47,9 @@ object KioskPrefs {
     const val WEBVIEW_HIGH_DPR_COMPAT_ENABLED = "ENABLED"
     const val WEBVIEW_HIGH_DPR_COMPAT_DISABLED = "DISABLED"
 
+    const val WEBVIEW_HOST_MODE_COMPOSE = "COMPOSE"
+    const val WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE = "LIGHTWEIGHT_NATIVE"
+
     fun getProtectionMode(context: Context): String {
         return prefs(context).getString(KEY_PROTECTION_MODE, DEFAULT_MODE) ?: DEFAULT_MODE
     }
@@ -164,6 +167,45 @@ object KioskPrefs {
         }
         prefs(context).edit().putString("webview_high_dpr_compat_mode", normalized).apply()
     }
+
+    fun getWebViewHostMode(context: Context): String {
+        return when (prefs(context).getString("webview_host_mode", WEBVIEW_HOST_MODE_COMPOSE)) {
+            WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE -> WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE
+            else -> WEBVIEW_HOST_MODE_COMPOSE
+        }
+    }
+
+    fun setWebViewHostMode(context: Context, mode: String) {
+        val normalized = when (mode) {
+            WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE -> WEBVIEW_HOST_MODE_LIGHTWEIGHT_NATIVE
+            else -> WEBVIEW_HOST_MODE_COMPOSE
+        }
+        prefs(context).edit().putString("webview_host_mode", normalized).apply()
+    }
+
+    fun isWebViewVisualStateCallbackEnabled(context: Context): Boolean =
+        prefs(context).getBoolean("webview_visual_state_callback_enabled", true)
+
+    fun setWebViewVisualStateCallbackEnabled(context: Context, enabled: Boolean) =
+        prefs(context).edit().putBoolean("webview_visual_state_callback_enabled", enabled).apply()
+
+    fun isWebViewPageActivationEnabled(context: Context): Boolean =
+        prefs(context).getBoolean("webview_page_activation_enabled", true)
+
+    fun setWebViewPageActivationEnabled(context: Context, enabled: Boolean) =
+        prefs(context).edit().putBoolean("webview_page_activation_enabled", enabled).apply()
+
+    fun isWebViewDelayedInjectionPassesEnabled(context: Context): Boolean =
+        prefs(context).getBoolean("webview_delayed_injection_passes_enabled", true)
+
+    fun setWebViewDelayedInjectionPassesEnabled(context: Context, enabled: Boolean) =
+        prefs(context).edit().putBoolean("webview_delayed_injection_passes_enabled", enabled).apply()
+
+    fun isLightweightNativeLoadingIndicatorEnabled(context: Context): Boolean =
+        prefs(context).getBoolean("webview_lightweight_native_loading_indicator_enabled", false)
+
+    fun setLightweightNativeLoadingIndicatorEnabled(context: Context, enabled: Boolean) =
+        prefs(context).edit().putBoolean("webview_lightweight_native_loading_indicator_enabled", enabled).apply()
 
     fun getLastCacheClearTime(context: Context): Long {
         return prefs(context).getLong("last_cache_clear_time", 0L)

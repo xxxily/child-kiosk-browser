@@ -124,6 +124,30 @@ object WebViewRuntime {
             "screen=${metrics.widthPixels}x${metrics.heightPixels}, density=${metrics.density}"
     }
 
+    fun abDiagnosticSummary(context: Context): String {
+        val metrics = context.resources.displayMetrics
+        return "hostMode=${KioskPrefs.getWebViewHostMode(context)}, " +
+            "renderMode=${KioskPrefs.getWebViewRenderMode(context)}, " +
+            "highDprCompat=${KioskPrefs.getWebViewHighDprCompatMode(context)}, " +
+            "visualStateCallback=${KioskPrefs.isWebViewVisualStateCallbackEnabled(context)}, " +
+            "pageActivation=${KioskPrefs.isWebViewPageActivationEnabled(context)}, " +
+            "delayedInjectionPasses=${KioskPrefs.isWebViewDelayedInjectionPassesEnabled(context)}, " +
+            "nativeLoadingIndicator=${KioskPrefs.isLightweightNativeLoadingIndicatorEnabled(context)}, " +
+            "warmPool=${KioskPrefs.getWebViewWarmPoolEnabled(context)}, " +
+            "urlPreload=${KioskPrefs.getWebPreloadEnabled(context)}, " +
+            "offscreenPreRaster=${KioskPrefs.isWebViewOffscreenPreRasterEnabled(context)}, " +
+            "screen=${metrics.widthPixels}x${metrics.heightPixels}, density=${metrics.density}, " +
+            "process=${ProcessUtils.currentProcessName(context)}, " +
+            memorySummary(context)
+    }
+
+    fun logAbDiagnostics(context: Context, event: String, url: String? = null) {
+        Log.d(
+            "ChildKioskWebView",
+            "AB diagnostics: event=$event, url=${url.orEmpty()}, ${abDiagnosticSummary(context)}"
+        )
+    }
+
     private fun isHighDprLargeSurface(context: Context): Boolean {
         val metrics = context.resources.displayMetrics
         val pixelCount = metrics.widthPixels.toLong() * metrics.heightPixels.toLong()
