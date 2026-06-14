@@ -98,7 +98,7 @@ adb logcat -v time ChildKioskWebView:D ChildKioskApp:D MainActivity:D chromium:I
 - 没有 `Initial load after layout`：说明真实页面可能在 WebView attach/layout 前后时序有问题。
 - `Page started` 后没有 `Page finished`：看 Network、SSL、主 frame 错误或页面跳转循环。
 - `Page finished` 后 Loading 仍卡住：重点排查 App 的 meaningful content 判断、页面是否 SPA 空壳、遮罩状态。
-- `Page finished` 后出现 `tile memory limits exceeded`：优先排查 WebView tile 内存压力。先确认网页进程日志为 `com.example.childkiosk:webview`，`Render mode applied` 为 `actual=HARDWARE`，以及日志里的 `memoryClass/largeMemoryClass/heapMax`。如果看到 `actual=SOFTWARE`，应先退回硬件默认；实测软件层会放大 tile 压力，可能让 warning 暴增。同时关闭“网页离屏预栅格化”、空白 WebView 热备和 URL 后台预加载，再对比是否恢复；这类问题通常不是 JS 报错或网络失败。
+- `Page finished` 前后出现 `tile memory limits exceeded`：优先排查 WebView tile 内存压力。先确认网页进程日志为 `com.example.childkiosk:webview`，`Render mode applied` 为 `actual=HARDWARE`，以及日志里的 `memoryClass/largeMemoryClass/heapMax`。如果宿主 heap 已经正常但 warning 仍来自 chromium renderer 子进程，说明不是 App Java heap 不足，而是 renderer tile cache 预算被页面绘制成本打爆。此时应保持“高分屏渲染兼容模式=自动/开启”，同时关闭“网页离屏预栅格化”、空白 WebView 热备和 URL 后台预加载，再对比是否恢复。如果看到 `actual=SOFTWARE`，应先退回硬件默认；实测软件层会放大 tile 压力。
 - 手势返回先到空白页：看 `canGoBack=true` 且是否出现 `Cleared initial blank history...`。
 - 出现 `Blocked ad request`、`SSL error blocked`：先确认当前限制开关是否符合预期。
 

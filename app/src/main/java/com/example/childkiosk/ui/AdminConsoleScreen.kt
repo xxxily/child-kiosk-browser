@@ -805,6 +805,9 @@ fun AdminConsoleScreen(
                                 var showClearCacheConfirm by remember { mutableStateOf(false) }
                                 var webViewWarmPoolEnabled by remember { mutableStateOf(KioskPrefs.getWebViewWarmPoolEnabled(context)) }
                                 var webViewRenderMode by remember { mutableStateOf(KioskPrefs.getWebViewRenderMode(context)) }
+                                var webViewHighDprCompatMode by remember {
+                                    mutableStateOf(KioskPrefs.getWebViewHighDprCompatMode(context))
+                                }
                                 var webViewOffscreenPreRasterEnabled by remember {
                                     mutableStateOf(KioskPrefs.isWebViewOffscreenPreRasterEnabled(context))
                                 }
@@ -918,6 +921,54 @@ fun AdminConsoleScreen(
                                                     onClick = {
                                                         webViewRenderMode = mode
                                                         KioskPrefs.setWebViewRenderMode(context, mode)
+                                                        WebViewPool.clear()
+                                                        if (webViewWarmPoolEnabled) {
+                                                            WebViewPool.warmupBlank()
+                                                        }
+                                                        poolSnapshot = WebViewPool.snapshot()
+                                                    }
+                                                )
+                                                Text(label, fontSize = 13.sp)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("高分屏渲染兼容模式", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    Text("默认自动。DPR 很高时注入轻量渲染补丁，降低动画、阴影、will-change 和超宽内容带来的 Chromium tile 压力；如发现个别网页视觉降级，可手动关闭", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(20.dp)
+                                    ) {
+                                        listOf(
+                                            KioskPrefs.WEBVIEW_HIGH_DPR_COMPAT_AUTO to "自动",
+                                            KioskPrefs.WEBVIEW_HIGH_DPR_COMPAT_ENABLED to "开启",
+                                            KioskPrefs.WEBVIEW_HIGH_DPR_COMPAT_DISABLED to "关闭"
+                                        ).forEach { (mode, label) ->
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier
+                                                    .widthIn(min = 92.dp)
+                                                    .clickable {
+                                                        webViewHighDprCompatMode = mode
+                                                        KioskPrefs.setWebViewHighDprCompatMode(context, mode)
+                                                        WebViewPool.clear()
+                                                        if (webViewWarmPoolEnabled) {
+                                                            WebViewPool.warmupBlank()
+                                                        }
+                                                        poolSnapshot = WebViewPool.snapshot()
+                                                    }
+                                            ) {
+                                                RadioButton(
+                                                    selected = webViewHighDprCompatMode == mode,
+                                                    onClick = {
+                                                        webViewHighDprCompatMode = mode
+                                                        KioskPrefs.setWebViewHighDprCompatMode(context, mode)
                                                         WebViewPool.clear()
                                                         if (webViewWarmPoolEnabled) {
                                                             WebViewPool.warmupBlank()

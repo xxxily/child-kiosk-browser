@@ -321,7 +321,36 @@ WARNING: tile memory limits exceeded, some content may not draw
 - 主进程不再创建 WebView 热备/预加载实例；热备只允许在 `:webview` 进程内生效，URL 后台预加载默认关闭且不跨进程复用。
 - `Render mode applied` 日志增加 `memoryClass/largeMemoryClass/heapMax/heapTotal/heapFree`，用于确认设备给 App 的实际内存基线。
 - 移除网页完成后的全屏 loading 退出动画，并缩短最小覆盖时间，减少页面首绘阶段 WebView 与 Compose 全屏遮罩同时占用合成资源的时间窗口。
-- 后续若仍有 tile warning，应优先继续降低宿主侧同时存在的 WebView/全屏覆盖层/预加载资源，而不是切软件层。
+- 如果宿主进程余量已经正常但 tile warning 仍来自 chromium renderer 子进程，应降低页面本身提交给 renderer 的 tile 成本，而不是继续增加 App Java heap 或切软件层。
+
+### 5.7 高分屏渲染兼容模式
+
+文件：[`WebViewActivity.kt`](../app/src/main/java/com/example/childkiosk/WebViewActivity.kt)、[`WebViewRuntime.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewRuntime.kt)、[`KioskPrefs.kt`](../app/src/main/java/com/example/childkiosk/util/KioskPrefs.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/com/example/childkiosk/ui/AdminConsoleScreen.kt)
+
+v0.0.23 后续日志确认：
+
+```text
+Process started: com.example.childkiosk:webview, webViewProcess=true
+Render mode applied: requested=AUTO, actual=HARDWARE, process=com.example.childkiosk:webview, memoryClass=384MB, largeMemoryClass=512MB, heapMax=512MB
+chromium(...): WARNING: tile memory limits exceeded, some content may not draw
+```
+
+这说明 `largeHeap` 和独立 `:webview` 进程已生效，但 warning 仍来自 Chromium renderer 子进程。Android WebView 没有公开 API 可以直接调大 renderer tile cache，因此新增“高分屏渲染兼容模式”：
+
+- **自动**：默认值。`density >= 3.5` 且物理像素超过 400 万时启用。
+- **开启**：无条件注入兼容补丁，用于手动验证问题站点。
+- **关闭**：完全禁用补丁，用于对比正常浏览器视觉效果或排查误伤。
+
+通用补丁：
+
+- 禁用网页内高成本动画/transition 的长时间合成。
+- 清理 `will-change`、`filter`、`backdrop-filter` 等容易制造合成层的样式。
+- 保持 WebView 硬件默认合成路径，不再使用 `LAYER_TYPE_SOFTWARE`。
+
+已知站点补丁：
+
+- `pages.anzz.site/app/piano`：隐藏特效层，降低运行时键宽到 32px，移除键盘大阴影，并重排黑键位置。该页默认 88 键、52 个白键、`keyWidth=44px`，在 `DPR=4` 下横向内容约 9000+ 物理像素宽，是典型 tile 高压页面。
+- `pages.anzz.site/books`：停用全屏渐变动画、卡片 hover transform 和大阴影，降低首屏文章/卡片页的合成成本。
 
 ---
 
@@ -412,6 +441,7 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 - 是否开启 `offscreenPreRaster`。
 - 是否开启空白 WebView 热备或 URL 预加载。
 - 是否同时 attach 多个 WebView。
+- 是否启用了“高分屏渲染兼容模式”。如果日志中宿主进程已经是 `:webview` 且 `heapMax` 正常，但 warning 仍来自 chromium renderer 子进程，应通过兼容模式降低页面提交给 renderer 的 tile 成本。
 - 是否页面本身使用大量 Canvas/WebGL、CSS filter、固定背景、大图、复杂 transform 或超大阴影。
 - 设备是否为高 DPR、高分辨率且内存紧张。
 
@@ -441,6 +471,7 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 | `mixedContentMode` | 兼容模式 | 已满足，可配置严格阻止 | 默认兼容旧网页；安全需要时再严格 |
 | `hardwareAccelerated` | Activity 开启 | 已满足 | Canvas、视频、CSS 动画、合成层依赖 |
 | WebView 渲染模式 | 自动默认硬件 | 已修正，可切换硬件默认 | 保持 WebView 默认硬件合成路径；已禁用高 DPR 自动切软件层策略 |
+| 高分屏渲染兼容模式 | 自动 | 已新增，可强制开启/关闭 | 高 DPR 大屏设备自动注入轻量 CSS/JS 补丁，降低动画、阴影、filter、will-change 和超宽内容的 tile 成本 |
 | `largeHeap` | `true` | 已满足 | WebView-heavy、高 DPR 场景下增加宿主进程内存余量，降低 App 侧内存压力 |
 | WebView 进程 | 独立 `:webview` | 已满足 | 给 WebView 宿主单独进程预算，避免与主页/后台管理共享同一进程内存 |
 | `offscreenPreRaster` | `false` | 已满足，可配置开启 | 默认关闭以降低 tile 内存压力；只在确认需要预栅格化时手动开启 |
@@ -456,7 +487,7 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 | 多窗口/`window.open` | 默认允许 | 已调整，可配置禁用 | `target=_blank`、OAuth、文档预览等常依赖新窗口 |
 | `file/content` 访问 | 默认允许 | 已调整，可配置限制 | 文件上传、预览、本地内容交互需要标准访问能力 |
 
-本轮基线复核结论：原有核心 WebSettings 渲染项已满足，但 `offscreenPreRaster=true`、默认空白 WebView 热备、URL 后台预加载和全屏 loading 退出动画都会在高分屏设备上放大首绘阶段的内存/合成压力，已经按“渲染稳定优先”调整为默认关闭或缩短。v0.0.22 验证过的高 DPR 自动切软件层策略会让 `tile memory limits exceeded` 更严重，已回退为硬件默认。多个“网页浏览器沙箱限制”的默认值也已改为“默认按正常浏览器兼容基线放开，后台保留配置项，用户需要更严格儿童安全策略时再主动开启”。
+本轮基线复核结论：原有核心 WebSettings 渲染项已满足，但 `offscreenPreRaster=true`、默认空白 WebView 热备、URL 后台预加载和全屏 loading 退出动画都会在高分屏设备上放大首绘阶段的内存/合成压力，已经按“渲染稳定优先”调整为默认关闭或缩短。v0.0.22 验证过的高 DPR 自动切软件层策略会让 `tile memory limits exceeded` 更严重，已回退为硬件默认。v0.0.23 进一步验证 `largeHeap` 和独立 `:webview` 进程只能扩大宿主进程余量，不能直接调大 chromium renderer 的 tile cache；因此新增“高分屏渲染兼容模式”，用注入补丁降低页面本身的 renderer tile 成本。多个“网页浏览器沙箱限制”的默认值也已改为“默认按正常浏览器兼容基线放开，后台保留配置项，用户需要更严格儿童安全策略时再主动开启”。
 
 ### 7.2 调试基线
 
@@ -497,7 +528,7 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 - **资源拦截日志面板**：记录每个被 App 拦截的请求 URL、原因、mime、是否主 frame。
 - **WebView 环境诊断页**：一键展示 UA、viewport、visualViewport、DPR、Cookie、Storage、prefers-color-scheme。
 - **视觉状态回调接入**：用 `postVisualStateCallback` 改进 Loading 遮罩消失时机。
-- **站点兼容配置**：按域名覆盖 viewport、UA、mixed content、第三方 Cookie、多窗口等策略。
+- **站点兼容配置增强**：当前已支持高 DPR 渲染兼容补丁，后续可继续扩展为按域名覆盖 viewport、UA、mixed content、第三方 Cookie、多窗口等策略。
 - **截图对比回归**：同一 URL 用设备浏览器和 App WebView 截图比对，避免发布后才发现渲染退化。
 - **调试脚本健康检查**：Eruda/vConsole 注入后记录是否成功创建全局对象和面板 DOM。
 
@@ -535,7 +566,7 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 这次不是 WebView 版本过旧，也不是页面完全没加载。已经确认存在两类不同问题：
 
 1. 视口/生命周期触发问题：wide viewport、overview mode、attach/layout 时机可能让依赖 IntersectionObserver、懒加载和滚动揭示的页面停在隐藏态。
-2. tile 内存问题：页面加载完成、Inspect 无异常时，如果 logcat 出现 `tile memory limits exceeded, some content may not draw`，就是 Chromium 合成器在栅格化阶段因为内存预算不足跳过部分绘制。
+2. tile 内存问题：页面加载完成、Inspect 无异常时，如果 logcat 出现 `tile memory limits exceeded, some content may not draw`，就是 Chromium 合成器在栅格化阶段因为 renderer tile 预算不足跳过部分绘制。`largeHeap` 只能提高 App/WebView 宿主进程 heap，不能直接调大 renderer 的 tile cache。
 
 对 `pages.anzz.site/app/piano/`，最新证据更符合第二类：Inspect 显示 UA、viewport、DOM、功能 API、Network、Console 都正常；logcat 在 `Page finished` 后立刻提示 tile memory exceeded。
 

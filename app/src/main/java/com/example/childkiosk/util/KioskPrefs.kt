@@ -43,6 +43,10 @@ object KioskPrefs {
     const val WEBVIEW_RENDER_MODE_HARDWARE = "HARDWARE"
     const val WEBVIEW_RENDER_MODE_SOFTWARE = "SOFTWARE"
 
+    const val WEBVIEW_HIGH_DPR_COMPAT_AUTO = "AUTO"
+    const val WEBVIEW_HIGH_DPR_COMPAT_ENABLED = "ENABLED"
+    const val WEBVIEW_HIGH_DPR_COMPAT_DISABLED = "DISABLED"
+
     fun getProtectionMode(context: Context): String {
         return prefs(context).getString(KEY_PROTECTION_MODE, DEFAULT_MODE) ?: DEFAULT_MODE
     }
@@ -142,6 +146,23 @@ object KioskPrefs {
             else -> WEBVIEW_RENDER_MODE_AUTO
         }
         prefs(context).edit().putString("webview_render_mode", normalized).apply()
+    }
+
+    fun getWebViewHighDprCompatMode(context: Context): String {
+        return when (prefs(context).getString("webview_high_dpr_compat_mode", WEBVIEW_HIGH_DPR_COMPAT_AUTO)) {
+            WEBVIEW_HIGH_DPR_COMPAT_ENABLED -> WEBVIEW_HIGH_DPR_COMPAT_ENABLED
+            WEBVIEW_HIGH_DPR_COMPAT_DISABLED -> WEBVIEW_HIGH_DPR_COMPAT_DISABLED
+            else -> WEBVIEW_HIGH_DPR_COMPAT_AUTO
+        }
+    }
+
+    fun setWebViewHighDprCompatMode(context: Context, mode: String) {
+        val normalized = when (mode) {
+            WEBVIEW_HIGH_DPR_COMPAT_ENABLED -> WEBVIEW_HIGH_DPR_COMPAT_ENABLED
+            WEBVIEW_HIGH_DPR_COMPAT_DISABLED -> WEBVIEW_HIGH_DPR_COMPAT_DISABLED
+            else -> WEBVIEW_HIGH_DPR_COMPAT_AUTO
+        }
+        prefs(context).edit().putString("webview_high_dpr_compat_mode", normalized).apply()
     }
 
     fun getLastCacheClearTime(context: Context): Long {

@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### Added — 新增
+
+- **高分屏渲染兼容模式**：
+  - 家长后台“网页性能优化”新增“高分屏渲染兼容模式”，支持“自动 / 开启 / 关闭”。
+  - 自动模式会在 DPR>=3.5 且物理像素较高的设备上注入轻量渲染补丁，降低动画、`will-change`、filter、backdrop-filter 等高成本合成路径。
+  - 针对 `pages.anzz.site/app/piano` 增加站点兼容补丁：降低运行时键宽、隐藏特效层、去除键盘大阴影并重排黑键，减少超宽 88 键键盘在高 DPR WebView renderer 中的 tile 成本。
+  - 针对 `pages.anzz.site/books` 增加站点兼容补丁：停用首屏渐变动画和卡片 hover transform，减少全屏渐变/阴影层造成的 tile 压力。
+
 ## [0.0.23] - 2026-06-14
 
 ### Changed — 变更

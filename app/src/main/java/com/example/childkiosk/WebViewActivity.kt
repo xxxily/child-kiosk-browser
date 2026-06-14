@@ -1327,14 +1327,105 @@ private fun injectCustomScriptIfNeeded(webView: WebView, context: Context, curre
 }
 
 private fun scheduleInjectionPasses(webView: WebView, context: Context, primaryTiming: String = "BOTH") {
+    injectHighDprRenderCompatIfNeeded(webView, context)
     injectDebugToolIfNeeded(webView, context, primaryTiming)
     injectCustomScriptIfNeeded(webView, context, primaryTiming)
 
     listOf(250L, 1000L, 2500L).forEach { delayMs ->
         webView.postDelayed({
+            injectHighDprRenderCompatIfNeeded(webView, context)
             injectDebugToolIfNeeded(webView, context, "BOTH")
             injectCustomScriptIfNeeded(webView, context, "BOTH")
         }, delayMs)
+    }
+}
+
+private fun injectHighDprRenderCompatIfNeeded(webView: WebView, context: Context) {
+    if (!WebViewRuntime.isHighDprRenderCompatEnabled(context)) return
+
+    val genericCssJson = JSONObject.quote(HIGH_DPR_RENDER_COMPAT_CSS)
+    val pianoCssJson = JSONObject.quote(PIANO_RENDER_COMPAT_CSS)
+    val booksCssJson = JSONObject.quote(BOOKS_RENDER_COMPAT_CSS)
+    val reason = WebViewRuntime.highDprRenderCompatReason(context)
+    val js = """
+        (function() {
+            try {
+                var version = '20260614-1';
+                var styleId = 'child-kiosk-high-dpr-render-compat';
+                var genericCss = $genericCssJson;
+                var pianoCss = $pianoCssJson;
+                var booksCss = $booksCssJson;
+                var path = location.pathname || '';
+                var host = location.hostname || '';
+                var isPiano = host === 'pages.anzz.site' && path.indexOf('/app/piano') === 0;
+                var isBooks = host === 'pages.anzz.site' && path.indexOf('/books') === 0;
+                var profile = isPiano ? 'piano' : (isBooks ? 'books' : 'generic');
+                var style = document.getElementById(styleId);
+                var alreadyCurrent = style &&
+                    style.getAttribute('data-version') === version &&
+                    style.getAttribute('data-profile') === profile;
+
+                if (!alreadyCurrent) {
+                    if (!style) {
+                        style = document.createElement('style');
+                        style.id = styleId;
+                        (document.head || document.documentElement || document.body).appendChild(style);
+                    }
+                    style.setAttribute('data-version', version);
+                    style.setAttribute('data-profile', profile);
+                    style.textContent = genericCss + (isPiano ? '\n' + pianoCss : '') + (isBooks ? '\n' + booksCss : '');
+                    document.documentElement.setAttribute('data-child-kiosk-render-compat', 'high-dpr');
+                }
+
+                function positionPianoBlackKeys() {
+                    var whiteKeys = document.querySelectorAll('.white-key');
+                    var blackKeys = document.querySelectorAll('.black-key');
+                    if (!whiteKeys.length || !blackKeys.length) return;
+                    var blackKeyWhiteIndices = [0, 1, 3, 4, 5];
+                    blackKeys.forEach(function(blackKey, index) {
+                        var octaveNumber = Math.floor(index / 5);
+                        var posInOctave = index % 5;
+                        var whiteKeyIndex = blackKeyWhiteIndices[posInOctave] + octaveNumber * 7;
+                        var whiteKey = whiteKeys[whiteKeyIndex];
+                        if (whiteKey) {
+                            blackKey.style.left = (whiteKey.offsetLeft + whiteKey.offsetWidth * 0.6) + 'px';
+                        }
+                    });
+                }
+
+                if (isPiano) {
+                    var piano = document.getElementById('piano');
+                    if (piano) {
+                        piano.style.setProperty('--child-kiosk-key-width', '32px');
+                    }
+                    var effectsLayer = document.getElementById('effects-layer');
+                    if (effectsLayer) {
+                        effectsLayer.style.display = 'none';
+                    }
+                    var wrapper = document.getElementById('piano-wrapper');
+                    var display = document.getElementById('key-width-display');
+                    if (wrapper && display) {
+                        display.textContent = Math.max(1, Math.floor(wrapper.clientWidth / 32)) + '键';
+                    }
+                    [0, 50, 250, 1000].forEach(function(delayMs) {
+                        setTimeout(positionPianoBlackKeys, delayMs);
+                    });
+                }
+
+                return alreadyCurrent ? (profile + '-existing') : profile;
+            } catch (e) {
+                return 'error:' + (e && e.message ? e.message : e);
+            }
+        })();
+    """.trimIndent()
+
+    webView.evaluateJavascript(js) { result ->
+        if (result != "\"generic-existing\"" && result != "\"piano-existing\"" && result != "\"books-existing\"") {
+            Log.d(
+                "ChildKioskWebView",
+                "High DPR render compat injected: result=$result, $reason, url=${webView.url}"
+            )
+        }
     }
 }
 
@@ -1411,6 +1502,111 @@ private fun waitForMeaningfulContent(webView: WebView?, onResult: (Boolean) -> U
         onResult(result == "true" || result == "\"true\"")
     }
 }
+
+private val HIGH_DPR_RENDER_COMPAT_CSS = """
+html[data-child-kiosk-render-compat="high-dpr"],
+html[data-child-kiosk-render-compat="high-dpr"] * {
+    scroll-behavior: auto !important;
+}
+
+html[data-child-kiosk-render-compat="high-dpr"] *,
+html[data-child-kiosk-render-compat="high-dpr"] *::before,
+html[data-child-kiosk-render-compat="high-dpr"] *::after {
+    will-change: auto !important;
+    -webkit-backface-visibility: visible !important;
+    backface-visibility: visible !important;
+    -webkit-filter: none !important;
+    filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+}
+
+html[data-child-kiosk-render-compat="high-dpr"] [style*="will-change"] {
+    will-change: auto !important;
+}
+""".trimIndent()
+
+private val PIANO_RENDER_COMPAT_CSS = """
+html[data-child-kiosk-render-compat="high-dpr"] #effects-layer {
+    display: none !important;
+}
+
+html[data-child-kiosk-render-compat="high-dpr"] #piano-container,
+html[data-child-kiosk-render-compat="high-dpr"] #top-bar,
+html[data-child-kiosk-render-compat="high-dpr"] #quick-controls,
+html[data-child-kiosk-render-compat="high-dpr"] .icon-btn,
+html[data-child-kiosk-render-compat="high-dpr"] .record-toggle-btn,
+html[data-child-kiosk-render-compat="high-dpr"] .scroll-hint {
+    box-shadow: none !important;
+}
+
+html[data-child-kiosk-render-compat="high-dpr"] #piano-container {
+    border-top-width: 1px !important;
+    border-bottom-width: 2px !important;
+}
+
+html[data-child-kiosk-render-compat="high-dpr"] #piano {
+    --key-width: var(--child-kiosk-key-width, 32px) !important;
+    padding: 4px 0 !important;
+    contain: layout paint style !important;
+}
+
+html[data-child-kiosk-render-compat="high-dpr"] .white-key {
+    width: var(--child-kiosk-key-width, 32px) !important;
+    min-width: var(--child-kiosk-key-width, 32px) !important;
+    box-shadow: none !important;
+    border-radius: 0 0 4px 4px !important;
+    transition: none !important;
+}
+
+html[data-child-kiosk-render-compat="high-dpr"] .black-key {
+    width: calc(var(--child-kiosk-key-width, 32px) * 0.64) !important;
+    box-shadow: none !important;
+    border-radius: 0 0 3px 3px !important;
+    transition: none !important;
+}
+
+html[data-child-kiosk-render-compat="high-dpr"] .white-key.next-note,
+html[data-child-kiosk-render-compat="high-dpr"] .black-key.next-note,
+html[data-child-kiosk-render-compat="high-dpr"] .record-toggle-btn.recording,
+html[data-child-kiosk-render-compat="high-dpr"] .rec-dot,
+html[data-child-kiosk-render-compat="high-dpr"] .key-glow {
+    animation: none !important;
+    box-shadow: none !important;
+}
+
+html[data-child-kiosk-render-compat="high-dpr"] .white-key.pressed::after,
+html[data-child-kiosk-render-compat="high-dpr"] .black-key.pressed::after {
+    background: rgba(233, 69, 96, 0.18) !important;
+}
+""".trimIndent()
+
+private val BOOKS_RENDER_COMPAT_CSS = """
+html[data-child-kiosk-render-compat="high-dpr"] .hero {
+    animation: none !important;
+    background-size: 100% 100% !important;
+}
+
+html[data-child-kiosk-render-compat="high-dpr"] .hero h1,
+html[data-child-kiosk-render-compat="high-dpr"] .hero p,
+html[data-child-kiosk-render-compat="high-dpr"] .hero-meta,
+html[data-child-kiosk-render-compat="high-dpr"] .scroll-hint,
+html[data-child-kiosk-render-compat="high-dpr"] .article-content,
+html[data-child-kiosk-render-compat="high-dpr"] .category-card,
+html[data-child-kiosk-render-compat="high-dpr"] .tag,
+html[data-child-kiosk-render-compat="high-dpr"] .progress-bar {
+    box-shadow: none !important;
+    text-shadow: none !important;
+}
+
+html[data-child-kiosk-render-compat="high-dpr"] .category-card:hover,
+html[data-child-kiosk-render-compat="high-dpr"] .tag:hover {
+    transform: none !important;
+}
+""".trimIndent()
 
 private fun destroyWebViewSafely(webView: WebView) {
     runCatching {

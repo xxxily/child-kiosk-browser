@@ -110,6 +110,26 @@ object WebViewRuntime {
 
     private const val BYTES_PER_MB = 1024L * 1024L
 
+    fun isHighDprRenderCompatEnabled(context: Context): Boolean {
+        return when (KioskPrefs.getWebViewHighDprCompatMode(context)) {
+            KioskPrefs.WEBVIEW_HIGH_DPR_COMPAT_ENABLED -> true
+            KioskPrefs.WEBVIEW_HIGH_DPR_COMPAT_DISABLED -> false
+            else -> isHighDprLargeSurface(context)
+        }
+    }
+
+    fun highDprRenderCompatReason(context: Context): String {
+        val metrics = context.resources.displayMetrics
+        return "mode=${KioskPrefs.getWebViewHighDprCompatMode(context)}, " +
+            "screen=${metrics.widthPixels}x${metrics.heightPixels}, density=${metrics.density}"
+    }
+
+    private fun isHighDprLargeSurface(context: Context): Boolean {
+        val metrics = context.resources.displayMetrics
+        val pixelCount = metrics.widthPixels.toLong() * metrics.heightPixels.toLong()
+        return metrics.density >= 3.5f && pixelCount >= 4_000_000L
+    }
+
     fun isWebUrl(url: String): Boolean {
         return url.startsWith("http://", ignoreCase = true) ||
             url.startsWith("https://", ignoreCase = true)
