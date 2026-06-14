@@ -804,6 +804,7 @@ fun AdminConsoleScreen(
                                 var lastClearSummary by remember { mutableStateOf<String?>(null) }
                                 var showClearCacheConfirm by remember { mutableStateOf(false) }
                                 var webViewWarmPoolEnabled by remember { mutableStateOf(KioskPrefs.getWebViewWarmPoolEnabled(context)) }
+                                var webViewRenderMode by remember { mutableStateOf(KioskPrefs.getWebViewRenderMode(context)) }
                                 var webViewOffscreenPreRasterEnabled by remember {
                                     mutableStateOf(KioskPrefs.isWebViewOffscreenPreRasterEnabled(context))
                                 }
@@ -889,6 +890,54 @@ fun AdminConsoleScreen(
                                             poolSnapshot = WebViewPool.snapshot()
                                         }
                                     )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("WebView 渲染模式", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    Text("自动模式会在高 DPR 大屏设备上使用软件兼容绘制，绕开 Chromium tile/GPU 合成预算不足导致的局部不绘制；如网页依赖 WebGL 或高性能视频，可手动切回硬件默认", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(20.dp)
+                                    ) {
+                                        listOf(
+                                            KioskPrefs.WEBVIEW_RENDER_MODE_AUTO to "自动兼容",
+                                            KioskPrefs.WEBVIEW_RENDER_MODE_HARDWARE to "硬件默认",
+                                            KioskPrefs.WEBVIEW_RENDER_MODE_SOFTWARE to "软件兼容"
+                                        ).forEach { (mode, label) ->
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier
+                                                    .widthIn(min = 112.dp)
+                                                    .clickable {
+                                                        webViewRenderMode = mode
+                                                        KioskPrefs.setWebViewRenderMode(context, mode)
+                                                        WebViewPool.clear()
+                                                        if (webViewWarmPoolEnabled) {
+                                                            WebViewPool.warmupBlank()
+                                                        }
+                                                        poolSnapshot = WebViewPool.snapshot()
+                                                    }
+                                            ) {
+                                                RadioButton(
+                                                    selected = webViewRenderMode == mode,
+                                                    onClick = {
+                                                        webViewRenderMode = mode
+                                                        KioskPrefs.setWebViewRenderMode(context, mode)
+                                                        WebViewPool.clear()
+                                                        if (webViewWarmPoolEnabled) {
+                                                            WebViewPool.warmupBlank()
+                                                        }
+                                                        poolSnapshot = WebViewPool.snapshot()
+                                                    }
+                                                )
+                                                Text(label, fontSize = 13.sp)
+                                            }
+                                        }
+                                    }
                                 }
 
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))

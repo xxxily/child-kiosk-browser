@@ -1,6 +1,6 @@
 # WebView 渲染异常复盘与一致性优化记录
 
-> 文档版本：1.2
+> 文档版本：1.3
 > 创建日期：2026-06-14  
 > 状态：已按 7.1 默认基线完成代码对齐；浏览器沙箱限制默认兼容优先；WebView tile 内存高压选项默认关闭
 > 关联代码：[`WebViewRuntime.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewRuntime.kt)、[`WebViewActivity.kt`](../app/src/main/java/com/example/childkiosk/WebViewActivity.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/com/example/childkiosk/ui/AdminConsoleScreen.kt)  
@@ -109,6 +109,8 @@ WARNING: tile memory limits exceeded, some content may not draw
 - Network 无异常，Console 无脚本报错
 
 这说明该页面不是没加载、不是 UA 分流错误、不是 viewport 为 0，也不是脚本崩溃。页面已经完成主 frame 加载，DOM 与运行环境正常，但 Chromium 的 compositor/tile manager 在栅格化阶段因为内存预算不足，选择跳过部分 tile 绘制，所以用户看到的是“加载完成但一部分界面没画出来”。
+
+这里的“内存预算不足”不能简单理解为“设备 RAM 不够”。它更接近 WebView/Chromium 合成器为当前页面分配的 tile/GPU 栅格化预算不足。Chrome/手机浏览器即使使用同一套 Chromium 内核，也有不同的进程模型、Surface 管理、缓存策略和调度预算，因此同一页面可能在 Chrome 正常，在嵌入式 WebView 中触发 tile 丢绘。
 
 本项目此前把 `WebSettings.offscreenPreRaster` 全局设为 `true`。该选项会让 WebView 对屏幕外内容提前栅格化，适合少数即将滑入可见区域的 WebView，但会增加 tile 内存占用。对 `DPR=4`、物理尺寸 `1440x3056` 这类高分屏设备来说，每个可见区域和离屏区域的 tile 都更贵；再叠加空白 WebView 热备、页面自身 Canvas/CSS 合成层，就可能触发 `tile memory limits exceeded`。
 
@@ -281,6 +283,36 @@ offscreenPreRaster = KioskPrefs.isWebViewOffscreenPreRasterEnabled(context)
 
 多窗口栈也改为只把当前顶层 WebView attach 到 Compose/Window。底层 WebView 实例保留在栈里，但不继续作为隐藏原生 View 参与窗口测量和绘制，降低多个 WebView surface 同时存在时的 tile 压力。
 
+### 5.6 WebView 渲染模式兜底
+
+文件：[`WebViewRuntime.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewRuntime.kt)、[`KioskPrefs.kt`](../app/src/main/java/com/example/childkiosk/util/KioskPrefs.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/com/example/childkiosk/ui/AdminConsoleScreen.kt)
+
+如果关闭 `offscreenPreRaster`、热备和预加载后仍然出现：
+
+```text
+WARNING: tile memory limits exceeded, some content may not draw
+```
+
+则说明真实页面本身在当前 WebView 硬件合成路径下仍然会打爆 tile 预算。新增“WebView 渲染模式”：
+
+- **自动兼容**：默认值。高 DPR 大屏设备自动切到软件兼容绘制，普通设备继续使用硬件默认。
+- **硬件默认**：使用 Activity 硬件加速和 WebView 默认合成路径，适合 WebGL、复杂动画、视频等场景。
+- **软件兼容**：对 WebView 调用 `setLayerType(View.LAYER_TYPE_SOFTWARE, null)`，绕开硬件 tile/GPU 合成路径，优先解决局部不绘制问题。
+
+自动模式当前判断条件：
+
+```kotlin
+density >= 3.5f && (heightPixels >= 3000 || widthPixels * heightPixels >= 4_000_000)
+```
+
+用户反馈设备的 Inspect 数据为 `DPR=4`，logcat 初始布局为 `1440x3056`，符合自动切到软件兼容的条件。
+
+代价：
+
+- 软件兼容绘制可能降低动画、Canvas、大图页面性能。
+- 依赖 WebGL 的页面可能不可用或降级。
+- 因此该能力做成可配置项，用户可以按站点表现手动切换。
+
 ---
 
 ## 6. 当前仍可能导致渲染异常的风险点
@@ -398,6 +430,7 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 | `thirdPartyCookies` | 默认允许 | 已满足，可配置关闭 | 提升登录、嵌入组件、跨域鉴权兼容性 |
 | `mixedContentMode` | 兼容模式 | 已满足，可配置严格阻止 | 默认兼容旧网页；安全需要时再严格 |
 | `hardwareAccelerated` | Activity 开启 | 已满足 | Canvas、视频、CSS 动画、合成层依赖 |
+| WebView 渲染模式 | 自动兼容 | 已满足，可切换 | 高 DPR 大屏自动使用软件兼容绘制，绕开 tile/GPU 合成预算不足 |
 | `offscreenPreRaster` | `false` | 已满足，可配置开启 | 默认关闭以降低 tile 内存压力；只在确认需要预栅格化时手动开启 |
 | 空白 WebView 热备 | 默认关闭 | 已满足，可配置开启 | 热备提升冷启动速度，但会占用 WebView/Chromium 资源，高分屏或低内存设备优先保障真实页面绘制 |
 | URL 后台预加载 | 默认关闭 | 已满足，可配置开启 | 避免无感占用网络、内存和网站会话 |
@@ -411,7 +444,7 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 | 多窗口/`window.open` | 默认允许 | 已调整，可配置禁用 | `target=_blank`、OAuth、文档预览等常依赖新窗口 |
 | `file/content` 访问 | 默认允许 | 已调整，可配置限制 | 文件上传、预览、本地内容交互需要标准访问能力 |
 
-本轮基线复核结论：原有核心 WebSettings 渲染项已满足，但 `offscreenPreRaster=true` 和默认空白 WebView 热备会在高分屏设备上放大 Chromium tile 内存压力，已经按“渲染稳定优先”调整为默认关闭。多个“网页浏览器沙箱限制”的默认值也已改为“默认按正常浏览器兼容基线放开，后台保留配置项，用户需要更严格儿童安全策略时再主动开启”。
+本轮基线复核结论：原有核心 WebSettings 渲染项已满足，但 `offscreenPreRaster=true` 和默认空白 WebView 热备会在高分屏设备上放大 Chromium tile 内存压力，已经按“渲染稳定优先”调整为默认关闭。对仍然触发 `tile memory limits exceeded` 的高 DPR 大屏设备，默认自动切换 WebView 软件兼容绘制。多个“网页浏览器沙箱限制”的默认值也已改为“默认按正常浏览器兼容基线放开，后台保留配置项，用户需要更严格儿童安全策略时再主动开启”。
 
 ### 7.2 调试基线
 

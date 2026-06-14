@@ -2,6 +2,8 @@ package com.example.childkiosk.util
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.util.Log
+import android.view.View
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -12,6 +14,7 @@ object WebViewRuntime {
     @SuppressLint("SetJavaScriptEnabled")
     fun applySettings(webView: WebView, context: Context, targetUrl: String) {
         WebView.setWebContentsDebuggingEnabled(KioskPrefs.isChromeInspectEnabled(context))
+        applyRenderMode(webView, context)
 
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -71,6 +74,36 @@ object WebViewRuntime {
             webView.setOnLongClickListener(null)
             webView.isLongClickable = true
         }
+    }
+
+    private fun applyRenderMode(webView: WebView, context: Context) {
+        val requestedMode = KioskPrefs.getWebViewRenderMode(context)
+        val useSoftware = when (requestedMode) {
+            KioskPrefs.WEBVIEW_RENDER_MODE_SOFTWARE -> true
+            KioskPrefs.WEBVIEW_RENDER_MODE_HARDWARE -> false
+            else -> shouldUseSoftwareRenderForHighDpr(context)
+        }
+        val targetLayerType = if (useSoftware) {
+            View.LAYER_TYPE_SOFTWARE
+        } else {
+            View.LAYER_TYPE_NONE
+        }
+        if (webView.layerType != targetLayerType) {
+            webView.setLayerType(targetLayerType, null)
+        }
+
+        val metrics = context.resources.displayMetrics
+        Log.d(
+            "ChildKioskWebView",
+            "Render mode applied: requested=$requestedMode, actual=${if (useSoftware) "SOFTWARE" else "HARDWARE"}, " +
+                "screen=${metrics.widthPixels}x${metrics.heightPixels}, density=${metrics.density}"
+        )
+    }
+
+    private fun shouldUseSoftwareRenderForHighDpr(context: Context): Boolean {
+        val metrics = context.resources.displayMetrics
+        val pixelCount = metrics.widthPixels.toLong() * metrics.heightPixels.toLong()
+        return metrics.density >= 3.5f && (metrics.heightPixels >= 3000 || pixelCount >= 4_000_000L)
     }
 
     fun isWebUrl(url: String): Boolean {

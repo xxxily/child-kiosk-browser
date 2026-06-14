@@ -39,6 +39,10 @@ object KioskPrefs {
     const val ICON_SIZE_MEDIUM = "MEDIUM"
     const val ICON_SIZE_LARGE = "LARGE"
 
+    const val WEBVIEW_RENDER_MODE_AUTO = "AUTO"
+    const val WEBVIEW_RENDER_MODE_HARDWARE = "HARDWARE"
+    const val WEBVIEW_RENDER_MODE_SOFTWARE = "SOFTWARE"
+
     fun getProtectionMode(context: Context): String {
         return prefs(context).getString(KEY_PROTECTION_MODE, DEFAULT_MODE) ?: DEFAULT_MODE
     }
@@ -124,6 +128,20 @@ object KioskPrefs {
 
     fun setWebViewOffscreenPreRasterEnabled(context: Context, enabled: Boolean) =
         prefs(context).edit().putBoolean("webview_offscreen_preraster_enabled", enabled).apply()
+
+    fun getWebViewRenderMode(context: Context): String {
+        return prefs(context).getString("webview_render_mode", WEBVIEW_RENDER_MODE_AUTO)
+            ?: WEBVIEW_RENDER_MODE_AUTO
+    }
+
+    fun setWebViewRenderMode(context: Context, mode: String) {
+        val normalized = when (mode) {
+            WEBVIEW_RENDER_MODE_HARDWARE,
+            WEBVIEW_RENDER_MODE_SOFTWARE -> mode
+            else -> WEBVIEW_RENDER_MODE_AUTO
+        }
+        prefs(context).edit().putString("webview_render_mode", normalized).apply()
+    }
 
     fun getLastCacheClearTime(context: Context): Long {
         return prefs(context).getLong("last_cache_clear_time", 0L)

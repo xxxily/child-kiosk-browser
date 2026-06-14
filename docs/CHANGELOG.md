@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### Added — 新增
+
+- **WebView 渲染模式配置**：
+  - 家长后台“网页性能优化”新增 WebView 渲染模式，可在“自动兼容 / 硬件默认 / 软件兼容”之间切换。
+  - 自动兼容模式会在高 DPR 大屏设备上切到软件兼容绘制，绕开 Chromium 硬件 tile/GPU 合成预算不足导致的局部不绘制问题。
+  - logcat 新增 `Render mode applied` 诊断日志，显示请求模式、实际模式、屏幕像素和 density。
+
+### Changed — 变更
+
+- **WebView tile 内存问题说明修正**：
+  - 文档明确 `tile memory limits exceeded` 不是简单等同设备 RAM 不足，而是 WebView/Chromium 合成器 tile/GPU 栅格化预算不足。
+  - 调试手册补充软件兼容渲染模式的排查与切换步骤。
+
 ## [0.0.21] - 2026-06-14
 
 ### Changed — 变更
