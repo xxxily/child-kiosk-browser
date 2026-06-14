@@ -1,3 +1,43 @@
+## Child Kiosk Browser v0.0.25
+
+本版本用于 WebView 渲染异常 AB 测试，不迁移 Tauri，也不继续调整高分屏兼容补丁。重点是去掉宿主层冗余负担，增加轻量原生 WebView 承载路径和诊断日志，用于判断问题到底来自 Compose/overlay/复用宿主，还是系统 WebView renderer tile 预算本身。
+
+> **说明**：本 APK 使用 debug 签名，仅供调试与家庭内部部署。生产/商用请自行用正式 keystore 重新签名。
+
+### 本版本核心变化
+
+* **新增 WebView 承载模式 AB 测试**：
+  - 家长后台“网页性能优化”新增“WebView 承载模式（AB 测试）”。
+  - “标准 Compose”保留原路径：`ComponentActivity -> Compose -> AndroidView -> WebView`。
+  - “轻量原生”使用 `FrameLayout + WebView` 直接承载页面，跳过 Compose 宿主、全屏 Loading、热备池和 URL 预加载。
+* **新增临时诊断开关**：
+  - 用视觉提交回调关闭 Loading：等待 WebView 提交一帧后再移除 Loading。
+  - 页面激活事件补发：可单独关闭 resize/scroll/pageshow 等激活脚本。
+  - 延迟多轮脚本注入：可单独关闭后续 250ms/1000ms/2500ms 注入 pass。
+  - 轻量模式原生进度条：默认关闭；开启后只显示顶部细进度条，不使用全屏遮罩。
+* **新增关键日志**：
+  - `Host mode applied`：确认当前是标准 Compose 还是轻量原生。
+  - `AB diagnostics`：输出承载模式、兼容开关、热备/预加载、offscreenPreRaster、屏幕、density、进程和 heap。
+  - `WebView surface`：输出 WebView attach、尺寸、layer、parent、context。
+  - `Visual state callback requested/delivered/timeout`：判断 Loading 是否等到真实视觉提交。
+
+### 建议测试
+
+同一 URL 每次只改一个变量，优先测试：
+
+1. 标准 Compose + 高分屏渲染兼容关闭。
+2. 标准 Compose + 高分屏渲染兼容自动。
+3. 轻量原生 + 高分屏渲染兼容关闭。
+4. 轻量原生 + 高分屏渲染兼容自动。
+
+继续使用：
+
+```bash
+adb logcat -v time ChildKioskWebView:D ChildKioskApp:D MainActivity:D chromium:I cr_WebView:I AndroidRuntime:E '*:S'
+```
+
+---
+
 ## Child Kiosk Browser v0.0.24
 
 本版本先把“高分屏渲染兼容模式”发出来用于实机验证。它不再继续尝试强行扩展 WebView renderer 的 tile 内存预算，而是提供一个可开关的兼容层，在高 DPR 大屏设备上降低页面高成本合成路径，重点验证 `tile memory limits exceeded, some content may not draw` 是否能被缓解。

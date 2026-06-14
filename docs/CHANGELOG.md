@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [0.0.25] - 2026-06-14
+
 ### Added — 新增
 
 - **WebView 承载模式 AB 测试**：
@@ -405,7 +407,8 @@
 - 调研报告 `docs/android_kiosk_research_report.md`
 - 需求规格 `docs/child_kiosk_browser_requirements.md`
 
-[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.24...HEAD
+[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.25...HEAD
+[0.0.25]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.24...v0.0.25
 [0.0.24]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.23...v0.0.24
 [0.0.23]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.22...v0.0.23
 [0.0.22]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.21...v0.0.22
