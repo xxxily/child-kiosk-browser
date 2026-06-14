@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [0.0.21] - 2026-06-14
+
 ### Changed — 变更
 
 - **WebView 渲染内存基线收紧**：
@@ -350,7 +352,8 @@
 - 调研报告 `docs/android_kiosk_research_report.md`
 - 需求规格 `docs/child_kiosk_browser_requirements.md`
 
-[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.20...HEAD
+[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.21...HEAD
+[0.0.21]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.20...v0.0.21
 [0.0.20]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.19...v0.0.20
 [0.0.19]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.18...v0.0.19
 [0.0.18]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.17...v0.0.18

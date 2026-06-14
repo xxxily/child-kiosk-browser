@@ -1,3 +1,24 @@
+## Child Kiosk Browser v0.0.21
+
+本版本针对用户通过 logcat 与 Chrome Inspect 捕获到的 WebView 局部不绘制问题做定向修复：当页面已加载完成、Network/Console 均正常，但 Chromium 报 `tile memory limits exceeded` 时，优先降低宿主 WebView 的 tile 内存压力。
+
+> **说明**：本 APK 使用 debug 签名，仅供调试与家庭内部部署。生产/商用请自行用正式 keystore 重新签名。
+
+### 本版本核心变化
+
+* **WebView tile 内存压力修复**：
+  - 默认关闭 `offscreenPreRaster`，避免高 DPR、高分辨率设备上离屏预栅格化放大 Chromium tile 内存占用。
+  - 空白 WebView 热备默认改为关闭，优先把 WebView/Chromium 内存预算留给真实页面绘制。
+  - 多窗口 WebView 栈只 attach 当前顶层 WebView，底层实例不再作为隐藏原生 View 继续参与窗口测量和绘制。
+* **性能配置补充**：
+  - 家长后台“网页性能优化”新增“网页离屏预栅格化”开关，确有需要时仍可手动开启。
+  - “保留 1 个空白 WebView 热备”的文案改为明确提示内存权衡。
+* **排查文档更新**：
+  - `docs/webview_rendering_consistency.md` 记录本次 `tile memory limits exceeded, some content may not draw` 的证据链、原因和修复策略。
+  - `docs/webview_debugging_runbook.md` 补充 tile 内存超限的判断规则和优先排查步骤。
+
+---
+
 ## Child Kiosk Browser v0.0.20
 
 本版本继续针对 WebView 加载与排查能力做修复：解决热备 WebView 返回空白页问题，并补齐 logcat + Chrome Inspect 标准取证手册。
