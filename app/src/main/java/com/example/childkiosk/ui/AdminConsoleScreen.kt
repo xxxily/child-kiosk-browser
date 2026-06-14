@@ -828,14 +828,6 @@ fun AdminConsoleScreen(
                                     WebViewPool.clear()
                                     scope.launch {
                                         runCatching {
-                                            withContext(Dispatchers.Main) {
-                                                android.webkit.WebView(context).apply {
-                                                    clearCache(true)
-                                                    destroy()
-                                                }
-                                                android.webkit.CookieManager.getInstance().removeAllCookies(null)
-                                                android.webkit.CookieManager.getInstance().flush()
-                                            }
                                             withContext(Dispatchers.IO) {
                                                 WebDataManager.clearKnownWebCacheFiles(context)
                                             }
@@ -875,7 +867,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("保留 1 个空白 WebView 热备", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认关闭。设备内存充足时可开启以降低冷创建耗时；低内存或高分屏设备建议关闭，避免挤占网页绘制预算", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("默认关闭。WebView 已运行在独立进程；该热备只在 WebView 进程内生效，设备内存充足且追求打开速度时再开启", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = webViewWarmPoolEnabled,
@@ -896,7 +888,7 @@ fun AdminConsoleScreen(
 
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text("WebView 渲染模式", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                    Text("自动模式会在高 DPR 大屏设备上使用软件兼容绘制，绕开 Chromium tile/GPU 合成预算不足导致的局部不绘制；如网页依赖 WebGL 或高性能视频，可手动切回硬件默认", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("默认保持硬件合成路径，贴近手机浏览器。已移除高 DPR 自动切软件层策略；该策略会放大 WebView tile 内存压力，可能导致更多区域不绘制", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -904,9 +896,8 @@ fun AdminConsoleScreen(
                                         horizontalArrangement = Arrangement.spacedBy(20.dp)
                                     ) {
                                         listOf(
-                                            KioskPrefs.WEBVIEW_RENDER_MODE_AUTO to "自动兼容",
-                                            KioskPrefs.WEBVIEW_RENDER_MODE_HARDWARE to "硬件默认",
-                                            KioskPrefs.WEBVIEW_RENDER_MODE_SOFTWARE to "软件兼容"
+                                            KioskPrefs.WEBVIEW_RENDER_MODE_AUTO to "自动默认",
+                                            KioskPrefs.WEBVIEW_RENDER_MODE_HARDWARE to "硬件默认"
                                         ).forEach { (mode, label) ->
                                             Row(
                                                 verticalAlignment = Alignment.CenterVertically,
@@ -976,7 +967,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("网页后台预加载", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认关闭。开启后主页闲置时提前载入前2个网页，速度更快但会真实占用网络、内存和网站会话", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("默认关闭。WebView 独立进程下不跨进程复用主页预加载实例，通常不建议开启；保留此项仅用于后续兼容实验", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = webPreloadEnabled,

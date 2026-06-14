@@ -383,8 +383,8 @@ fun WebViewScreen(
             shouldShowOverlay = true
         } else {
             val elapsed = System.currentTimeMillis() - overlayShownTime
-            if (overlayShownTime > 0L && elapsed < 600L) {
-                delay(600L - elapsed)
+            if (overlayShownTime > 0L && elapsed < 120L) {
+                delay(120L - elapsed)
             }
             shouldShowOverlay = false
             overlayShownTime = 0L
@@ -524,10 +524,7 @@ fun WebViewScreen(
             }
         }
 
-        AnimatedVisibility(
-            visible = shouldShowOverlay,
-            exit = fadeOut(animationSpec = androidx.compose.animation.core.tween(400))
-        ) {
+        if (shouldShowOverlay) {
             if (loadError != null) {
                 LoadingErrorOverlay(
                     error = loadError!!,

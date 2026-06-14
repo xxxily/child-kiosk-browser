@@ -283,7 +283,7 @@ offscreenPreRaster = KioskPrefs.isWebViewOffscreenPreRasterEnabled(context)
 
 多窗口栈也改为只把当前顶层 WebView attach 到 Compose/Window。底层 WebView 实例保留在栈里，但不继续作为隐藏原生 View 参与窗口测量和绘制，降低多个 WebView surface 同时存在时的 tile 压力。
 
-### 5.6 WebView 渲染模式兜底
+### 5.6 WebView 渲染模式兜底验证
 
 文件：[`WebViewRuntime.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewRuntime.kt)、[`KioskPrefs.kt`](../app/src/main/java/com/example/childkiosk/util/KioskPrefs.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/com/example/childkiosk/ui/AdminConsoleScreen.kt)
 
@@ -293,25 +293,35 @@ offscreenPreRaster = KioskPrefs.isWebViewOffscreenPreRasterEnabled(context)
 WARNING: tile memory limits exceeded, some content may not draw
 ```
 
-则说明真实页面本身在当前 WebView 硬件合成路径下仍然会打爆 tile 预算。新增“WebView 渲染模式”：
-
-- **自动兼容**：默认值。高 DPR 大屏设备自动切到软件兼容绘制，普通设备继续使用硬件默认。
-- **硬件默认**：使用 Activity 硬件加速和 WebView 默认合成路径，适合 WebGL、复杂动画、视频等场景。
-- **软件兼容**：对 WebView 调用 `setLayerType(View.LAYER_TYPE_SOFTWARE, null)`，绕开硬件 tile/GPU 合成路径，优先解决局部不绘制问题。
-
-自动模式当前判断条件：
+说明真实页面本身、宿主 WebView 承载方式或设备当前内存状态仍可能打爆 Chromium tile 预算。v0.0.22 曾尝试在高 DPR 大屏设备上自动切换：
 
 ```kotlin
-density >= 3.5f && (heightPixels >= 3000 || widthPixels * heightPixels >= 4_000_000)
+webView.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
 ```
 
-用户反馈设备的 Inspect 数据为 `DPR=4`，logcat 初始布局为 `1440x3056`，符合自动切到软件兼容的条件。
+用户反馈设备的 Inspect 数据为 `DPR=4`，logcat 初始布局为 `1440x3056`，v0.0.22 命中该策略后日志显示：
 
-代价：
+```text
+Render mode applied: requested=AUTO, actual=SOFTWARE, screen=1440x3056, density=4.0
+WARNING: tile memory limits exceeded, some content may not draw
+```
 
-- 软件兼容绘制可能降低动画、Canvas、大图页面性能。
-- 依赖 WebGL 的页面可能不可用或降级。
-- 因此该能力做成可配置项，用户可以按站点表现手动切换。
+并且 warning 从少量变为连续大量刷屏。因此结论修正为：
+
+- WebView 的 `LAYER_TYPE_SOFTWARE` 不是可靠的 WebView tile 兜底方案。
+- 对高 DPR、全屏 WebView、复杂页面来说，软件层可能引入更大的离屏位图/软件绘制压力，反而让 Chromium tile 预算更快超限。
+- 默认基线必须保持 Activity 硬件加速与 WebView 默认合成路径，即 `actual=HARDWARE`。
+- 旧版本保存过 `SOFTWARE` 时，新版本读取配置会自动退回 `AUTO`，而 `AUTO` 当前等同硬件默认。
+
+新的验证方向：
+
+- 应用声明 `android:largeHeap="true"`，扩大 WebView-heavy 场景下宿主进程内存余量。
+- `WebViewActivity` 放入独立 `:webview` 进程，给 WebView 宿主进程单独的内存预算，避免与主页 Compose、Room、图片加载和后台配置页竞争同一个 App 进程。
+- `:webview` 进程启动时调用 `WebView.setDataDirectorySuffix("webview")`，避免多进程 WebView 数据目录冲突。
+- 主进程不再创建 WebView 热备/预加载实例；热备只允许在 `:webview` 进程内生效，URL 后台预加载默认关闭且不跨进程复用。
+- `Render mode applied` 日志增加 `memoryClass/largeMemoryClass/heapMax/heapTotal/heapFree`，用于确认设备给 App 的实际内存基线。
+- 移除网页完成后的全屏 loading 退出动画，并缩短最小覆盖时间，减少页面首绘阶段 WebView 与 Compose 全屏遮罩同时占用合成资源的时间窗口。
+- 后续若仍有 tile warning，应优先继续降低宿主侧同时存在的 WebView/全屏覆盖层/预加载资源，而不是切软件层。
 
 ---
 
@@ -430,7 +440,9 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 | `thirdPartyCookies` | 默认允许 | 已满足，可配置关闭 | 提升登录、嵌入组件、跨域鉴权兼容性 |
 | `mixedContentMode` | 兼容模式 | 已满足，可配置严格阻止 | 默认兼容旧网页；安全需要时再严格 |
 | `hardwareAccelerated` | Activity 开启 | 已满足 | Canvas、视频、CSS 动画、合成层依赖 |
-| WebView 渲染模式 | 自动兼容 | 已满足，可切换 | 高 DPR 大屏自动使用软件兼容绘制，绕开 tile/GPU 合成预算不足 |
+| WebView 渲染模式 | 自动默认硬件 | 已修正，可切换硬件默认 | 保持 WebView 默认硬件合成路径；已禁用高 DPR 自动切软件层策略 |
+| `largeHeap` | `true` | 已满足 | WebView-heavy、高 DPR 场景下增加宿主进程内存余量，降低 App 侧内存压力 |
+| WebView 进程 | 独立 `:webview` | 已满足 | 给 WebView 宿主单独进程预算，避免与主页/后台管理共享同一进程内存 |
 | `offscreenPreRaster` | `false` | 已满足，可配置开启 | 默认关闭以降低 tile 内存压力；只在确认需要预栅格化时手动开启 |
 | 空白 WebView 热备 | 默认关闭 | 已满足，可配置开启 | 热备提升冷启动速度，但会占用 WebView/Chromium 资源，高分屏或低内存设备优先保障真实页面绘制 |
 | URL 后台预加载 | 默认关闭 | 已满足，可配置开启 | 避免无感占用网络、内存和网站会话 |
@@ -444,7 +456,7 @@ Android WebView 会根据 App 主题影响 `prefers-color-scheme`；Android 官�
 | 多窗口/`window.open` | 默认允许 | 已调整，可配置禁用 | `target=_blank`、OAuth、文档预览等常依赖新窗口 |
 | `file/content` 访问 | 默认允许 | 已调整，可配置限制 | 文件上传、预览、本地内容交互需要标准访问能力 |
 
-本轮基线复核结论：原有核心 WebSettings 渲染项已满足，但 `offscreenPreRaster=true` 和默认空白 WebView 热备会在高分屏设备上放大 Chromium tile 内存压力，已经按“渲染稳定优先”调整为默认关闭。对仍然触发 `tile memory limits exceeded` 的高 DPR 大屏设备，默认自动切换 WebView 软件兼容绘制。多个“网页浏览器沙箱限制”的默认值也已改为“默认按正常浏览器兼容基线放开，后台保留配置项，用户需要更严格儿童安全策略时再主动开启”。
+本轮基线复核结论：原有核心 WebSettings 渲染项已满足，但 `offscreenPreRaster=true`、默认空白 WebView 热备、URL 后台预加载和全屏 loading 退出动画都会在高分屏设备上放大首绘阶段的内存/合成压力，已经按“渲染稳定优先”调整为默认关闭或缩短。v0.0.22 验证过的高 DPR 自动切软件层策略会让 `tile memory limits exceeded` 更严重，已回退为硬件默认。多个“网页浏览器沙箱限制”的默认值也已改为“默认按正常浏览器兼容基线放开，后台保留配置项，用户需要更严格儿童安全策略时再主动开启”。
 
 ### 7.2 调试基线
 

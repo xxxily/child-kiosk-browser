@@ -1,7 +1,9 @@
 package com.example.childkiosk.util
 
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import android.view.View
 import android.webkit.CookieManager
@@ -78,33 +80,35 @@ object WebViewRuntime {
 
     private fun applyRenderMode(webView: WebView, context: Context) {
         val requestedMode = KioskPrefs.getWebViewRenderMode(context)
-        val useSoftware = when (requestedMode) {
-            KioskPrefs.WEBVIEW_RENDER_MODE_SOFTWARE -> true
-            KioskPrefs.WEBVIEW_RENDER_MODE_HARDWARE -> false
-            else -> shouldUseSoftwareRenderForHighDpr(context)
-        }
-        val targetLayerType = if (useSoftware) {
-            View.LAYER_TYPE_SOFTWARE
-        } else {
-            View.LAYER_TYPE_NONE
-        }
+        val targetLayerType = View.LAYER_TYPE_NONE
         if (webView.layerType != targetLayerType) {
             webView.setLayerType(targetLayerType, null)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, true)
         }
 
         val metrics = context.resources.displayMetrics
         Log.d(
             "ChildKioskWebView",
-            "Render mode applied: requested=$requestedMode, actual=${if (useSoftware) "SOFTWARE" else "HARDWARE"}, " +
-                "screen=${metrics.widthPixels}x${metrics.heightPixels}, density=${metrics.density}"
+            "Render mode applied: requested=$requestedMode, actual=HARDWARE, " +
+                "screen=${metrics.widthPixels}x${metrics.heightPixels}, density=${metrics.density}, " +
+                "process=${ProcessUtils.currentProcessName(context)}, " +
+                memorySummary(context)
         )
     }
 
-    private fun shouldUseSoftwareRenderForHighDpr(context: Context): Boolean {
-        val metrics = context.resources.displayMetrics
-        val pixelCount = metrics.widthPixels.toLong() * metrics.heightPixels.toLong()
-        return metrics.density >= 3.5f && (metrics.heightPixels >= 3000 || pixelCount >= 4_000_000L)
+    private fun memorySummary(context: Context): String {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val runtime = Runtime.getRuntime()
+        return "memoryClass=${activityManager?.memoryClass ?: -1}MB, " +
+            "largeMemoryClass=${activityManager?.largeMemoryClass ?: -1}MB, " +
+            "heapMax=${runtime.maxMemory() / BYTES_PER_MB}MB, " +
+            "heapTotal=${runtime.totalMemory() / BYTES_PER_MB}MB, " +
+            "heapFree=${runtime.freeMemory() / BYTES_PER_MB}MB"
     }
+
+    private const val BYTES_PER_MB = 1024L * 1024L
 
     fun isWebUrl(url: String): Boolean {
         return url.startsWith("http://", ignoreCase = true) ||

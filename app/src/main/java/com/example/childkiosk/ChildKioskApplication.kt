@@ -2,11 +2,12 @@ package com.example.childkiosk
 
 import android.app.Application
 import android.content.ComponentCallbacks2
+import android.os.Build
 import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import android.webkit.WebView
 import com.example.childkiosk.util.KioskPrefs
+import com.example.childkiosk.util.ProcessUtils
 import com.example.childkiosk.util.WebDataManager
 import com.example.childkiosk.util.WebViewPool
 
@@ -15,17 +16,32 @@ class ChildKioskApplication : Application(), ComponentCallbacks2 {
     override fun onCreate() {
         super.onCreate()
 
+        val processName = ProcessUtils.currentProcessName(this)
+        val isWebViewProcess = ProcessUtils.isWebViewProcess(this)
+        if (isWebViewProcess && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            runCatching {
+                WebView.setDataDirectorySuffix(ProcessUtils.WEBVIEW_DATA_DIRECTORY_SUFFIX)
+            }.onFailure { e ->
+                Log.w("ChildKioskApp", "Failed to set WebView data directory suffix", e)
+            }
+        }
+        Log.d("ChildKioskApp", "Process started: $processName, webViewProcess=$isWebViewProcess")
+
         // 1. 初始化 WebView 预加载池
         WebViewPool.init(this)
 
         // 2. 预热 WebView 渲染引擎 (利用空闲时机在主线程初始化)
-        Handler(mainLooper).post {
-            try {
-                WebViewPool.warmupBlank()
-                Log.d("ChildKioskApp", "WebView warm pool prepared successfully.")
-            } catch (e: Exception) {
-                Log.w("ChildKioskApp", "Failed to prepare WebView warm pool", e)
+        if (isWebViewProcess && KioskPrefs.getWebViewWarmPoolEnabled(this)) {
+            Handler(mainLooper).post {
+                try {
+                    WebViewPool.warmupBlank()
+                    Log.d("ChildKioskApp", "WebView warm pool prepared successfully.")
+                } catch (e: Exception) {
+                    Log.w("ChildKioskApp", "Failed to prepare WebView warm pool", e)
+                }
             }
+        } else {
+            Log.d("ChildKioskApp", "WebView warm pool skipped: process=$processName.")
         }
 
         // 3. 检查 7 天自动网页缓存清理
@@ -35,9 +51,11 @@ class ChildKioskApplication : Application(), ComponentCallbacks2 {
             Handler(mainLooper).post {
                 try {
                     WebViewPool.clear()
-                    WebView(this).apply {
-                        clearCache(true)
-                        destroy()
+                    if (isWebViewProcess) {
+                        WebView(this).apply {
+                            clearCache(true)
+                            destroy()
+                        }
                     }
                     WebDataManager.clearKnownWebCacheFiles(this)
                     KioskPrefs.setLastCacheClearTime(this, now)

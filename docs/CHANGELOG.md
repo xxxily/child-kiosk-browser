@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+### Changed — 变更
+
+- **WebView tile 内存策略回滚**：
+  - 禁用 v0.0.22 引入的高 DPR 自动切 `LAYER_TYPE_SOFTWARE` 策略；实测该策略会让 `tile memory limits exceeded` 从少量变为连续刷屏。
+  - “WebView 渲染模式”后台选项收敛为“自动默认 / 硬件默认”，旧版本保存过 `SOFTWARE` 时会自动退回 `AUTO`。
+  - `Render mode applied` 日志增加 `memoryClass/largeMemoryClass/heapMax/heapTotal/heapFree`，便于确认设备给 App 的真实内存基线。
+- **WebView 首绘内存余量优化**：
+  - 应用声明 `android:largeHeap="true"`，为高 DPR WebView 页面提供更大的宿主进程内存余量。
+  - `WebViewActivity` 切换到独立 `:webview` 进程，避免 WebView 与主页 Compose、Room、图片加载和后台管理页共享同一个 App 进程内存预算。
+  - WebView 进程启动时设置独立 data directory suffix，主页进程不再创建 WebView 热备/预加载实例，避免多进程 WebView 数据目录冲突和无效内存占用。
+  - 设置 WebView renderer priority 为 `RENDERER_PRIORITY_IMPORTANT`，降低活跃 WebView renderer 被系统回收的概率。
+  - 页面加载完成后不再对全屏 loading 遮罩做退出淡出，并将最小遮罩时间从 600ms 降为 120ms，减少首绘阶段额外合成层压力。
+
+### Fixed — 修复
+
+- **WebView 软件渲染回退误判**：
+  - 根据 `webview-debug.log` 中 `actual=SOFTWARE` 后大量 `tile memory limits exceeded` 的证据，修正文档与调试手册中“切软件兼容绕开 tile 压力”的错误结论。
+
 ## [0.0.22] - 2026-06-14
 
 ### Added — 新增

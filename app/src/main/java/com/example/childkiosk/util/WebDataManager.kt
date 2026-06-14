@@ -16,11 +16,10 @@ object WebDataManager {
     fun collectStats(context: Context): WebDataStats {
         val appContext = context.applicationContext
         val dataDir = File(appContext.applicationInfo.dataDir)
-        val webViewDir = File(dataDir, "app_webview")
         val httpCacheDir = appContext.cacheDir
         val codeCacheDir = appContext.codeCacheDir
 
-        val webViewDataBytes = sizeOf(webViewDir)
+        val webViewDataBytes = webViewDataDirs(dataDir).sumOf { sizeOf(it) }
         val httpCacheBytes = sizeOf(httpCacheDir)
         val codeCacheBytes = sizeOf(codeCacheDir)
 
@@ -35,18 +34,21 @@ object WebDataManager {
     fun clearKnownWebCacheFiles(context: Context) {
         val appContext = context.applicationContext
         val dataDir = File(appContext.applicationInfo.dataDir)
-        val webViewDefaultDir = File(dataDir, "app_webview/Default")
+        val webViewCachePaths = webViewDataDirs(dataDir).flatMap { webViewDir ->
+            val defaultDir = File(webViewDir, "Default")
+            listOf(
+                File(defaultDir, "Cache"),
+                File(defaultDir, "Code Cache"),
+                File(defaultDir, "GPUCache"),
+                File(defaultDir, "Service Worker/CacheStorage"),
+                File(defaultDir, "blob_storage"),
+                File(defaultDir, "Cookies"),
+                File(defaultDir, "Cookies-journal")
+            )
+        }
 
-        listOf(
-            appContext.cacheDir,
-            appContext.codeCacheDir,
-            File(webViewDefaultDir, "Cache"),
-            File(webViewDefaultDir, "Code Cache"),
-            File(webViewDefaultDir, "GPUCache"),
-            File(webViewDefaultDir, "Service Worker/CacheStorage"),
-            File(webViewDefaultDir, "blob_storage")
-        ).forEach { dir ->
-            deleteChildren(dir)
+        (listOf(appContext.cacheDir, appContext.codeCacheDir) + webViewCachePaths).forEach { path ->
+            deletePath(path)
         }
     }
 
@@ -72,12 +74,22 @@ object WebDataManager {
         return file.listFiles()?.sumOf { sizeOf(it) } ?: 0L
     }
 
-    private fun deleteChildren(dir: File?) {
-        if (dir == null || !dir.exists() || !dir.isDirectory) return
-        dir.listFiles()?.forEach { child ->
+    private fun deletePath(path: File?) {
+        if (path == null || !path.exists()) return
+        if (path.isFile) {
+            runCatching { path.delete() }
+            return
+        }
+        path.listFiles()?.forEach { child ->
             runCatching {
                 child.deleteRecursively()
             }
         }
+    }
+
+    private fun webViewDataDirs(dataDir: File): List<File> {
+        return dataDir.listFiles()
+            ?.filter { it.isDirectory && it.name.startsWith("app_webview") }
+            .orEmpty()
     }
 }

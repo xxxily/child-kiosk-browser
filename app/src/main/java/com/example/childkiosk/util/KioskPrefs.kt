@@ -130,14 +130,15 @@ object KioskPrefs {
         prefs(context).edit().putBoolean("webview_offscreen_preraster_enabled", enabled).apply()
 
     fun getWebViewRenderMode(context: Context): String {
-        return prefs(context).getString("webview_render_mode", WEBVIEW_RENDER_MODE_AUTO)
-            ?: WEBVIEW_RENDER_MODE_AUTO
+        return when (prefs(context).getString("webview_render_mode", WEBVIEW_RENDER_MODE_AUTO)) {
+            WEBVIEW_RENDER_MODE_HARDWARE -> WEBVIEW_RENDER_MODE_HARDWARE
+            else -> WEBVIEW_RENDER_MODE_AUTO
+        }
     }
 
     fun setWebViewRenderMode(context: Context, mode: String) {
         val normalized = when (mode) {
-            WEBVIEW_RENDER_MODE_HARDWARE,
-            WEBVIEW_RENDER_MODE_SOFTWARE -> mode
+            WEBVIEW_RENDER_MODE_HARDWARE -> WEBVIEW_RENDER_MODE_HARDWARE
             else -> WEBVIEW_RENDER_MODE_AUTO
         }
         prefs(context).edit().putString("webview_render_mode", normalized).apply()
