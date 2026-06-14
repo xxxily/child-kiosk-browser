@@ -31,6 +31,7 @@ import com.example.childkiosk.ui.KioskMainScreen
 import com.example.childkiosk.ui.theme.ChildKioskTheme
 import com.example.childkiosk.util.KioskPrefs
 import com.example.childkiosk.util.SystemUiHelper
+import com.example.childkiosk.util.WebViewPool
 
 class MainActivity : ComponentActivity() {
 
@@ -49,6 +50,9 @@ class MainActivity : ComponentActivity() {
 
         super.onCreate(savedInstanceState)
 
+        dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        adminComponent = ComponentName(this, MyDeviceAdminReceiver::class.java)
+
         // 1. 设置 FLAG_SECURE 防截屏逃逸 (根据配置)
         if (KioskPrefs.isLimitFlagSecureEnabled(this)) {
             window.setFlags(
@@ -58,18 +62,22 @@ class MainActivity : ComponentActivity() {
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
         }
-        // 2. 沉浸式全屏
-        SystemUiHelper.enterImmersive(this)
+        // 2. 系统栏策略：Device Owner 锁定态保留时间/电量信息，普通模式保持沉浸式防误下拉。
+        applySystemUiMode()
 
         // 3. 监听 System UI / Window 边距变化，防止状态栏灰色半透明条卡死，3秒自动收回
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.decorView.setOnApplyWindowInsetsListener { view, insets ->
-                val isVisible = insets.isVisible(android.view.WindowInsets.Type.statusBars()) || 
-                                insets.isVisible(android.view.WindowInsets.Type.navigationBars())
+                val isVisible = if (shouldShowSecureSystemInfo()) {
+                    insets.isVisible(android.view.WindowInsets.Type.navigationBars())
+                } else {
+                    insets.isVisible(android.view.WindowInsets.Type.statusBars()) ||
+                        insets.isVisible(android.view.WindowInsets.Type.navigationBars())
+                }
                 if (isVisible) {
                     view.postDelayed({
                         if (!isDestroyed && !isFinishing) {
-                            SystemUiHelper.enterImmersive(this@MainActivity)
+                            applySystemUiMode()
                         }
                     }, 3000)
                 }
@@ -81,15 +89,12 @@ class MainActivity : ComponentActivity() {
                 if ((visibility and android.view.View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
                     window.decorView.postDelayed({
                         if (!isDestroyed && !isFinishing) {
-                            SystemUiHelper.enterImmersive(this@MainActivity)
+                            applySystemUiMode()
                         }
                     }, 3000)
                 }
             }
         }
-
-        dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-        adminComponent = ComponentName(this, MyDeviceAdminReceiver::class.java)
 
         val db = AppDatabase.getInstance(this)
 
@@ -139,7 +144,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        SystemUiHelper.enterImmersive(this)
+        applySystemUiMode()
         triggerKioskIfNeeded()
     }
 
@@ -171,7 +176,7 @@ class MainActivity : ComponentActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
-            SystemUiHelper.enterImmersive(this)
+            applySystemUiMode()
             // 如果重新获得焦点，且当前需要软锁锁定，但实际上未进入锁定状态，且并非 Device Owner，
             // 说明用户点击了“不用了”或者主动解除了屏幕固定。
             // 此时我们设置 isSoftLockDeferred = true 避免循环弹窗提示。
@@ -184,6 +189,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun applySandboxLimits() {
+        WebViewPool.clear()
+        WebViewPool.warmupBlank()
+        applySystemUiMode()
+
         if (KioskPrefs.isLimitFlagSecureEnabled(this)) {
             window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         } else {
@@ -205,11 +214,28 @@ class MainActivity : ComponentActivity() {
             dpm.setScreenCaptureDisabled(admin, KioskPrefs.isLimitScreenshotEnabled(this))
         }
         runCatching {
-            dpm.setStatusBarDisabled(admin, KioskPrefs.isLimitStatusBarEnabled(this))
+            // Lock Task 的 SYSTEM_INFO 只放出时间/电量等系统信息，不开放通知下拉。
+            // 继续全局禁用 StatusBar 会在部分刘海屏/OEM 上把系统信息区也压成黑条。
+            dpm.setStatusBarDisabled(admin, false)
         }
         runCatching {
             dpm.setKeyguardDisabled(admin, KioskPrefs.isLimitKeyguardEnabled(this))
         }
+    }
+
+    private fun applySystemUiMode() {
+        if (shouldShowSecureSystemInfo()) {
+            SystemUiHelper.enterSecureSystemInfo(this)
+        } else {
+            SystemUiHelper.enterImmersive(this)
+        }
+    }
+
+    private fun shouldShowSecureSystemInfo(): Boolean {
+        return ::dpm.isInitialized &&
+            dpm.isDeviceOwnerApp(packageName) &&
+            KioskPrefs.isLimitStatusBarEnabled(this) &&
+            isInLockTaskMode()
     }
 
     private fun applyUserRestriction(admin: ComponentName, restriction: String, enabled: Boolean) {
@@ -250,8 +276,10 @@ class MainActivity : ComponentActivity() {
             applySandboxLimits()
 
             startLockTask()
+            applySystemUiMode()
         } catch (e: IllegalStateException) {
             Log.w(TAG, "已经处于 Lock Task 状态，无需重复启动: ${e.message}")
+            applySystemUiMode()
         } catch (e: SecurityException) {
             Toast.makeText(this, "权限不足，部分系统加固未生效: ${e.message}", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {

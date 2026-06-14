@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -34,6 +35,9 @@ import com.example.childkiosk.data.SystemConfigEntity
 import com.example.childkiosk.data.WebAppEntity
 import com.example.childkiosk.util.HashUtils
 import com.example.childkiosk.util.KioskPrefs
+import com.example.childkiosk.util.WebDataManager
+import com.example.childkiosk.util.WebDataStats
+import com.example.childkiosk.util.WebViewPool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -792,7 +796,57 @@ fun AdminConsoleScreen(
                                     Text("网页缓存与预加载优化（试验性）", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
-                                // 选项 1: 网页预加载开关
+                                var cacheStats by remember { mutableStateOf<WebDataStats?>(null) }
+                                var poolSnapshot by remember { mutableStateOf(WebViewPool.snapshot()) }
+                                var isCacheStatsLoading by remember { mutableStateOf(false) }
+                                var isClearingCache by remember { mutableStateOf(false) }
+                                var lastClearSummary by remember { mutableStateOf<String?>(null) }
+
+                                fun refreshCacheStats() {
+                                    isCacheStatsLoading = true
+                                    poolSnapshot = WebViewPool.snapshot()
+                                    scope.launch {
+                                        cacheStats = withContext(Dispatchers.IO) {
+                                            WebDataManager.collectStats(context)
+                                        }
+                                        poolSnapshot = WebViewPool.snapshot()
+                                        isCacheStatsLoading = false
+                                    }
+                                }
+
+                                LaunchedEffect(Unit) {
+                                    refreshCacheStats()
+                                }
+
+                                // 选项 1: WebView 热备开关
+                                var webViewWarmPoolEnabled by remember { mutableStateOf(KioskPrefs.getWebViewWarmPoolEnabled(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("保留 1 个空白 WebView 热备", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("不提前加载具体网站，仅复用已初始化的 WebView 容器，降低每次打开页面的创建成本", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = webViewWarmPoolEnabled,
+                                        onCheckedChange = {
+                                            webViewWarmPoolEnabled = it
+                                            KioskPrefs.setWebViewWarmPoolEnabled(context, it)
+                                            if (it) {
+                                                WebViewPool.warmupBlank()
+                                            } else {
+                                                WebViewPool.clear()
+                                            }
+                                            poolSnapshot = WebViewPool.snapshot()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 2: 网页预加载开关
                                 var webPreloadEnabled by remember { mutableStateOf(KioskPrefs.getWebPreloadEnabled(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -801,7 +855,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("网页后台预加载", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("在主页闲置时提前载入排名前3的常用网页以实现秒开，需占用约150-300MB内存，若内存紧张建议关闭", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("默认关闭。开启后主页闲置时提前载入前2个网页，速度更快但会真实占用网络、内存和网站会话", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = webPreloadEnabled,
@@ -809,41 +863,129 @@ fun AdminConsoleScreen(
                                             webPreloadEnabled = it
                                             KioskPrefs.setWebPreloadEnabled(context, it)
                                             if (!it) {
-                                                com.example.childkiosk.util.WebViewPool.clear()
+                                                WebViewPool.clear()
+                                                if (webViewWarmPoolEnabled) {
+                                                    WebViewPool.warmupBlank()
+                                                }
                                             }
+                                            poolSnapshot = WebViewPool.snapshot()
                                         }
                                     )
                                 }
 
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-                                // 选项 2: 清理缓存
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("清理网页缓存数据", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("清除所有本地网页缓存和Cookie，释放存储空间并解决部分加载异常问题", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    TextButton(
-                                        onClick = {
-                                            try {
-                                                android.webkit.WebView(context).apply {
-                                                    clearCache(true)
-                                                    destroy()
-                                                }
-                                                android.webkit.CookieManager.getInstance().removeAllCookies(null)
-                                                Toast.makeText(context, "网页缓存和Cookie已清理成功！", Toast.LENGTH_SHORT).show()
-                                            } catch (e: java.lang.Exception) {
-                                                Toast.makeText(context, "清理失败：${e.message}", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Icon(imageVector = Icons.Default.Delete, contentDescription = "清理")
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("立即清理")
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("网页缓存与本地数据", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                            Text("统计 WebView 数据目录、HTTP 缓存与代码缓存，便于清理前后对比", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        TextButton(
+                                            enabled = !isCacheStatsLoading && !isClearingCache,
+                                            onClick = { refreshCacheStats() }
+                                        ) {
+                                            Icon(imageVector = Icons.Default.Refresh, contentDescription = "刷新")
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(if (isCacheStatsLoading) "统计中" else "刷新")
+                                        }
+                                    }
+
+                                    val stats = cacheStats
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.65f))
+                                            .padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "合计：${stats?.let { WebDataManager.formatBytes(it.totalBytes) } ?: if (isCacheStatsLoading) "统计中..." else "未统计"}",
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = "WebView 数据：${stats?.let { WebDataManager.formatBytes(it.webViewDataBytes) } ?: "-"}",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "HTTP 缓存：${stats?.let { WebDataManager.formatBytes(it.httpCacheBytes) } ?: "-"} | 代码缓存：${stats?.let { WebDataManager.formatBytes(it.codeCacheBytes) } ?: "-"}",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "WebView 池：$poolSnapshot",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        lastClearSummary?.let {
+                                            Text(
+                                                text = it,
+                                                fontSize = 12.sp,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.End,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        TextButton(
+                                            enabled = !isClearingCache,
+                                            onClick = {
+                                                isClearingCache = true
+                                                val beforeBytes = cacheStats?.totalBytes
+                                                WebViewPool.clear()
+                                                scope.launch {
+                                                    runCatching {
+                                                        withContext(Dispatchers.Main) {
+                                                            android.webkit.WebView(context).apply {
+                                                                clearCache(true)
+                                                                destroy()
+                                                            }
+                                                            android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                                                            android.webkit.CookieManager.getInstance().flush()
+                                                        }
+                                                        withContext(Dispatchers.IO) {
+                                                            WebDataManager.clearKnownWebCacheFiles(context)
+                                                        }
+                                                    }.onSuccess {
+                                                        if (webViewWarmPoolEnabled) {
+                                                            WebViewPool.warmupBlank()
+                                                        }
+                                                        val after = withContext(Dispatchers.IO) {
+                                                            WebDataManager.collectStats(context)
+                                                        }
+                                                        cacheStats = after
+                                                        poolSnapshot = WebViewPool.snapshot()
+                                                        KioskPrefs.setLastCacheClearTime(context, System.currentTimeMillis())
+                                                        val released = beforeBytes?.let { (it - after.totalBytes).coerceAtLeast(0L) }
+                                                        lastClearSummary = if (released != null) {
+                                                            "本次清理释放约 ${WebDataManager.formatBytes(released)}"
+                                                        } else {
+                                                            "清理完成，当前合计 ${WebDataManager.formatBytes(after.totalBytes)}"
+                                                        }
+                                                        Toast.makeText(context, "网页缓存和 Cookie 已清理", Toast.LENGTH_SHORT).show()
+                                                    }.onFailure { e ->
+                                                        Toast.makeText(context, "清理失败：${e.message}", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                    isClearingCache = false
+                                                }
+                                            }
+                                        ) {
+                                            Icon(imageVector = Icons.Default.Delete, contentDescription = "清理")
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(if (isClearingCache) "清理中" else "清理缓存与 Cookie")
+                                        }
                                     }
                                 }
                             }
@@ -872,6 +1014,9 @@ fun AdminConsoleScreen(
                     var limitSslCheck by remember { mutableStateOf(KioskPrefs.isLimitSslCheckEnabled(context)) }
                     var limitMultiWindow by remember { mutableStateOf(KioskPrefs.isLimitMultiWindowEnabled(context)) }
                     var limitFileAccess by remember { mutableStateOf(KioskPrefs.isLimitFileAccessEnabled(context)) }
+                    var thirdPartyCookies by remember { mutableStateOf(KioskPrefs.isThirdPartyCookiesEnabled(context)) }
+                    var strictMixedContent by remember { mutableStateOf(KioskPrefs.isStrictMixedContentEnabled(context)) }
+                    var useBrowserUserAgent by remember { mutableStateOf(KioskPrefs.isUseBrowserUserAgentEnabled(context)) }
 
                     var chromeInspect by remember { mutableStateOf(KioskPrefs.isChromeInspectEnabled(context)) }
                     var debugTool by remember { mutableStateOf(KioskPrefs.getWebDebugTool(context)) }
@@ -1190,7 +1335,11 @@ fun AdminConsoleScreen(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.spacedBy(24.dp)
                                         ) {
-                                            listOf("PAGE_STARTED" to "页面开始加载 (推荐)", "PAGE_FINISHED" to "页面加载完成").forEach { (key, label) ->
+                                            listOf(
+                                                "BOTH" to "自动兜底 (推荐)",
+                                                "PAGE_STARTED" to "页面开始加载",
+                                                "PAGE_FINISHED" to "页面加载完成"
+                                            ).forEach { (key, label) ->
                                                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable {
                                                     timingMode = key
                                                     KioskPrefs.setInjectTimingMode(context, key)
@@ -1298,7 +1447,11 @@ fun AdminConsoleScreen(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.spacedBy(24.dp)
                                         ) {
-                                            listOf("PAGE_STARTED" to "页面开始加载 (推荐)", "PAGE_FINISHED" to "页面加载完成").forEach { (key, label) ->
+                                            listOf(
+                                                "BOTH" to "自动兜底 (推荐)",
+                                                "PAGE_STARTED" to "页面开始加载",
+                                                "PAGE_FINISHED" to "页面加载完成"
+                                            ).forEach { (key, label) ->
                                                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable {
                                                     customJsInjectTiming = key
                                                     KioskPrefs.setCustomJsInjectTiming(context, key)
@@ -1599,6 +1752,69 @@ fun AdminConsoleScreen(
                                         onCheckedChange = {
                                             limitFileAccess = it
                                             KioskPrefs.setLimitFileAccessEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("允许第三方 Cookie", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("提升登录、嵌入组件、跨域资源鉴权等现代网页兼容性；关闭后部分页面可能只能渲染局部内容", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = thirdPartyCookies,
+                                        onCheckedChange = {
+                                            thirdPartyCookies = it
+                                            KioskPrefs.setThirdPartyCookiesEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("严格阻止 HTTPS 页面混合内容", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("开启后 HTTPS 页面会阻止 HTTP 子资源；为兼容旧网页默认使用 WebView 兼容模式", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = strictMixedContent,
+                                        onCheckedChange = {
+                                            strictMixedContent = it
+                                            KioskPrefs.setStrictMixedContentEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("使用手机浏览器 User-Agent", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("移除 WebView 专属标识，避免部分网页按内嵌浏览器降级或隐藏功能；调试内核版本仍可在系统诊断查看", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = useBrowserUserAgent,
+                                        onCheckedChange = {
+                                            useBrowserUserAgent = it
+                                            KioskPrefs.setUseBrowserUserAgentEnabled(context, it)
                                             onSandboxLimitsChanged()
                                         }
                                     )
@@ -2221,7 +2437,10 @@ fun AddEditWebAppDialog(
                 Text("选择应用分类：", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(bottom = 4.dp)
                 ) {
                     val categories = listOf(
                         WebAppEntity.CATEGORY_GAME to "游戏",
@@ -2235,7 +2454,7 @@ fun AddEditWebAppDialog(
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier
-                                .weight(1f)
+                                .widthIn(min = 78.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(
                                     if (isSelected) MaterialTheme.colorScheme.primary
@@ -2258,7 +2477,10 @@ fun AddEditWebAppDialog(
                 Text("选择代表图标：", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(bottom = 4.dp)
                 ) {
                     val icons = listOf(
                         "icon_gamepad" to Icons.Default.SportsEsports,

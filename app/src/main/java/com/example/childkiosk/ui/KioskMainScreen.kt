@@ -1,4 +1,7 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+    androidx.compose.material3.ExperimentalMaterial3Api::class
+)
 package com.example.childkiosk.ui
 
 import android.content.Context
@@ -12,9 +15,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -98,16 +100,22 @@ fun KioskMainScreen(
         }
     }
 
-    // 后台空闲预加载前3个常用网页 (Phase 4)
+    // 后台空闲准备 WebView 热备；具体 URL 预加载默认关闭，避免无感占用网络和内存。
     LaunchedEffect(webApps) {
         val isPreloadEnabled = com.example.childkiosk.util.KioskPrefs.getWebPreloadEnabled(context)
-        if (!isPreloadEnabled || webApps.isEmpty()) return@LaunchedEffect
+        val isWarmPoolEnabled = com.example.childkiosk.util.KioskPrefs.getWebViewWarmPoolEnabled(context)
+        if ((!isPreloadEnabled || webApps.isEmpty()) && !isWarmPoolEnabled) return@LaunchedEffect
 
         android.os.Looper.myQueue().addIdleHandler {
             scope.launch {
-                webApps.take(3).forEach { app ->
-                    kotlinx.coroutines.delay(1000) // 间隔预加载，分流网络和内存开销
-                    com.example.childkiosk.util.WebViewPool.preload(app.url)
+                if (isWarmPoolEnabled) {
+                    com.example.childkiosk.util.WebViewPool.warmupBlank()
+                }
+                if (isPreloadEnabled && webApps.isNotEmpty()) {
+                    webApps.take(2).forEach { app ->
+                        kotlinx.coroutines.delay(1000) // 间隔预加载，分流网络和内存开销
+                        com.example.childkiosk.util.WebViewPool.preload(app.url)
+                    }
                 }
             }
             false
@@ -139,26 +147,11 @@ fun KioskMainScreen(
         // 无论是否为 Device Owner，主网格始终可用。
         // 系统级锁定强度由 MainActivity 按防护等级（Device Owner / 屏幕固定 / 无）自动决定，
         // 不再以是否取得 Device Owner 作为「能否使用应用」的前提。
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = screenHorizontalPadding, vertical = screenVerticalPadding),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .padding(horizontal = screenHorizontalPadding, vertical = screenVerticalPadding)
         ) {
-            // 顶部 Title
-            if (!hideMainTitle) {
-                Text(
-                    text = "🌟 $mainTitleText 🌟",
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFF4E342E),
-                    modifier = Modifier.padding(top = titlePaddingTop, bottom = titlePaddingBottom)
-                )
-            } else {
-                Spacer(modifier = Modifier.height(spacerHeightAfterTitle))
-            }
-
-            // 儿童友好型分类 Tab 过滤栏
             val categories = listOf(
                 "ALL" to "🌟 全部",
                 WebAppEntity.CATEGORY_GAME to "🎮 游戏",
@@ -167,91 +160,116 @@ fun KioskMainScreen(
                 WebAppEntity.CATEGORY_STUDY to "✍️ 学习",
                 WebAppEntity.CATEGORY_OTHER to "⚙️ 其他"
             )
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = tabPaddingVertical)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                categories.forEach { (catKey, catName) ->
-                    val isSelected = selectedCategory == catKey
-                    Card(
-                        onClick = { selectedCategory = catKey },
-                        shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (isSelected) Color(0xFF4E342E) else Color.White.copy(alpha = 0.9f),
-                            contentColor = if (isSelected) Color.White else Color(0xFF4E342E)
-                        ),
-                        elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 6.dp else 2.dp),
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = catName,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
-                        )
-                    }
-                }
+            val minGridSize = when (iconSizeMode) {
+                "SMALL" -> 90.dp
+                "LARGE" -> 160.dp
+                else -> 120.dp
             }
-            Spacer(modifier = Modifier.height(spacerHeightAfterTabs))
-
-            if (filteredApps.isEmpty()) {
-                Box(
-                    modifier = Modifier.weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = if (webApps.isEmpty()) "这里空空如也，请联系家长在管理后台添加游戏！"
-                               else "此分类下还没有应用哦，去看看其他分类吧！",
-                        fontSize = 18.sp,
-                        color = Color(0xFF8D6E63),
-                        textAlign = TextAlign.Center
-                    )
+            val gridSpacing = when (iconSizeMode) {
+                "SMALL" -> 12.dp
+                "LARGE" -> 24.dp
+                else -> 16.dp
+            }
+            val columnCount = if (isPortrait) {
+                when (iconSizeMode) {
+                    "SMALL" -> 3
+                    "LARGE" -> 1
+                    else -> 2
                 }
             } else {
-                val minGridSize = when (iconSizeMode) {
-                    "SMALL" -> 90.dp
-                    "LARGE" -> 160.dp
-                    else -> 120.dp
-                }
-                val gridSpacing = when (iconSizeMode) {
-                    "SMALL" -> 12.dp
-                    "LARGE" -> 24.dp
-                    else -> 16.dp
+                ((maxWidth.value + gridSpacing.value) / (minGridSize.value + gridSpacing.value))
+                    .toInt()
+                    .coerceAtLeast(1)
+            }
+            val appRows = remember(filteredApps, columnCount) {
+                filteredApps.chunked(columnCount)
+            }
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize(),
+                contentPadding = PaddingValues(bottom = gridContentPadding)
+            ) {
+                item(key = "main_title") {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (!hideMainTitle) {
+                            Text(
+                                text = "🌟 $mainTitleText 🌟",
+                                fontSize = 32.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFF4E342E),
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(top = titlePaddingTop, bottom = titlePaddingBottom)
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.height(spacerHeightAfterTitle))
+                        }
+                    }
                 }
 
-                val columnsMode = if (isPortrait) {
-                    when (iconSizeMode) {
-                        "SMALL" -> GridCells.Fixed(3)
-                        "LARGE" -> GridCells.Fixed(1)
-                        else -> GridCells.Fixed(2)
+                stickyHeader(key = "category_tabs") {
+                    CategoryStickyTabs(
+                        categories = categories,
+                        selectedCategory = selectedCategory,
+                        onCategorySelected = { selectedCategory = it },
+                        tabPaddingVertical = tabPaddingVertical
+                    )
+                }
+
+                item(key = "after_tabs_spacer") {
+                    Spacer(modifier = Modifier.height(spacerHeightAfterTabs))
+                }
+
+                if (filteredApps.isEmpty()) {
+                    item(key = "empty_state") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 260.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (webApps.isEmpty()) "这里空空如也，请联系家长在管理后台添加游戏！"
+                                       else "此分类下还没有应用哦，去看看其他分类吧！",
+                                fontSize = 18.sp,
+                                color = Color(0xFF8D6E63),
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 24.dp)
+                            )
+                        }
                     }
                 } else {
-                    GridCells.Adaptive(minSize = minGridSize)
-                }
-
-                LazyVerticalGrid(
-                    columns = columnsMode,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(gridContentPadding),
-                    horizontalArrangement = Arrangement.spacedBy(gridSpacing),
-                    verticalArrangement = Arrangement.spacedBy(gridSpacing)
-                ) {
-                    items(filteredApps) { app ->
-                        AppGridItem(
-                            app = app,
-                            iconSizeMode = iconSizeMode,
-                            onClick = {
-                                val intent = Intent(context, WebViewActivity::class.java).apply {
-                                    putExtra("WEB_APP_ID", app.id)
-                                }
-                                context.startActivity(intent)
+                    items(
+                        items = appRows,
+                        key = { row -> row.joinToString(separator = "-") { it.id.toString() } }
+                    ) { rowApps ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = gridContentPadding)
+                                .padding(bottom = gridSpacing),
+                            horizontalArrangement = Arrangement.spacedBy(gridSpacing)
+                        ) {
+                            rowApps.forEach { app ->
+                                AppGridItem(
+                                    app = app,
+                                    iconSizeMode = iconSizeMode,
+                                    modifier = Modifier.weight(1f),
+                                    onClick = {
+                                        val intent = Intent(context, WebViewActivity::class.java).apply {
+                                            putExtra("WEB_APP_ID", app.id)
+                                        }
+                                        context.startActivity(intent)
+                                    }
+                                )
                             }
-                        )
+                            repeat(columnCount - rowApps.size) {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
                     }
                 }
             }
@@ -345,9 +363,55 @@ fun KioskMainScreen(
 }
 
 @Composable
+private fun CategoryStickyTabs(
+    categories: List<Pair<String, String>>,
+    selectedCategory: String,
+    onCategorySelected: (String) -> Unit,
+    tabPaddingVertical: androidx.compose.ui.unit.Dp
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFFDD835))
+            .padding(bottom = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = tabPaddingVertical)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            categories.forEach { (catKey, catName) ->
+                val isSelected = selectedCategory == catKey
+                Card(
+                    onClick = { onCategorySelected(catKey) },
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isSelected) Color(0xFF4E342E) else Color.White.copy(alpha = 0.9f),
+                        contentColor = if (isSelected) Color.White else Color(0xFF4E342E)
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 6.dp else 2.dp),
+                    modifier = Modifier.padding(vertical = 4.dp)
+                ) {
+                    Text(
+                        text = catName,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun AppGridItem(
     app: WebAppEntity,
     iconSizeMode: String,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -405,7 +469,7 @@ fun AppGridItem(
             onClick()
         },
         interactionSource = interactionSource,
-        modifier = Modifier
+        modifier = modifier
             .scale(scale)
             .sizeIn(minWidth = cardMinSize, minHeight = cardMinSize)
             .aspectRatio(1f),

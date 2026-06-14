@@ -20,3 +20,4 @@ keystore.properties
 
 # Local Claude Code state
 .claude/
+.omx/

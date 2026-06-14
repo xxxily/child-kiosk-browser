@@ -104,11 +104,19 @@ object KioskPrefs {
     }
 
     fun getWebPreloadEnabled(context: Context): Boolean {
-        return prefs(context).getBoolean("web_preload_enabled", true)
+        return prefs(context).getBoolean("web_preload_enabled", false)
     }
 
     fun setWebPreloadEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean("web_preload_enabled", enabled).apply()
+    }
+
+    fun getWebViewWarmPoolEnabled(context: Context): Boolean {
+        return prefs(context).getBoolean("webview_warm_pool_enabled", true)
+    }
+
+    fun setWebViewWarmPoolEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean("webview_warm_pool_enabled", enabled).apply()
     }
 
     fun getLastCacheClearTime(context: Context): Long {
@@ -176,6 +184,15 @@ object KioskPrefs {
     fun isLimitFileAccessEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_file_access", true)
     fun setLimitFileAccessEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_file_access", enabled).apply()
 
+    fun isThirdPartyCookiesEnabled(context: Context): Boolean = prefs(context).getBoolean("third_party_cookies_enabled", true)
+    fun setThirdPartyCookiesEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("third_party_cookies_enabled", enabled).apply()
+
+    fun isStrictMixedContentEnabled(context: Context): Boolean = prefs(context).getBoolean("strict_mixed_content", false)
+    fun setStrictMixedContentEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("strict_mixed_content", enabled).apply()
+
+    fun isUseBrowserUserAgentEnabled(context: Context): Boolean = prefs(context).getBoolean("use_browser_user_agent", true)
+    fun setUseBrowserUserAgentEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("use_browser_user_agent", enabled).apply()
+
     // 4. 网页调试与开发配置
     fun getWebDebugTool(context: Context): String = prefs(context).getString("web_debug_tool", "NONE") ?: "NONE"
     fun setWebDebugTool(context: Context, tool: String) = prefs(context).edit().putString("web_debug_tool", tool).apply()
@@ -188,7 +205,7 @@ object KioskPrefs {
         prefs(context).getString("eruda_cdn_url", "https://cdn.jsdelivr.net/npm/eruda") ?: "https://cdn.jsdelivr.net/npm/eruda"
     fun setErudaCdnUrl(context: Context, url: String) = prefs(context).edit().putString("eruda_cdn_url", url).apply()
 
-    fun getInjectTimingMode(context: Context): String = prefs(context).getString("inject_timing_mode", "PAGE_STARTED") ?: "PAGE_STARTED"
+    fun getInjectTimingMode(context: Context): String = prefs(context).getString("inject_timing_mode", "BOTH") ?: "BOTH"
     fun setInjectTimingMode(context: Context, mode: String) = prefs(context).edit().putString("inject_timing_mode", mode).apply()
 
     fun isChromeInspectEnabled(context: Context): Boolean = prefs(context).getBoolean("chrome_inspect_enabled", false)
@@ -202,7 +219,7 @@ object KioskPrefs {
     fun isCustomJsInjectEnabled(context: Context): Boolean = prefs(context).getBoolean("custom_js_inject_enabled", false)
     fun setCustomJsInjectEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("custom_js_inject_enabled", enabled).apply()
 
-    fun getCustomJsInjectTiming(context: Context): String = prefs(context).getString("custom_js_inject_timing", "PAGE_STARTED") ?: "PAGE_STARTED"
+    fun getCustomJsInjectTiming(context: Context): String = prefs(context).getString("custom_js_inject_timing", "BOTH") ?: "BOTH"
     fun setCustomJsInjectTiming(context: Context, timing: String) = prefs(context).edit().putString("custom_js_inject_timing", timing).apply()
 
     fun getCustomJsInjectUrl(context: Context): String = prefs(context).getString("custom_js_inject_url", "") ?: ""

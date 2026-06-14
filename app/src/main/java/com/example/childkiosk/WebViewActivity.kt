@@ -1,15 +1,22 @@
 package com.example.childkiosk
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.net.http.SslError
 import android.os.Bundle
+import android.util.Log
 import android.view.KeyEvent
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.*
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -43,17 +50,39 @@ import com.example.childkiosk.ui.ParentVerificationDialog
 import com.example.childkiosk.ui.QButton
 import com.example.childkiosk.ui.theme.ChildKioskTheme
 import com.example.childkiosk.util.AdBlocker
+import com.example.childkiosk.util.KioskPrefs
 import com.example.childkiosk.util.SystemUiHelper
 import com.example.childkiosk.util.TimeLimiter
+import com.example.childkiosk.util.WebViewRuntime
+import com.example.childkiosk.util.WebViewPool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.lang.ref.WeakReference
 import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
 
 class WebViewActivity : ComponentActivity() {
 
     private var rootWebView: WebView? = null
+    private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
+    private var fullscreenView: View? = null
+    private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
+
+    private val fileChooserLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val callback = fileChooserCallback ?: return@registerForActivityResult
+        fileChooserCallback = null
+        val uris = if (result.resultCode == Activity.RESULT_OK) {
+            WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+        } else {
+            null
+        }
+        callback.onReceiveValue(uris ?: emptyArray())
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // 0. 早期屏幕方向设置，避免启动闪烁
@@ -117,6 +146,11 @@ class WebViewActivity : ComponentActivity() {
                     WebViewScreen(
                         webAppId = webAppId,
                         onWebViewReady = { rootWebView = it },
+                        onWebViewReleased = { released ->
+                            if (rootWebView == released) {
+                                rootWebView = null
+                            }
+                        },
                         onClose = { finish() }
                     )
                 }
@@ -151,16 +185,78 @@ class WebViewActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        rootWebView?.let {
-            it.loadUrl("about:blank")
-            it.clearHistory()
-            it.clearCache(true)
-            (it.parent as? ViewGroup)?.removeView(it)
-            it.removeAllViews()
-            it.destroy()
+        exitFullscreenView()
+        fileChooserCallback?.onReceiveValue(null)
+        fileChooserCallback = null
+        rootWebView?.let { webView ->
+            if (!WebViewPool.recycleBlank(webView)) {
+                destroyWebViewSafely(webView)
+            }
         }
         rootWebView = null
         super.onDestroy()
+    }
+
+    fun openFileChooser(
+        callback: ValueCallback<Array<Uri>>,
+        params: WebChromeClient.FileChooserParams?
+    ): Boolean {
+        fileChooserCallback?.onReceiveValue(null)
+        fileChooserCallback = callback
+
+        val intent = runCatching {
+            params?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+            }
+        }.getOrElse {
+            Intent(Intent.ACTION_GET_CONTENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+            }
+        }
+
+        return runCatching {
+            fileChooserLauncher.launch(intent)
+            true
+        }.getOrElse {
+            fileChooserCallback = null
+            callback.onReceiveValue(null)
+            Toast.makeText(this, "无法打开文件选择器", Toast.LENGTH_SHORT).show()
+            false
+        }
+    }
+
+    fun enterFullscreenView(view: View?, callback: WebChromeClient.CustomViewCallback?) {
+        if (view == null) {
+            callback?.onCustomViewHidden()
+            return
+        }
+        if (fullscreenView != null) {
+            callback?.onCustomViewHidden()
+            return
+        }
+        fullscreenView = view
+        fullscreenCallback = callback
+        (window.decorView as? ViewGroup)?.addView(
+            view,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        rootWebView?.visibility = View.GONE
+        SystemUiHelper.enterImmersive(this)
+    }
+
+    fun exitFullscreenView() {
+        val view = fullscreenView ?: return
+        (view.parent as? ViewGroup)?.removeView(view)
+        fullscreenView = null
+        fullscreenCallback?.onCustomViewHidden()
+        fullscreenCallback = null
+        rootWebView?.visibility = View.VISIBLE
+        SystemUiHelper.enterImmersive(this)
     }
 
     companion object {
@@ -173,6 +269,7 @@ class WebViewActivity : ComponentActivity() {
 fun WebViewScreen(
     webAppId: Int,
     onWebViewReady: (WebView) -> Unit,
+    onWebViewReleased: (WebView) -> Unit,
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
@@ -251,31 +348,50 @@ fun WebViewScreen(
 
     val targetUrl = webApp?.url ?: "about:blank"
     val originalHost = remember(targetUrl) {
-        runCatching { URL(targetUrl).host }.getOrNull()?.lowercase().orEmpty()
+        WebViewRuntime.hostOf(targetUrl)
     }
 
-    // 预加载获取与加载状态管理 (Phase 4)
-    val isPreloadEnabled = remember { com.example.childkiosk.util.KioskPrefs.getWebPreloadEnabled(context) }
+    // WebView 池获取：URL 预加载命中时直接接管已加载实例，否则复用空白热备实例后正常 loadUrl。
     val preloadEntry = remember(targetUrl) {
-        if (isPreloadEnabled && targetUrl != "about:blank") {
-            com.example.childkiosk.util.WebViewPool.acquire(targetUrl)
+        if (targetUrl != "about:blank") {
+            WebViewPool.acquire(targetUrl)
         } else null
     }
 
     var isPageLoading by remember(preloadEntry) { mutableStateOf(preloadEntry?.isLoaded != true) }
+    var shouldShowOverlay by remember(preloadEntry) { mutableStateOf(preloadEntry?.isLoaded != true) }
     var loadProgress by remember(preloadEntry) { mutableIntStateOf(preloadEntry?.progress ?: 0) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    var overlayShownTime by remember { mutableLongStateOf(0L) }
+    var overlayShownTime by remember { mutableLongStateOf(if (preloadEntry?.isLoaded == true) 0L else System.currentTimeMillis()) }
 
     // 多 Tab WebView 栈管理
     val webViewStack = remember { mutableStateListOf<WebView>() }
     val webViewRef by remember { derivedStateOf { webViewStack.lastOrNull() } }
 
-    // 自动超时逻辑：弱网环境或加载慢页面 3秒后强制关闭 loading 遮罩
-    LaunchedEffect(isPageLoading) {
+    LaunchedEffect(isPageLoading, loadError) {
+        if (isPageLoading || loadError != null) {
+            if (!shouldShowOverlay) {
+                overlayShownTime = System.currentTimeMillis()
+            }
+            shouldShowOverlay = true
+        } else {
+            val elapsed = System.currentTimeMillis() - overlayShownTime
+            if (overlayShownTime > 0L && elapsed < 600L) {
+                delay(600L - elapsed)
+            }
+            shouldShowOverlay = false
+            overlayShownTime = 0L
+        }
+    }
+
+    // 弱网或特殊页面漏发完成回调时的兜底，避免 100% 遮罩长期挡住网页。
+    LaunchedEffect(isPageLoading, targetUrl) {
         if (isPageLoading) {
-            delay(3000)
-            isPageLoading = false
+            delay(12000)
+            if (isPageLoading) {
+                loadProgress = 100
+                isPageLoading = false
+            }
         }
     }
 
@@ -291,16 +407,32 @@ fun WebViewScreen(
                 onDownloadBlocked = {
                     Toast.makeText(context, "下载功能已受阻，若要下载应用请联系家长。", Toast.LENGTH_LONG).show()
                 },
-                onLoadingStateChanged = { loading -> isPageLoading = loading },
+                onLoadingStateChanged = { loading ->
+                    if (loading) {
+                        loadError = null
+                    }
+                    isPageLoading = loading
+                },
                 onProgressUpdate = { progress -> loadProgress = progress },
                 onError = { error -> loadError = error },
                 existingWebView = preloadEntry?.webView,
+                onShowFileChooser = { callback, params ->
+                    (context as? WebViewActivity)?.openFileChooser(callback, params) ?: false
+                },
                 onCreateWindow = { newWv ->
                     webViewStack.add(newWv)
                 }
             ).also { wv ->
                 onWebViewReady(wv)
-                if (preloadEntry == null) {
+                if (preloadEntry?.isUrlPreload == true) {
+                    wv.post {
+                        scheduleInjectionPasses(wv, context)
+                        if (wv.progress >= 100 || preloadEntry.isLoaded) {
+                            loadProgress = 100
+                            isPageLoading = false
+                        }
+                    }
+                } else {
                     wv.loadUrl(targetUrl)
                 }
             }
@@ -317,13 +449,13 @@ fun WebViewScreen(
     DisposableEffect(Unit) {
         onDispose {
             webViewStack.forEach { wv ->
-                runCatching {
-                    wv.loadUrl("about:blank")
-                    wv.clearHistory()
-                    wv.clearCache(true)
-                    (wv.parent as? ViewGroup)?.removeView(wv)
-                    wv.removeAllViews()
-                    wv.destroy()
+                if (wv == mainWebView) {
+                    if (!WebViewPool.recycleBlank(wv)) {
+                        destroyWebViewSafely(wv)
+                    }
+                    onWebViewReleased(wv)
+                } else {
+                    destroyWebViewSafely(wv)
                 }
             }
             webViewStack.clear()
@@ -336,13 +468,11 @@ fun WebViewScreen(
             if (wv.canGoBack()) {
                 wv.goBack()
             } else {
-                if (webViewStack.size > 1) {
-                    webViewStack.removeLast().apply {
-                        loadUrl("about:blank")
-                        clearHistory()
-                        destroy()
-                    }
-                } else {
+                    if (webViewStack.size > 1) {
+                        webViewStack.removeLast().apply {
+                            destroyWebViewSafely(this)
+                        }
+                    } else {
                     if (verifyOnExit) {
                         showParentVerifyForClose = true
                     } else {
@@ -372,19 +502,6 @@ fun WebViewScreen(
                         view.visibility = if (isTop) android.view.View.VISIBLE else android.view.View.GONE
                     }
                 )
-            }
-        }
-
-        // 记录遮罩开始展示时间，实现最小展示时长控制，防闪烁
-        LaunchedEffect(isPageLoading) {
-            if (isPageLoading) {
-                overlayShownTime = System.currentTimeMillis()
-            }
-        }
-
-        val shouldShowOverlay by remember {
-            derivedStateOf {
-                isPageLoading || loadError != null || (System.currentTimeMillis() - overlayShownTime < 600)
             }
         }
 
@@ -620,15 +737,14 @@ private fun createSecureWebView(
     onProgressUpdate: (Int) -> Unit,
     onError: (String) -> Unit,
     existingWebView: WebView? = null,
+    onShowFileChooser: (ValueCallback<Array<Uri>>, WebChromeClient.FileChooserParams?) -> Boolean,
     onCreateWindow: (WebView) -> Unit
 ): WebView {
     val webView = existingWebView ?: WebView(ctx)
-    
-    // 启用 USB 远程调试
-    val enableInspect = com.example.childkiosk.util.KioskPrefs.isChromeInspectEnabled(ctx)
-    WebView.setWebContentsDebuggingEnabled(enableInspect)
 
     return webView.apply {
+        WebViewRuntime.applySettings(this, ctx, targetUrl)
+
         // 仅在网页未加载完成时设置暖色底色以防止白屏；已加载完的实例直接使用白色底色
         val initialBgColor = if (existingWebView != null && existingWebView.progress == 100) {
             android.graphics.Color.WHITE
@@ -637,59 +753,16 @@ private fun createSecureWebView(
         }
         setBackgroundColor(initialBgColor)
 
-        settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            databaseEnabled = true
-
-            val limitFile = com.example.childkiosk.util.KioskPrefs.isLimitFileAccessEnabled(ctx)
-            allowFileAccess = !limitFile
-            allowContentAccess = !limitFile
-            allowFileAccessFromFileURLs = !limitFile
-            allowUniversalAccessFromFileURLs = !limitFile
-
-            val limitMultiWindow = com.example.childkiosk.util.KioskPrefs.isLimitMultiWindowEnabled(ctx)
-            setSupportMultipleWindows(!limitMultiWindow)
-            javaScriptCanOpenWindowsAutomatically = !limitMultiWindow
-
-            saveFormData = false
-            @Suppress("DEPRECATION")
-            savePassword = false
-            setGeolocationEnabled(!com.example.childkiosk.util.KioskPrefs.isLimitGeolocationEnabled(ctx))
-
-            mediaPlaybackRequiresUserGesture = false
-            mixedContentMode = if (targetUrl.startsWith("http://", ignoreCase = true)) {
-                WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            } else {
-                WebSettings.MIXED_CONTENT_NEVER_ALLOW
-            }
-
-            cacheMode = WebSettings.LOAD_DEFAULT
-            useWideViewPort = true
-            loadWithOverviewMode = true
-            textZoom = 100
-        }
-
-        // 根据配置禁用或启用长按
-        val limitLongClick = com.example.childkiosk.util.KioskPrefs.isLimitLongClickEnabled(ctx)
-        if (limitLongClick) {
-            setOnLongClickListener { true }
-            isLongClickable = false
-        } else {
-            setOnLongClickListener(null)
-            isLongClickable = true
-        }
-
         webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                // 忽略 attach 时触发 the 重入的已完成加载通知，防止状态被重设为 loading 并卡死
+                onProgressUpdate(0)
+                view?.setBackgroundColor(android.graphics.Color.parseColor("#FFF8E1"))
                 if (view != null && view.progress < 100) {
                     onLoadingStateChanged(true)
                 }
                 if (view != null) {
-                    injectDebugToolIfNeeded(view, ctx, "PAGE_STARTED")
-                    injectCustomScriptIfNeeded(view, ctx, "PAGE_STARTED")
+                    scheduleInjectionPasses(view, ctx, "PAGE_STARTED")
                 }
             }
 
@@ -699,21 +772,14 @@ private fun createSecureWebView(
                 view?.setBackgroundColor(android.graphics.Color.WHITE)
 
                 if (view != null) {
-                    injectDebugToolIfNeeded(view, ctx, "PAGE_FINISHED")
-                    injectCustomScriptIfNeeded(view, ctx, "PAGE_FINISHED")
+                    scheduleInjectionPasses(view, ctx, "PAGE_FINISHED")
                 }
 
-                // 针对 SPA 页面进行 DOM 渲染检测
-                view?.evaluateJavascript(
-                    "(document.body && document.body.children.length > 0).toString()"
-                ) { result ->
-                    if (result == "\"true\"") {
+                waitForMeaningfulContent(view) { hasContent ->
+                    if (hasContent) {
                         onLoadingStateChanged(false)
                     } else {
-                        // 降级机制：如果页面 DOM 在 300ms 后仍为空，强制移除遮罩
-                        postDelayed({
-                            onLoadingStateChanged(false)
-                        }, 300)
+                        view?.postDelayed({ onLoadingStateChanged(false) }, 800)
                     }
                 }
             }
@@ -725,6 +791,7 @@ private fun createSecureWebView(
             ) {
                 super.onReceivedError(view, request, error)
                 if (request?.isForMainFrame == true) {
+                    onLoadingStateChanged(false)
                     onError(error?.description?.toString() ?: "网络连接异常")
                 }
             }
@@ -738,6 +805,7 @@ private fun createSecureWebView(
                 if (request?.isForMainFrame == true) {
                     val code = errorResponse?.statusCode ?: 200
                     if (code >= 400) {
+                        onLoadingStateChanged(false)
                         onError("服务器返回异常: HTTP $code")
                     }
                 }
@@ -749,19 +817,20 @@ private fun createSecureWebView(
             ): Boolean {
                 val urlStr = request?.url?.toString() ?: return false
 
-                if (!urlStr.startsWith("http://", true) && !urlStr.startsWith("https://", true)) {
+                if (WebViewRuntime.isInternalWebViewUrl(urlStr)) {
+                    return false
+                }
+
+                if (!WebViewRuntime.isWebUrl(urlStr)) {
                     onBlocked(urlStr)
                     return true
                 }
 
-                if (com.example.childkiosk.util.KioskPrefs.isLimitUrlRedirectEnabled(ctx)) {
-                    val host = runCatching { URL(urlStr).host }.getOrNull()?.lowercase().orEmpty()
-                    if (originalHost.isNotEmpty() && host.isNotEmpty()) {
-                        val isAllowed = host == originalHost || host.endsWith(".$originalHost")
-                        if (!isAllowed) {
-                            onBlocked(urlStr)
-                            return true
-                        }
+                if (KioskPrefs.isLimitUrlRedirectEnabled(ctx)) {
+                    val host = WebViewRuntime.hostOf(urlStr)
+                    if (!WebViewRuntime.isSameHostOrSubdomain(host, originalHost)) {
+                        onBlocked(urlStr)
+                        return true
                     }
                 }
                 return false
@@ -771,8 +840,9 @@ private fun createSecureWebView(
                 view: WebView?,
                 request: WebResourceRequest?
             ): WebResourceResponse? {
+                val url = request?.url?.toString()
                 val host = request?.url?.host
-                if (com.example.childkiosk.util.KioskPrefs.isLimitAdBlockEnabled(ctx) && AdBlocker.isAdHost(host)) {
+                if (KioskPrefs.isLimitAdBlockEnabled(ctx) && AdBlocker.isAdRequest(url ?: host)) {
                     return WebResourceResponse(
                         "text/plain",
                         "utf-8",
@@ -788,8 +858,9 @@ private fun createSecureWebView(
                 handler: SslErrorHandler?,
                 error: SslError?
             ) {
-                if (com.example.childkiosk.util.KioskPrefs.isLimitSslCheckEnabled(ctx)) {
+                if (KioskPrefs.isLimitSslCheckEnabled(ctx)) {
                     handler?.cancel()
+                    onLoadingStateChanged(false)
                     onSslError(error?.url ?: "未知链接")
                 } else {
                     handler?.proceed()
@@ -801,17 +872,54 @@ private fun createSecureWebView(
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 super.onProgressChanged(view, newProgress)
                 onProgressUpdate(newProgress)
-                if (newProgress >= 85) {
-                    onLoadingStateChanged(false)
+                if (newProgress >= 100) {
+                    view?.postDelayed({
+                        waitForMeaningfulContent(view) { onLoadingStateChanged(false) }
+                    }, 250)
                 }
             }
 
             override fun onPermissionRequest(request: PermissionRequest?) {
-                if (com.example.childkiosk.util.KioskPrefs.isLimitGeolocationEnabled(ctx)) {
-                    request?.deny()
+                if (request == null) return
+                val requested = request.resources.orEmpty()
+                val allowed = requested.filter { resource ->
+                    when (resource) {
+                        PermissionRequest.RESOURCE_VIDEO_CAPTURE,
+                        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> !KioskPrefs.isLimitGeolocationEnabled(ctx)
+                        else -> true
+                    }
+                }.toTypedArray()
+                if (allowed.isEmpty()) {
+                    request.deny()
                 } else {
-                    request?.grant(request.resources)
+                    request.grant(allowed)
                 }
+            }
+
+            override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+                consoleMessage ?: return super.onConsoleMessage(consoleMessage)
+                Log.d(
+                    "ChildKioskWebView",
+                    "${consoleMessage.messageLevel()}: ${consoleMessage.message()} (${consoleMessage.sourceId()}:${consoleMessage.lineNumber()})"
+                )
+                return super.onConsoleMessage(consoleMessage)
+            }
+
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>?,
+                fileChooserParams: FileChooserParams?
+            ): Boolean {
+                return filePathCallback?.let { onShowFileChooser(it, fileChooserParams) } ?: false
+            }
+
+            override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                (ctx as? WebViewActivity)?.enterFullscreenView(view, callback)
+                    ?: callback?.onCustomViewHidden()
+            }
+
+            override fun onHideCustomView() {
+                (ctx as? WebViewActivity)?.exitFullscreenView()
             }
 
             override fun onCreateWindow(
@@ -831,6 +939,7 @@ private fun createSecureWebView(
                     onLoadingStateChanged = onLoadingStateChanged,
                     onProgressUpdate = onProgressUpdate,
                     onError = onError,
+                    onShowFileChooser = onShowFileChooser,
                     onCreateWindow = onCreateWindow
                 )
                 onCreateWindow(newWebView)
@@ -1021,39 +1130,39 @@ private fun LoadingErrorOverlay(
 }
 
 private fun injectDebugToolIfNeeded(webView: WebView, context: Context, currentTiming: String) {
-    val timingMode = com.example.childkiosk.util.KioskPrefs.getInjectTimingMode(context)
-    if (timingMode != currentTiming) {
+    val timingMode = KioskPrefs.getInjectTimingMode(context)
+    if (currentTiming != "BOTH" && timingMode != "BOTH" && timingMode != currentTiming) {
         return
     }
 
-    val tool = com.example.childkiosk.util.KioskPrefs.getWebDebugTool(context)
+    val tool = KioskPrefs.getWebDebugTool(context)
     if (tool == "NONE") {
         return
     }
 
     when (tool) {
         "VCONSOLE" -> {
-            val cdnUrl = com.example.childkiosk.util.KioskPrefs.getVConsoleCdnUrl(context)
-            injectCdnScript(webView, cdnUrl, "new VConsole();")
+            val cdnUrl = KioskPrefs.getVConsoleCdnUrl(context)
+            injectCdnScript(webView, context, cdnUrl, "VCONSOLE", "new VConsole();")
         }
         "ERUDA" -> {
-            val cdnUrl = com.example.childkiosk.util.KioskPrefs.getErudaCdnUrl(context)
-            injectCdnScript(webView, cdnUrl, "eruda.init();")
+            val cdnUrl = KioskPrefs.getErudaCdnUrl(context)
+            injectCdnScript(webView, context, cdnUrl, "ERUDA", "eruda.init();")
         }
     }
 }
 
 private fun injectCustomScriptIfNeeded(webView: WebView, context: Context, currentTiming: String) {
-    if (!com.example.childkiosk.util.KioskPrefs.isCustomJsInjectEnabled(context)) {
+    if (!KioskPrefs.isCustomJsInjectEnabled(context)) {
         return
     }
-    val timing = com.example.childkiosk.util.KioskPrefs.getCustomJsInjectTiming(context)
-    if (timing != currentTiming) {
+    val timing = KioskPrefs.getCustomJsInjectTiming(context)
+    if (currentTiming != "BOTH" && timing != "BOTH" && timing != currentTiming) {
         return
     }
 
-    val url = com.example.childkiosk.util.KioskPrefs.getCustomJsInjectUrl(context).trim()
-    val code = com.example.childkiosk.util.KioskPrefs.getCustomJsInjectCode(context).trim()
+    val url = KioskPrefs.getCustomJsInjectUrl(context).trim()
+    val code = KioskPrefs.getCustomJsInjectCode(context).trim()
 
     if (url.isEmpty() && code.isEmpty()) {
         return
@@ -1061,24 +1170,24 @@ private fun injectCustomScriptIfNeeded(webView: WebView, context: Context, curre
 
     if (url.isNotEmpty()) {
         // 有外链，需要先动态 append 外部 JS 链接，onload 后执行 code
+        val urlJson = JSONObject.quote(url)
+        val codeJson = JSONObject.quote(code)
         val js = """
             (function() {
-                if (window.__custom_script_injected__) {
-                    return;
-                }
+                if (window.__custom_script_injected__) return;
                 window.__custom_script_injected__ = true;
                 
                 var script = document.createElement('script');
-                script.src = '$url';
+                script.src = $urlJson;
                 script.onload = function() {
                     try {
-                        $code
+                        (0, eval)($codeJson);
                     } catch(e) {
                         console.error('Custom injected JS code error:', e);
                     }
                 };
                 script.onerror = function() {
-                    console.error('Failed to load custom script from URL: $url');
+                    console.error('Failed to load custom script from URL:', $urlJson);
                 };
                 (document.head || document.documentElement).appendChild(script);
             })();
@@ -1088,9 +1197,7 @@ private fun injectCustomScriptIfNeeded(webView: WebView, context: Context, curre
         // 没有外链，直接自执行 code
         val js = """
             (function() {
-                if (window.__custom_code_injected__) {
-                    return;
-                }
+                if (window.__custom_code_injected__) return;
                 window.__custom_code_injected__ = true;
                 try {
                     $code
@@ -1103,14 +1210,74 @@ private fun injectCustomScriptIfNeeded(webView: WebView, context: Context, curre
     }
 }
 
-private fun injectCdnScript(webView: WebView, cdnUrl: String, initJs: String) {
+private fun scheduleInjectionPasses(webView: WebView, context: Context, primaryTiming: String = "BOTH") {
+    injectDebugToolIfNeeded(webView, context, primaryTiming)
+    injectCustomScriptIfNeeded(webView, context, primaryTiming)
+
+    listOf(250L, 1000L, 2500L).forEach { delayMs ->
+        webView.postDelayed({
+            injectDebugToolIfNeeded(webView, context, "BOTH")
+            injectCustomScriptIfNeeded(webView, context, "BOTH")
+        }, delayMs)
+    }
+}
+
+private fun waitForMeaningfulContent(webView: WebView?, onResult: (Boolean) -> Unit) {
+    if (webView == null) {
+        onResult(false)
+        return
+    }
     val js = """
         (function() {
-            if (window.__debug_tool_injected__) return;
-            window.__debug_tool_injected__ = true;
+            var body = document.body;
+            if (!body) return false;
+            var rect = body.getBoundingClientRect();
+            var text = (body.innerText || '').trim();
+            var visibleNodes = body.querySelectorAll('canvas, img, video, svg, button, input, textarea, select, [role], [data-slot], main, section, article').length;
+            return !!(text.length > 0 || visibleNodes > 0 || rect.height > 0);
+        })();
+    """.trimIndent()
+    webView.evaluateJavascript(js) { result ->
+        onResult(result == "true" || result == "\"true\"")
+    }
+}
+
+private fun destroyWebViewSafely(webView: WebView) {
+    runCatching {
+        webView.stopLoading()
+        webView.webChromeClient = null
+        webView.webViewClient = WebViewClient()
+        runCatching { webView.removeJavascriptInterface("ChildKioskDebugBridge") }
+        webView.loadUrl("about:blank")
+        webView.clearHistory()
+        (webView.parent as? ViewGroup)?.removeView(webView)
+        webView.removeAllViews()
+        webView.destroy()
+    }
+}
+
+private fun injectCdnScript(webView: WebView, context: Context, cdnUrl: String, toolKey: String, initJs: String) {
+    val urlJson = JSONObject.quote(cdnUrl)
+    val guardKey = "__debug_tool_injected_$toolKey"
+    val guardJson = JSONObject.quote(guardKey)
+    val callbackName = "__ChildKioskDebugInject_$toolKey"
+    val callbackJson = JSONObject.quote(callbackName)
+    val loadedCheck = when (toolKey) {
+        "ERUDA" -> "!!window.eruda"
+        "VCONSOLE" -> "!!window.VConsole"
+        else -> "false"
+    }
+    ensureDebugBridge(webView, context, callbackName, cdnUrl, guardKey, initJs)
+    val js = """
+        (function() {
+            if (window[$guardJson]) {
+                try { $initJs } catch(e) {}
+                return 'already';
+            }
+            window[$guardJson] = true;
             
             var script = document.createElement('script');
-            script.src = '$cdnUrl';
+            script.src = $urlJson;
             script.onload = function() {
                 try {
                     $initJs
@@ -1120,22 +1287,127 @@ private fun injectCdnScript(webView: WebView, cdnUrl: String, initJs: String) {
             };
             script.onerror = function() {
                 console.error('Failed to load debug tool from CDN');
+                if (window.ChildKioskDebugBridge && window.ChildKioskDebugBridge.requestFallback) {
+                    window.ChildKioskDebugBridge.requestFallback($callbackJson);
+                }
             };
             (document.head || document.documentElement).appendChild(script);
+            setTimeout(function() {
+                try {
+                    if (window[$guardJson] && !($loadedCheck) &&
+                        window.ChildKioskDebugBridge && window.ChildKioskDebugBridge.requestFallback) {
+                        window.ChildKioskDebugBridge.requestFallback($callbackJson);
+                    }
+                } catch(e) {}
+            }, 2500);
+            return 'loading';
         })();
     """.trimIndent()
-    webView.evaluateJavascript(js, null)
+    webView.evaluateJavascript(js) { result ->
+        if (result == "\"already\"" || result == "\"loading\"") return@evaluateJavascript
+        fetchAndInjectExternalScript(webView, context, cdnUrl, guardKey, initJs)
+    }
 }
 
-private fun injectRawScript(webView: WebView, rawJs: String) {
+@SuppressLint("JavascriptInterface")
+private fun ensureDebugBridge(
+    webView: WebView,
+    context: Context,
+    callbackName: String,
+    cdnUrl: String,
+    guardKey: String,
+    initJs: String
+) {
+    debugFallbackCallbacks[callbackName] = DebugFallbackRequest(
+        webView = WeakReference(webView),
+        context = WeakReference(context),
+        cdnUrl = cdnUrl,
+        guardKey = guardKey,
+        initJs = initJs
+    )
+    runCatching {
+        webView.addJavascriptInterface(DebugInjectBridge(), "ChildKioskDebugBridge")
+    }
+}
+
+private data class DebugFallbackRequest(
+    val webView: WeakReference<WebView>,
+    val context: WeakReference<Context>,
+    val cdnUrl: String,
+    val guardKey: String,
+    val initJs: String
+)
+
+private class DebugInjectBridge {
+    @JavascriptInterface
+    fun requestFallback(callbackName: String?) {
+        callbackName ?: return
+        val request = debugFallbackCallbacks[callbackName] ?: return
+        val webView = request.webView.get() ?: return
+        val context = request.context.get() ?: return
+        webView.post {
+            fetchAndInjectExternalScript(
+                webView = webView,
+                context = context,
+                cdnUrl = request.cdnUrl,
+                guardKey = request.guardKey,
+                initJs = request.initJs
+            )
+        }
+    }
+}
+
+private fun fetchAndInjectExternalScript(
+    webView: WebView,
+    context: Context,
+    cdnUrl: String,
+    guardKey: String,
+    initJs: String
+) {
+    val cacheKey = "$guardKey:$cdnUrl"
+    val cached = externalScriptCache[cacheKey]
+    if (cached != null) {
+        injectRawExternalScript(webView, cached, guardKey, initJs)
+        return
+    }
+
+    (context as? ComponentActivity)?.lifecycleScope?.launch(Dispatchers.IO) {
+        val script = runCatching {
+            val connection = URL(cdnUrl).openConnection()
+            connection.connectTimeout = 8000
+            connection.readTimeout = 8000
+            connection.getInputStream().bufferedReader().use { it.readText() }
+        }.getOrNull()
+
+        if (!script.isNullOrBlank()) {
+            externalScriptCache[cacheKey] = script
+            withContext(Dispatchers.Main) {
+                injectRawExternalScript(webView, script, guardKey, initJs)
+            }
+        }
+    }
+}
+
+private fun injectRawExternalScript(webView: WebView, rawJs: String, guardKey: String, initJs: String) {
+    val guardJson = JSONObject.quote(guardKey)
+    val sourceJson = JSONObject.quote(rawJs)
     val js = """
         (function() {
+            if (window[$guardJson + '_raw']) {
+                try { $initJs } catch(e) {}
+                return;
+            }
+            window[$guardJson + '_raw'] = true;
             try {
-                $rawJs
+                (0, eval)($sourceJson);
+                $initJs
             } catch(e) {
-                console.error('Custom script execute error:', e);
+                console.error('Debug tool raw inject error:', e);
             }
         })();
     """.trimIndent()
     webView.evaluateJavascript(js, null)
 }
+
+private val externalScriptCache = ConcurrentHashMap<String, String>()
+private val debugFallbackCallbacks = ConcurrentHashMap<String, DebugFallbackRequest>()

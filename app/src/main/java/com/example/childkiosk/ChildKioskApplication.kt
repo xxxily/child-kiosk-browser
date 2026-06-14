@@ -7,6 +7,7 @@ import android.os.Looper
 import android.util.Log
 import android.webkit.WebView
 import com.example.childkiosk.util.KioskPrefs
+import com.example.childkiosk.util.WebDataManager
 import com.example.childkiosk.util.WebViewPool
 
 class ChildKioskApplication : Application(), ComponentCallbacks2 {
@@ -20,14 +21,10 @@ class ChildKioskApplication : Application(), ComponentCallbacks2 {
         // 2. 预热 WebView 渲染引擎 (利用空闲时机在主线程初始化)
         Handler(mainLooper).post {
             try {
-                // 仅为了触发底层 Chromium 引擎加载，不保留实例
-                WebView(this).apply {
-                    loadUrl("about:blank")
-                    destroy()
-                }
-                Log.d("ChildKioskApp", "WebView engine pre-warmed successfully.")
+                WebViewPool.warmupBlank()
+                Log.d("ChildKioskApp", "WebView warm pool prepared successfully.")
             } catch (e: Exception) {
-                Log.w("ChildKioskApp", "Failed to pre-warm WebView engine", e)
+                Log.w("ChildKioskApp", "Failed to prepare WebView warm pool", e)
             }
         }
 
@@ -37,10 +34,12 @@ class ChildKioskApplication : Application(), ComponentCallbacks2 {
         if (now - lastClear > 7 * 24 * 60 * 60 * 1000L) {
             Handler(mainLooper).post {
                 try {
+                    WebViewPool.clear()
                     WebView(this).apply {
                         clearCache(true)
                         destroy()
                     }
+                    WebDataManager.clearKnownWebCacheFiles(this)
                     KioskPrefs.setLastCacheClearTime(this, now)
                     Log.i("ChildKioskApp", "7-day automatic WebView cache cleanup executed.")
                 } catch (e: Exception) {
@@ -59,12 +58,12 @@ class ChildKioskApplication : Application(), ComponentCallbacks2 {
                 WebViewPool.clear()
             }
             level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> {
-                Log.w("ChildKioskApp", "Trim memory low: trimming WebViewPool to size 1")
-                WebViewPool.trimToSize(1)
+                Log.w("ChildKioskApp", "Trim memory low: clearing WebViewPool")
+                WebViewPool.clear()
             }
             level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_MODERATE -> {
-                Log.d("ChildKioskApp", "Trim memory moderate: trimming WebViewPool to size 2")
-                WebViewPool.trimToSize(2)
+                Log.d("ChildKioskApp", "Trim memory moderate: trimming WebViewPool to size 1")
+                WebViewPool.trimToSize(1)
             }
         }
     }
