@@ -46,6 +46,7 @@ import com.example.childkiosk.WebViewActivity
 import com.example.childkiosk.data.AppDatabase
 import com.example.childkiosk.data.SystemConfigEntity
 import com.example.childkiosk.data.WebAppEntity
+import com.example.childkiosk.util.KioskPrefs
 import kotlinx.coroutines.launch
 
 @Composable
@@ -260,7 +261,12 @@ fun KioskMainScreen(
                                     modifier = Modifier.weight(1f),
                                     onClick = {
                                         val intent = Intent(context, WebViewActivity::class.java).apply {
-                                            putExtra("WEB_APP_ID", app.id)
+                                            putExtra(WebViewActivity.EXTRA_WEB_APP_ID, app.id)
+                                            putExtra(
+                                                WebViewActivity.EXTRA_ORIENTATION_MODE,
+                                                KioskPrefs.getOrientationMode(context)
+                                            )
+                                            KioskPrefs.putWebViewRuntimeConfig(this, context)
                                         }
                                         context.startActivity(intent)
                                     }

@@ -42,12 +42,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // 0. 早期屏幕方向设置，避免启动闪烁
-        val orientationMode = KioskPrefs.getOrientationMode(this)
-        requestedOrientation = when (orientationMode) {
-            KioskPrefs.ORIENTATION_PORTRAIT -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-            KioskPrefs.ORIENTATION_LANDSCAPE -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
-        }
+        applyRequestedOrientation()
 
         super.onCreate(savedInstanceState)
 
@@ -145,9 +140,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        applyRequestedOrientation()
         applySystemUiMode()
         WebViewPool.warmupBlank()
         triggerKioskIfNeeded()
+    }
+
+    private fun applyRequestedOrientation() {
+        requestedOrientation = KioskPrefs.getRequestedOrientation(this)
     }
 
     private fun triggerKioskIfNeeded() {

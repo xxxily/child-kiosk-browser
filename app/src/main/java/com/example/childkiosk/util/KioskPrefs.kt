@@ -1,6 +1,113 @@
 package com.example.childkiosk.util
 
 import android.content.Context
+import android.content.Intent
+import android.content.pm.ActivityInfo
+import org.json.JSONObject
+
+data class WebViewRuntimeConfig(
+    val verifyOnWebExit: Boolean,
+    val verifyAdminActions: Boolean,
+    val limitFlagSecure: Boolean,
+    val limitVolumeKeys: Boolean,
+    val webViewTopProgressEnabled: Boolean,
+    val webViewWarmPoolEnabled: Boolean,
+    val webPreloadEnabled: Boolean,
+    val webViewRenderMode: String,
+    val chromeInspectEnabled: Boolean,
+    val thirdPartyCookiesEnabled: Boolean,
+    val limitMultiWindow: Boolean,
+    val limitFileAccess: Boolean,
+    val limitGeolocation: Boolean,
+    val strictMixedContent: Boolean,
+    val limitLongClick: Boolean,
+    val customUserAgent: String,
+    val useBrowserUserAgent: Boolean,
+    val limitUrlRedirect: Boolean,
+    val limitAdBlock: Boolean,
+    val limitSslCheck: Boolean,
+    val limitMediaCapture: Boolean,
+    val limitDownload: Boolean,
+    val webDebugTool: String,
+    val injectTimingMode: String,
+    val vConsoleCdnUrl: String,
+    val erudaCdnUrl: String,
+    val customJsInjectEnabled: Boolean,
+    val customJsInjectTiming: String,
+    val customJsInjectUrl: String,
+    val customJsInjectCode: String
+) {
+    fun toJson(): JSONObject {
+        return JSONObject()
+            .put("verifyOnWebExit", verifyOnWebExit)
+            .put("verifyAdminActions", verifyAdminActions)
+            .put("limitFlagSecure", limitFlagSecure)
+            .put("limitVolumeKeys", limitVolumeKeys)
+            .put("webViewTopProgressEnabled", webViewTopProgressEnabled)
+            .put("webViewWarmPoolEnabled", webViewWarmPoolEnabled)
+            .put("webPreloadEnabled", webPreloadEnabled)
+            .put("webViewRenderMode", webViewRenderMode)
+            .put("chromeInspectEnabled", chromeInspectEnabled)
+            .put("thirdPartyCookiesEnabled", thirdPartyCookiesEnabled)
+            .put("limitMultiWindow", limitMultiWindow)
+            .put("limitFileAccess", limitFileAccess)
+            .put("limitGeolocation", limitGeolocation)
+            .put("strictMixedContent", strictMixedContent)
+            .put("limitLongClick", limitLongClick)
+            .put("customUserAgent", customUserAgent)
+            .put("useBrowserUserAgent", useBrowserUserAgent)
+            .put("limitUrlRedirect", limitUrlRedirect)
+            .put("limitAdBlock", limitAdBlock)
+            .put("limitSslCheck", limitSslCheck)
+            .put("limitMediaCapture", limitMediaCapture)
+            .put("limitDownload", limitDownload)
+            .put("webDebugTool", webDebugTool)
+            .put("injectTimingMode", injectTimingMode)
+            .put("vConsoleCdnUrl", vConsoleCdnUrl)
+            .put("erudaCdnUrl", erudaCdnUrl)
+            .put("customJsInjectEnabled", customJsInjectEnabled)
+            .put("customJsInjectTiming", customJsInjectTiming)
+            .put("customJsInjectUrl", customJsInjectUrl)
+            .put("customJsInjectCode", customJsInjectCode)
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject, fallback: WebViewRuntimeConfig): WebViewRuntimeConfig {
+            return WebViewRuntimeConfig(
+                verifyOnWebExit = json.optBoolean("verifyOnWebExit", fallback.verifyOnWebExit),
+                verifyAdminActions = json.optBoolean("verifyAdminActions", fallback.verifyAdminActions),
+                limitFlagSecure = json.optBoolean("limitFlagSecure", fallback.limitFlagSecure),
+                limitVolumeKeys = json.optBoolean("limitVolumeKeys", fallback.limitVolumeKeys),
+                webViewTopProgressEnabled = json.optBoolean("webViewTopProgressEnabled", fallback.webViewTopProgressEnabled),
+                webViewWarmPoolEnabled = json.optBoolean("webViewWarmPoolEnabled", fallback.webViewWarmPoolEnabled),
+                webPreloadEnabled = json.optBoolean("webPreloadEnabled", fallback.webPreloadEnabled),
+                webViewRenderMode = json.optString("webViewRenderMode", fallback.webViewRenderMode),
+                chromeInspectEnabled = json.optBoolean("chromeInspectEnabled", fallback.chromeInspectEnabled),
+                thirdPartyCookiesEnabled = json.optBoolean("thirdPartyCookiesEnabled", fallback.thirdPartyCookiesEnabled),
+                limitMultiWindow = json.optBoolean("limitMultiWindow", fallback.limitMultiWindow),
+                limitFileAccess = json.optBoolean("limitFileAccess", fallback.limitFileAccess),
+                limitGeolocation = json.optBoolean("limitGeolocation", fallback.limitGeolocation),
+                strictMixedContent = json.optBoolean("strictMixedContent", fallback.strictMixedContent),
+                limitLongClick = json.optBoolean("limitLongClick", fallback.limitLongClick),
+                customUserAgent = json.optString("customUserAgent", fallback.customUserAgent),
+                useBrowserUserAgent = json.optBoolean("useBrowserUserAgent", fallback.useBrowserUserAgent),
+                limitUrlRedirect = json.optBoolean("limitUrlRedirect", fallback.limitUrlRedirect),
+                limitAdBlock = json.optBoolean("limitAdBlock", fallback.limitAdBlock),
+                limitSslCheck = json.optBoolean("limitSslCheck", fallback.limitSslCheck),
+                limitMediaCapture = json.optBoolean("limitMediaCapture", fallback.limitMediaCapture),
+                limitDownload = json.optBoolean("limitDownload", fallback.limitDownload),
+                webDebugTool = json.optString("webDebugTool", fallback.webDebugTool),
+                injectTimingMode = json.optString("injectTimingMode", fallback.injectTimingMode),
+                vConsoleCdnUrl = json.optString("vConsoleCdnUrl", fallback.vConsoleCdnUrl),
+                erudaCdnUrl = json.optString("erudaCdnUrl", fallback.erudaCdnUrl),
+                customJsInjectEnabled = json.optBoolean("customJsInjectEnabled", fallback.customJsInjectEnabled),
+                customJsInjectTiming = json.optString("customJsInjectTiming", fallback.customJsInjectTiming),
+                customJsInjectUrl = json.optString("customJsInjectUrl", fallback.customJsInjectUrl),
+                customJsInjectCode = json.optString("customJsInjectCode", fallback.customJsInjectCode)
+            )
+        }
+    }
+}
 
 /**
  * 轻量级本地偏好存储，仅用于保存「非 Device Owner 场景下的防护等级」。
@@ -12,6 +119,7 @@ import android.content.Context
 object KioskPrefs {
 
     private const val PREFS_NAME = "kiosk_prefs"
+    private const val EXTRA_WEBVIEW_RUNTIME_CONFIG = "WEBVIEW_RUNTIME_CONFIG_JSON"
     private const val KEY_PROTECTION_MODE = "non_owner_protection_mode"
     private const val KEY_ORIENTATION_MODE = "orientation_mode"
     private const val KEY_ICON_SIZE_MODE = "icon_size_mode"
@@ -65,6 +173,18 @@ object KioskPrefs {
         prefs(context).edit().putString(KEY_ORIENTATION_MODE, mode).apply()
     }
 
+    fun getRequestedOrientation(context: Context): Int {
+        return requestedOrientationForMode(getOrientationMode(context))
+    }
+
+    fun requestedOrientationForMode(mode: String): Int {
+        return when (mode) {
+            ORIENTATION_PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+            ORIENTATION_LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            else -> ActivityInfo.SCREEN_ORIENTATION_SENSOR
+        }
+    }
+
     fun getIconSizeMode(context: Context): String {
         return prefs(context).getString(KEY_ICON_SIZE_MODE, ICON_SIZE_MEDIUM) ?: ICON_SIZE_MEDIUM
     }
@@ -90,7 +210,7 @@ object KioskPrefs {
     }
 
     fun getAdminIconAlpha(context: Context): Float {
-        return prefs(context).getFloat(KEY_ADMIN_ICON_ALPHA, 0.4f)
+        return prefs(context).getFloat(KEY_ADMIN_ICON_ALPHA, 0.2f)
     }
 
     fun setAdminIconAlpha(context: Context, alpha: Float) {
@@ -123,6 +243,53 @@ object KioskPrefs {
             .putBoolean("limit_url_redirect", false)
             .putInt(KEY_BROWSER_SANDBOX_BASELINE_VERSION, BROWSER_SANDBOX_BASELINE_VERSION)
             .apply()
+    }
+
+    fun getWebViewRuntimeConfig(context: Context): WebViewRuntimeConfig {
+        return WebViewRuntimeConfig(
+            verifyOnWebExit = getVerifyOnWebExit(context),
+            verifyAdminActions = getVerifyAdminActions(context),
+            limitFlagSecure = isLimitFlagSecureEnabled(context),
+            limitVolumeKeys = isLimitVolumeKeysEnabled(context),
+            webViewTopProgressEnabled = isWebViewTopProgressEnabled(context),
+            webViewWarmPoolEnabled = getWebViewWarmPoolEnabled(context),
+            webPreloadEnabled = getWebPreloadEnabled(context),
+            webViewRenderMode = getWebViewRenderMode(context),
+            chromeInspectEnabled = isChromeInspectEnabled(context),
+            thirdPartyCookiesEnabled = isThirdPartyCookiesEnabled(context),
+            limitMultiWindow = isLimitMultiWindowEnabled(context),
+            limitFileAccess = isLimitFileAccessEnabled(context),
+            limitGeolocation = isLimitGeolocationEnabled(context),
+            strictMixedContent = isStrictMixedContentEnabled(context),
+            limitLongClick = isLimitLongClickEnabled(context),
+            customUserAgent = getCustomUserAgent(context),
+            useBrowserUserAgent = isUseBrowserUserAgentEnabled(context),
+            limitUrlRedirect = isLimitUrlRedirectEnabled(context),
+            limitAdBlock = isLimitAdBlockEnabled(context),
+            limitSslCheck = isLimitSslCheckEnabled(context),
+            limitMediaCapture = isLimitMediaCaptureEnabled(context),
+            limitDownload = isLimitDownloadEnabled(context),
+            webDebugTool = getWebDebugTool(context),
+            injectTimingMode = getInjectTimingMode(context),
+            vConsoleCdnUrl = getVConsoleCdnUrl(context),
+            erudaCdnUrl = getErudaCdnUrl(context),
+            customJsInjectEnabled = isCustomJsInjectEnabled(context),
+            customJsInjectTiming = getCustomJsInjectTiming(context),
+            customJsInjectUrl = getCustomJsInjectUrl(context),
+            customJsInjectCode = getCustomJsInjectCode(context)
+        )
+    }
+
+    fun putWebViewRuntimeConfig(intent: Intent, context: Context) {
+        intent.putExtra(EXTRA_WEBVIEW_RUNTIME_CONFIG, getWebViewRuntimeConfig(context).toJson().toString())
+    }
+
+    fun getWebViewRuntimeConfig(intent: Intent?, context: Context): WebViewRuntimeConfig {
+        val fallback = getWebViewRuntimeConfig(context)
+        val rawConfig = intent?.getStringExtra(EXTRA_WEBVIEW_RUNTIME_CONFIG) ?: return fallback
+        return runCatching {
+            WebViewRuntimeConfig.fromJson(JSONObject(rawConfig), fallback)
+        }.getOrDefault(fallback)
     }
 
     fun getWebPreloadEnabled(context: Context): Boolean {

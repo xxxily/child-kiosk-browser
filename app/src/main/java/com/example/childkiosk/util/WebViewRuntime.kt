@@ -14,18 +14,23 @@ import java.net.URL
 object WebViewRuntime {
 
     @SuppressLint("SetJavaScriptEnabled")
-    fun applySettings(webView: WebView, context: Context, targetUrl: String) {
-        WebView.setWebContentsDebuggingEnabled(KioskPrefs.isChromeInspectEnabled(context))
-        applyRenderMode(webView, context)
+    fun applySettings(
+        webView: WebView,
+        context: Context,
+        targetUrl: String,
+        config: WebViewRuntimeConfig = KioskPrefs.getWebViewRuntimeConfig(context)
+    ) {
+        WebView.setWebContentsDebuggingEnabled(config.chromeInspectEnabled)
+        applyRenderMode(webView, context, config)
 
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
-            setAcceptThirdPartyCookies(webView, KioskPrefs.isThirdPartyCookiesEnabled(context))
+            setAcceptThirdPartyCookies(webView, config.thirdPartyCookiesEnabled)
         }
 
         webView.settings.apply {
             javaScriptEnabled = true
-            javaScriptCanOpenWindowsAutomatically = !KioskPrefs.isLimitMultiWindowEnabled(context)
+            javaScriptCanOpenWindowsAutomatically = !config.limitMultiWindow
             domStorageEnabled = true
             databaseEnabled = true
 
@@ -33,23 +38,23 @@ object WebViewRuntime {
             blockNetworkImage = false
             blockNetworkLoads = false
 
-            val limitFile = KioskPrefs.isLimitFileAccessEnabled(context)
+            val limitFile = config.limitFileAccess
             allowFileAccess = !limitFile
             allowContentAccess = !limitFile
             allowFileAccessFromFileURLs = !limitFile
             allowUniversalAccessFromFileURLs = !limitFile
 
-            setSupportMultipleWindows(!KioskPrefs.isLimitMultiWindowEnabled(context))
+            setSupportMultipleWindows(!config.limitMultiWindow)
 
             saveFormData = false
             @Suppress("DEPRECATION")
             savePassword = false
-            setGeolocationEnabled(!KioskPrefs.isLimitGeolocationEnabled(context))
+            setGeolocationEnabled(!config.limitGeolocation)
 
             mediaPlaybackRequiresUserGesture = false
             mixedContentMode = when {
                 targetUrl.startsWith("http://", ignoreCase = true) -> WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                KioskPrefs.isStrictMixedContentEnabled(context) -> WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                config.strictMixedContent -> WebSettings.MIXED_CONTENT_NEVER_ALLOW
                 else -> WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             }
 
@@ -67,11 +72,10 @@ object WebViewRuntime {
             val defaultUserAgent = runCatching {
                 WebSettings.getDefaultUserAgent(context)
             }.getOrDefault(userAgentString)
-            userAgentString = resolveUserAgent(context, defaultUserAgent)
+            userAgentString = resolveUserAgent(defaultUserAgent, config)
         }
 
-        val limitLongClick = KioskPrefs.isLimitLongClickEnabled(context)
-        if (limitLongClick) {
+        if (config.limitLongClick) {
             webView.setOnLongClickListener { true }
             webView.isLongClickable = false
         } else {
@@ -80,8 +84,8 @@ object WebViewRuntime {
         }
     }
 
-    private fun applyRenderMode(webView: WebView, context: Context) {
-        val requestedMode = KioskPrefs.getWebViewRenderMode(context)
+    private fun applyRenderMode(webView: WebView, context: Context, config: WebViewRuntimeConfig) {
+        val requestedMode = config.webViewRenderMode
         val targetLayerType = View.LAYER_TYPE_NONE
         if (webView.layerType != targetLayerType) {
             webView.setLayerType(targetLayerType, null)
@@ -112,23 +116,31 @@ object WebViewRuntime {
 
     private const val BYTES_PER_MB = 1024L * 1024L
 
-    fun webViewDiagnosticSummary(context: Context): String {
+    fun webViewDiagnosticSummary(
+        context: Context,
+        config: WebViewRuntimeConfig = KioskPrefs.getWebViewRuntimeConfig(context)
+    ): String {
         val metrics = context.resources.displayMetrics
         return "host=NATIVE_FRAME_LAYOUT, " +
-            "renderMode=${KioskPrefs.getWebViewRenderMode(context)}, " +
-            "topProgress=${KioskPrefs.isWebViewTopProgressEnabled(context)}, " +
-            "warmPool=${KioskPrefs.getWebViewWarmPoolEnabled(context)}, " +
-            "urlPreload=${KioskPrefs.getWebPreloadEnabled(context)}, " +
+            "renderMode=${config.webViewRenderMode}, " +
+            "topProgress=${config.webViewTopProgressEnabled}, " +
+            "warmPool=${config.webViewWarmPoolEnabled}, " +
+            "urlPreload=${config.webPreloadEnabled}, " +
             "offscreenPreRaster=false, " +
             "screen=${metrics.widthPixels}x${metrics.heightPixels}, density=${metrics.density}, " +
             "process=${ProcessUtils.currentProcessName(context)}, " +
             memorySummary(context)
     }
 
-    fun logWebViewDiagnostics(context: Context, event: String, url: String? = null) {
+    fun logWebViewDiagnostics(
+        context: Context,
+        event: String,
+        url: String? = null,
+        config: WebViewRuntimeConfig = KioskPrefs.getWebViewRuntimeConfig(context)
+    ) {
         Log.d(
             "ChildKioskWebView",
-            "WebView diagnostics: event=$event, url=${url.orEmpty()}, ${webViewDiagnosticSummary(context)}"
+            "WebView diagnostics: event=$event, url=${url.orEmpty()}, ${webViewDiagnosticSummary(context, config)}"
         )
     }
 
@@ -154,12 +166,12 @@ object WebViewRuntime {
         return host == originalHost || host.endsWith(".$originalHost")
     }
 
-    fun resolveUserAgent(context: Context, defaultUserAgent: String): String {
-        val customUserAgent = KioskPrefs.getCustomUserAgent(context).trim()
+    fun resolveUserAgent(defaultUserAgent: String, config: WebViewRuntimeConfig): String {
+        val customUserAgent = config.customUserAgent.trim()
         if (customUserAgent.isNotEmpty()) {
             return customUserAgent
         }
-        return if (KioskPrefs.isUseBrowserUserAgentEnabled(context)) {
+        return if (config.useBrowserUserAgent) {
             browserLikeUserAgent(defaultUserAgent)
         } else {
             defaultUserAgent

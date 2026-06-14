@@ -10,17 +10,16 @@ import android.net.Uri
 import android.net.http.SslError
 import android.os.Bundle
 import android.os.Environment
-import android.text.InputFilter
-import android.text.InputType
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.*
-import android.widget.EditText
+import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -36,6 +35,7 @@ import com.example.childkiosk.util.KioskPrefs
 import com.example.childkiosk.util.SystemUiHelper
 import com.example.childkiosk.util.TimeLimiter
 import com.example.childkiosk.util.WebViewRuntime
+import com.example.childkiosk.util.WebViewRuntimeConfig
 import com.example.childkiosk.util.WebViewPool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -61,6 +61,7 @@ class WebViewActivity : ComponentActivity() {
     private var timeoutDialog: AlertDialog? = null
     private var timeLimitJob: Job? = null
     private var sessionStartTimeMs: Long = 0L
+    private lateinit var runtimeConfig: WebViewRuntimeConfig
 
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -76,18 +77,17 @@ class WebViewActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        runtimeConfig = KioskPrefs.getWebViewRuntimeConfig(intent, this)
+
         // 0. 早期屏幕方向设置，避免启动闪烁
-        val orientationMode = com.example.childkiosk.util.KioskPrefs.getOrientationMode(this)
-        requestedOrientation = when (orientationMode) {
-            com.example.childkiosk.util.KioskPrefs.ORIENTATION_PORTRAIT -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-            com.example.childkiosk.util.KioskPrefs.ORIENTATION_LANDSCAPE -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
-        }
+        val orientationMode = intent.getStringExtra(EXTRA_ORIENTATION_MODE)
+            ?: KioskPrefs.getOrientationMode(this)
+        requestedOrientation = KioskPrefs.requestedOrientationForMode(orientationMode)
 
         super.onCreate(savedInstanceState)
 
         // 防截屏逃逸 (根据配置)
-        if (com.example.childkiosk.util.KioskPrefs.isLimitFlagSecureEnabled(this)) {
+        if (runtimeConfig.limitFlagSecure) {
             window.setFlags(
                 android.view.WindowManager.LayoutParams.FLAG_SECURE,
                 android.view.WindowManager.LayoutParams.FLAG_SECURE
@@ -131,7 +131,7 @@ class WebViewActivity : ComponentActivity() {
             "ChildKioskWebView",
             "Host mode applied: NATIVE_FRAME_LAYOUT, composeHost=false, webAppId=$webAppId"
         )
-        WebViewRuntime.logWebViewDiagnostics(this, "activity_created", "webAppId=$webAppId")
+        WebViewRuntime.logWebViewDiagnostics(this, "activity_created", "webAppId=$webAppId", runtimeConfig)
         startNativeWebView(webAppId)
         startTimeLimitTracking()
     }
@@ -150,7 +150,7 @@ class WebViewActivity : ComponentActivity() {
 
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (com.example.childkiosk.util.KioskPrefs.isLimitVolumeKeysEnabled(this)) {
+        if (runtimeConfig.limitVolumeKeys) {
             val keyCode = event.keyCode
             if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
                 if (event.action == KeyEvent.ACTION_DOWN) {
@@ -256,7 +256,7 @@ class WebViewActivity : ComponentActivity() {
         webViewRoot = root
         setContentView(root)
 
-        val showTopProgress = KioskPrefs.isWebViewTopProgressEnabled(this)
+        val showTopProgress = runtimeConfig.webViewTopProgressEnabled
         if (showTopProgress) {
             topProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
                 max = 100
@@ -277,7 +277,7 @@ class WebViewActivity : ComponentActivity() {
             "Native WebView start: root=FrameLayout, " +
                 "topProgress=${if (showTopProgress) "ENABLED" else "DISABLED"}, webAppId=$webAppId"
         )
-        WebViewRuntime.logWebViewDiagnostics(this, "native_start", "webAppId=$webAppId")
+        WebViewRuntime.logWebViewDiagnostics(this, "native_start", "webAppId=$webAppId", runtimeConfig)
 
         onBackPressedDispatcher.addCallback(
             this,
@@ -307,7 +307,11 @@ class WebViewActivity : ComponentActivity() {
         val targetUrl = webApp.url
         val originalHost = WebViewRuntime.hostOf(targetUrl)
         val preloadEntry = if (targetUrl != "about:blank") {
-            WebViewPool.acquire(targetUrl)
+            WebViewPool.acquire(
+                url = targetUrl,
+                allowUrlPreload = runtimeConfig.webPreloadEnabled,
+                allowWarmPool = runtimeConfig.webViewWarmPoolEnabled
+            )
         } else {
             null
         }
@@ -348,6 +352,7 @@ class WebViewActivity : ComponentActivity() {
                 hideTopProgress()
             },
             existingWebView = preloadEntry?.webView,
+            runtimeConfig = runtimeConfig,
             clearHistoryOnFirstRealPageFinish = shouldClearHistoryOnFirstFinish,
             onShowFileChooser = { callback, params -> openFileChooser(callback, params) },
             onCreateWindow = { newWebView ->
@@ -357,7 +362,7 @@ class WebViewActivity : ComponentActivity() {
         )
 
         attachNativeChildWebView(root, webView)
-        WebViewRuntime.logWebViewDiagnostics(this, "native_webview_attached", targetUrl)
+        WebViewRuntime.logWebViewDiagnostics(this, "native_webview_attached", targetUrl, runtimeConfig)
 
         if (shouldClearPreloadedHistoryNow) {
             webView.post {
@@ -513,7 +518,7 @@ class WebViewActivity : ComponentActivity() {
     }
 
     private fun requestCloseWithVerification() {
-        if (!KioskPrefs.getVerifyOnWebExit(this) || !KioskPrefs.getVerifyAdminActions(this)) {
+        if (!runtimeConfig.verifyOnWebExit || !runtimeConfig.verifyAdminActions) {
             finish()
             return
         }
@@ -547,88 +552,376 @@ class WebViewActivity : ComponentActivity() {
 
     private fun showPinVerification(targetHash: String, message: String, onVerified: () -> Unit) {
         val density = resources.displayMetrics.density
-        val input = EditText(this).apply {
-            hint = "输入 4 位家长密码"
-            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
-            filters = arrayOf(InputFilter.LengthFilter(4))
-            setSingleLine(true)
-        }
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            val horizontal = (20 * density).toInt()
-            val vertical = (8 * density).toInt()
-            setPadding(horizontal, vertical, horizontal, 0)
-            addView(input)
-        }
+        fun dp(value: Int): Int = (value * density).toInt()
 
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("家长验证")
-            .setMessage(message)
-            .setView(container)
-            .setNegativeButton("取消", null)
-            .setPositiveButton("确认", null)
-            .create()
+        val enteredPin = StringBuilder()
+        lateinit var dialog: AlertDialog
+        lateinit var pinDotsView: TextView
+        lateinit var errorView: TextView
 
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val pin = input.text?.toString().orEmpty()
-                if (HashUtils.sha256(pin) == targetHash) {
-                    dialog.dismiss()
-                    onVerified()
-                } else {
-                    input.error = "密码错误，请重新输入"
-                    input.text?.clear()
+        fun refreshPinDots() {
+            pinDotsView.text = buildString {
+                repeat(4) { index ->
+                    append(if (index < enteredPin.length) "●" else "○")
+                    if (index < 3) append("  ")
                 }
             }
         }
+
+        fun clearError() {
+            errorView.visibility = View.GONE
+            errorView.text = ""
+        }
+
+        fun showError() {
+            errorView.text = "密码错误，请重新输入"
+            errorView.visibility = View.VISIBLE
+        }
+
+        fun handlePinKey(key: String) {
+            clearError()
+            when (key) {
+                "清除" -> enteredPin.clear()
+                "删除" -> if (enteredPin.isNotEmpty()) enteredPin.deleteCharAt(enteredPin.length - 1)
+                else -> {
+                    if (enteredPin.length < 4) {
+                        enteredPin.append(key)
+                    }
+                    if (enteredPin.length == 4) {
+                        if (HashUtils.sha256(enteredPin.toString()) == targetHash) {
+                            dialog.dismiss()
+                            onVerified()
+                            return
+                        } else {
+                            enteredPin.clear()
+                            showError()
+                        }
+                    }
+                }
+            }
+            refreshPinDots()
+        }
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+
+            addView(
+                TextView(this@WebViewActivity).apply {
+                    text = message
+                    textSize = 14f
+                    setPadding(0, 0, 0, dp(12))
+                }
+            )
+
+            pinDotsView = TextView(this@WebViewActivity).apply {
+                textSize = 28f
+                textAlignment = View.TEXT_ALIGNMENT_CENTER
+                setPadding(0, 0, 0, dp(10))
+            }
+            addView(
+                pinDotsView,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+
+            errorView = TextView(this@WebViewActivity).apply {
+                textSize = 13f
+                setTextColor(android.graphics.Color.rgb(176, 0, 32))
+                textAlignment = View.TEXT_ALIGNMENT_CENTER
+                visibility = View.GONE
+                setPadding(0, 0, 0, dp(8))
+            }
+            addView(
+                errorView,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+
+            val keyHeight = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
+                dp(44)
+            } else {
+                dp(52)
+            }
+            val rowGap = dp(6)
+            val columnGap = dp(6)
+            val keyRows = listOf(
+                listOf("1", "2", "3"),
+                listOf("4", "5", "6"),
+                listOf("7", "8", "9"),
+                listOf("清除", "0", "删除")
+            )
+
+            keyRows.forEachIndexed { rowIndex, rowKeys ->
+                val row = LinearLayout(this@WebViewActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                }
+                rowKeys.forEachIndexed { keyIndex, key ->
+                    row.addView(
+                        Button(this@WebViewActivity).apply {
+                            text = key
+                            textSize = if (key.length > 1) 13f else 18f
+                            minHeight = 0
+                            minimumHeight = 0
+                            setAllCaps(false)
+                            setOnClickListener { handlePinKey(key) }
+                        },
+                        LinearLayout.LayoutParams(0, keyHeight, 1f).apply {
+                            if (keyIndex < rowKeys.lastIndex) {
+                                marginEnd = columnGap
+                            }
+                        }
+                    )
+                }
+                addView(
+                    row,
+                    LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        if (rowIndex < keyRows.lastIndex) {
+                            bottomMargin = rowGap
+                        }
+                    }
+                )
+            }
+
+            addView(
+                Button(this@WebViewActivity).apply {
+                    text = "取消"
+                    setOnClickListener { dialog.dismiss() }
+                },
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
+                        dp(44)
+                    } else {
+                        dp(48)
+                    }
+                ).apply {
+                    topMargin = dp(12)
+                }
+            )
+        }
+        refreshPinDots()
+
+        val scrollView = ScrollView(this).apply {
+            isFillViewport = false
+            addView(container)
+        }
+
+        dialog = AlertDialog.Builder(this)
+            .setTitle("家长验证")
+            .setView(scrollView)
+            .create()
         exitVerificationDialog = dialog
         dialog.show()
     }
 
     private fun showMathVerification(message: String, onVerified: () -> Unit) {
         val density = resources.displayMetrics.density
+        fun dp(value: Int): Int = (value * density).toInt()
+
         var question = generateNativeMathQuestion()
+        val enteredAnswer = StringBuilder()
+        lateinit var dialog: AlertDialog
         val questionView = TextView(this).apply {
             text = question.expression
-            textSize = 24f
-            setPadding(0, 0, 0, (12 * density).toInt())
+            textSize = 28f
+            textAlignment = View.TEXT_ALIGNMENT_CENTER
+            setPadding(0, 0, 0, dp(10))
         }
-        val input = EditText(this).apply {
-            hint = "输入计算答案"
-            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED
-            setSingleLine(true)
-        }
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            val horizontal = (20 * density).toInt()
-            val vertical = (8 * density).toInt()
-            setPadding(horizontal, vertical, horizontal, 0)
-            addView(questionView)
-            addView(input)
-        }
+        lateinit var answerView: TextView
+        lateinit var errorView: TextView
 
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("家长验证")
-            .setMessage(message)
-            .setView(container)
-            .setNegativeButton("取消", null)
-            .setPositiveButton("确认", null)
-            .create()
-
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val answer = input.text?.toString()?.toIntOrNull()
-                if (answer == question.answer) {
-                    dialog.dismiss()
-                    onVerified()
-                } else {
-                    input.error = "答案错误，请再试一次"
-                    input.text?.clear()
-                    question = generateNativeMathQuestion()
-                    questionView.text = question.expression
-                }
+        fun refreshAnswer() {
+            answerView.text = if (enteredAnswer.isEmpty()) {
+                "请输入答案"
+            } else {
+                enteredAnswer.toString()
             }
         }
+
+        fun clearError() {
+            errorView.visibility = View.GONE
+            errorView.text = ""
+        }
+
+        fun showError() {
+            errorView.text = "答案错误，请再试一次"
+            errorView.visibility = View.VISIBLE
+        }
+
+        fun resetQuestion() {
+            question = generateNativeMathQuestion()
+            questionView.text = question.expression
+            enteredAnswer.clear()
+            refreshAnswer()
+        }
+
+        fun submitAnswer() {
+            val answer = enteredAnswer.toString().toIntOrNull()
+            if (answer == question.answer) {
+                dialog.dismiss()
+                onVerified()
+            } else {
+                showError()
+                resetQuestion()
+            }
+        }
+
+        fun handleAnswerKey(key: String) {
+            clearError()
+            when (key) {
+                "清除" -> enteredAnswer.clear()
+                "删除" -> if (enteredAnswer.isNotEmpty()) enteredAnswer.deleteCharAt(enteredAnswer.length - 1)
+                else -> {
+                    if (enteredAnswer.length < 3) {
+                        enteredAnswer.append(key)
+                    }
+                }
+            }
+            refreshAnswer()
+        }
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+
+            addView(
+                TextView(this@WebViewActivity).apply {
+                    text = message
+                    textSize = 14f
+                    setPadding(0, 0, 0, dp(10))
+                }
+            )
+            addView(questionView)
+
+            answerView = TextView(this@WebViewActivity).apply {
+                textSize = 22f
+                textAlignment = View.TEXT_ALIGNMENT_CENTER
+                setPadding(0, 0, 0, dp(8))
+            }
+            addView(
+                answerView,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+
+            errorView = TextView(this@WebViewActivity).apply {
+                textSize = 13f
+                setTextColor(android.graphics.Color.rgb(176, 0, 32))
+                textAlignment = View.TEXT_ALIGNMENT_CENTER
+                visibility = View.GONE
+                setPadding(0, 0, 0, dp(8))
+            }
+            addView(
+                errorView,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+
+            val keyHeight = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
+                dp(42)
+            } else {
+                dp(50)
+            }
+            val rowGap = dp(6)
+            val columnGap = dp(6)
+            val keyRows = listOf(
+                listOf("1", "2", "3"),
+                listOf("4", "5", "6"),
+                listOf("7", "8", "9"),
+                listOf("清除", "0", "删除")
+            )
+
+            keyRows.forEachIndexed { rowIndex, rowKeys ->
+                val row = LinearLayout(this@WebViewActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                }
+                rowKeys.forEachIndexed { keyIndex, key ->
+                    row.addView(
+                        Button(this@WebViewActivity).apply {
+                            text = key
+                            textSize = if (key.length > 1) 13f else 18f
+                            minHeight = 0
+                            minimumHeight = 0
+                            setAllCaps(false)
+                            setOnClickListener { handleAnswerKey(key) }
+                        },
+                        LinearLayout.LayoutParams(0, keyHeight, 1f).apply {
+                            if (keyIndex < rowKeys.lastIndex) {
+                                marginEnd = columnGap
+                            }
+                        }
+                    )
+                }
+                addView(
+                    row,
+                    LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        if (rowIndex < keyRows.lastIndex) {
+                            bottomMargin = rowGap
+                        }
+                    }
+                )
+            }
+
+            addView(
+                Button(this@WebViewActivity).apply {
+                    text = "确认"
+                    setOnClickListener { submitAnswer() }
+                },
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
+                        dp(42)
+                    } else {
+                        dp(48)
+                    }
+                ).apply {
+                    topMargin = dp(12)
+                }
+            )
+
+            addView(
+                Button(this@WebViewActivity).apply {
+                    text = "取消"
+                    setOnClickListener { dialog.dismiss() }
+                },
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
+                        dp(42)
+                    } else {
+                        dp(48)
+                    }
+                ).apply {
+                    topMargin = dp(8)
+                }
+            )
+        }
+        refreshAnswer()
+
+        val scrollView = ScrollView(this).apply {
+            isFillViewport = false
+            addView(container)
+        }
+
+        dialog = AlertDialog.Builder(this)
+            .setTitle("家长验证")
+            .setView(scrollView)
+            .create()
         exitVerificationDialog = dialog
         dialog.show()
     }
@@ -657,6 +950,7 @@ class WebViewActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_WEB_APP_ID = "WEB_APP_ID"
+        const val EXTRA_ORIENTATION_MODE = "ORIENTATION_MODE"
     }
 }
 
@@ -672,6 +966,7 @@ private fun createSecureWebView(
     onProgressUpdate: (Int) -> Unit,
     onError: (String) -> Unit,
     existingWebView: WebView? = null,
+    runtimeConfig: WebViewRuntimeConfig,
     clearHistoryOnFirstRealPageFinish: Boolean = false,
     onShowFileChooser: (ValueCallback<Array<Uri>>, WebChromeClient.FileChooserParams?) -> Boolean,
     onCreateWindow: (WebView) -> Unit
@@ -680,8 +975,8 @@ private fun createSecureWebView(
     val shouldClearInitialHistory = AtomicBoolean(clearHistoryOnFirstRealPageFinish)
 
     return webView.apply {
-        WebViewRuntime.applySettings(this, ctx, targetUrl)
-        WebViewRuntime.logWebViewDiagnostics(ctx, "create_secure_webview", targetUrl)
+        WebViewRuntime.applySettings(this, ctx, targetUrl, runtimeConfig)
+        WebViewRuntime.logWebViewDiagnostics(ctx, "create_secure_webview", targetUrl, runtimeConfig)
         logWebViewSurfaceState(this, "created_after_settings")
 
         // 仅在网页未加载完成时设置暖色底色以防止白屏；已加载完的实例直接使用白色底色
@@ -702,7 +997,7 @@ private fun createSecureWebView(
                     onLoadingStateChanged(true)
                 }
                 if (view != null) {
-                    injectPageScripts(view, ctx, "PAGE_STARTED")
+                    injectPageScripts(view, ctx, runtimeConfig, "PAGE_STARTED")
                 }
             }
 
@@ -725,7 +1020,7 @@ private fun createSecureWebView(
                             clearInitialBlankHistory(view, url)
                         }
                     }
-                    injectPageScripts(view, ctx, "PAGE_FINISHED")
+                    injectPageScripts(view, ctx, runtimeConfig, "PAGE_FINISHED")
                 }
 
                 onLoadingStateChanged(false)
@@ -781,7 +1076,7 @@ private fun createSecureWebView(
                     return true
                 }
 
-                if (KioskPrefs.isLimitUrlRedirectEnabled(ctx)) {
+                if (runtimeConfig.limitUrlRedirect) {
                     val host = WebViewRuntime.hostOf(urlStr)
                     if (!WebViewRuntime.isSameHostOrSubdomain(host, originalHost)) {
                         onBlocked(urlStr)
@@ -797,7 +1092,7 @@ private fun createSecureWebView(
             ): WebResourceResponse? {
                 val url = request?.url?.toString()
                 val host = request?.url?.host
-                if (KioskPrefs.isLimitAdBlockEnabled(ctx) && AdBlocker.isAdRequest(url ?: host)) {
+                if (runtimeConfig.limitAdBlock && AdBlocker.isAdRequest(url ?: host)) {
                     Log.d("ChildKioskWebView", "Blocked ad request: ${url ?: host}")
                     return WebResourceResponse(
                         "text/plain",
@@ -814,7 +1109,7 @@ private fun createSecureWebView(
                 handler: SslErrorHandler?,
                 error: SslError?
             ) {
-                if (KioskPrefs.isLimitSslCheckEnabled(ctx)) {
+                if (runtimeConfig.limitSslCheck) {
                     Log.w("ChildKioskWebView", "SSL error blocked: ${error?.url}")
                     handler?.cancel()
                     onLoadingStateChanged(false)
@@ -831,7 +1126,7 @@ private fun createSecureWebView(
                 onProgressUpdate(newProgress)
                 if (newProgress >= 100) {
                     view?.postDelayed({
-                        injectPageScripts(view, ctx, "BOTH")
+                        injectPageScripts(view, ctx, runtimeConfig, "BOTH")
                         onLoadingStateChanged(false)
                     }, 250)
                 }
@@ -843,7 +1138,7 @@ private fun createSecureWebView(
                 val allowed = requested.filter { resource ->
                     when (resource) {
                         PermissionRequest.RESOURCE_VIDEO_CAPTURE,
-                        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> !KioskPrefs.isLimitMediaCaptureEnabled(ctx)
+                        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> !runtimeConfig.limitMediaCapture
                         else -> true
                     }
                 }.toTypedArray()
@@ -858,7 +1153,7 @@ private fun createSecureWebView(
                 origin: String?,
                 callback: GeolocationPermissions.Callback?
             ) {
-                callback?.invoke(origin, !KioskPrefs.isLimitGeolocationEnabled(ctx), false)
+                callback?.invoke(origin, !runtimeConfig.limitGeolocation, false)
             }
 
             override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
@@ -904,6 +1199,7 @@ private fun createSecureWebView(
                     onLoadingStateChanged = onLoadingStateChanged,
                     onProgressUpdate = onProgressUpdate,
                     onError = onError,
+                    runtimeConfig = runtimeConfig,
                     onShowFileChooser = onShowFileChooser,
                     onCreateWindow = onCreateWindow
                 )
@@ -916,7 +1212,7 @@ private fun createSecureWebView(
         }
 
         setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
-            if (KioskPrefs.isLimitDownloadEnabled(ctx)) {
+            if (runtimeConfig.limitDownload) {
                 onDownloadBlocked()
             } else {
                 enqueueDownload(ctx, url, userAgent, contentDisposition, mimeType)
@@ -1005,40 +1301,49 @@ private fun clearInitialBlankHistory(webView: WebView, currentUrl: String) {
     )
 }
 
-private fun injectDebugToolIfNeeded(webView: WebView, context: Context, currentTiming: String) {
-    val timingMode = KioskPrefs.getInjectTimingMode(context)
+private fun injectDebugToolIfNeeded(
+    webView: WebView,
+    context: Context,
+    config: WebViewRuntimeConfig,
+    currentTiming: String
+) {
+    val timingMode = config.injectTimingMode
     if (currentTiming != "BOTH" && timingMode != "BOTH" && timingMode != currentTiming) {
         return
     }
 
-    val tool = KioskPrefs.getWebDebugTool(context)
+    val tool = config.webDebugTool
     if (tool == "NONE") {
         return
     }
 
     when (tool) {
         "VCONSOLE" -> {
-            val cdnUrl = KioskPrefs.getVConsoleCdnUrl(context)
+            val cdnUrl = config.vConsoleCdnUrl
             injectCdnScript(webView, context, cdnUrl, "VCONSOLE", "new VConsole();")
         }
         "ERUDA" -> {
-            val cdnUrl = KioskPrefs.getErudaCdnUrl(context)
+            val cdnUrl = config.erudaCdnUrl
             injectCdnScript(webView, context, cdnUrl, "ERUDA", "eruda.init();")
         }
     }
 }
 
-private fun injectCustomScriptIfNeeded(webView: WebView, context: Context, currentTiming: String) {
-    if (!KioskPrefs.isCustomJsInjectEnabled(context)) {
+private fun injectCustomScriptIfNeeded(
+    webView: WebView,
+    config: WebViewRuntimeConfig,
+    currentTiming: String
+) {
+    if (!config.customJsInjectEnabled) {
         return
     }
-    val timing = KioskPrefs.getCustomJsInjectTiming(context)
+    val timing = config.customJsInjectTiming
     if (currentTiming != "BOTH" && timing != "BOTH" && timing != currentTiming) {
         return
     }
 
-    val url = KioskPrefs.getCustomJsInjectUrl(context).trim()
-    val code = KioskPrefs.getCustomJsInjectCode(context).trim()
+    val url = config.customJsInjectUrl.trim()
+    val code = config.customJsInjectCode.trim()
 
     if (url.isEmpty() && code.isEmpty()) {
         return
@@ -1086,10 +1391,15 @@ private fun injectCustomScriptIfNeeded(webView: WebView, context: Context, curre
     }
 }
 
-private fun injectPageScripts(webView: WebView?, context: Context, currentTiming: String) {
+private fun injectPageScripts(
+    webView: WebView?,
+    context: Context,
+    config: WebViewRuntimeConfig,
+    currentTiming: String
+) {
     webView ?: return
-    injectDebugToolIfNeeded(webView, context, currentTiming)
-    injectCustomScriptIfNeeded(webView, context, currentTiming)
+    injectDebugToolIfNeeded(webView, context, config, currentTiming)
+    injectCustomScriptIfNeeded(webView, config, currentTiming)
 }
 
 private fun destroyWebViewSafely(webView: WebView) {

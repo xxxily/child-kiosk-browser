@@ -131,13 +131,23 @@ object WebViewPool {
         webView.loadUrl(cleanUrl)
     }
 
-    fun acquire(url: String): PreloadEntry? {
+    fun acquire(
+        url: String,
+        allowUrlPreload: Boolean = true,
+        allowWarmPool: Boolean? = null
+    ): PreloadEntry? {
         val ctx = appContext ?: return null
         if (!ProcessUtils.isWebViewProcess(ctx)) return null
         val cleanUrl = url.trim()
-        pool.remove(cleanUrl)?.let { return it }
+        pool.remove(cleanUrl)?.let { entry ->
+            if (allowUrlPreload) {
+                return entry
+            }
+            destroyWebView(entry.webView)
+        }
 
-        if (!KioskPrefs.getWebViewWarmPoolEnabled(ctx)) return null
+        val shouldUseWarmPool = allowWarmPool ?: KioskPrefs.getWebViewWarmPoolEnabled(ctx)
+        if (!shouldUseWarmPool) return null
         if (Looper.myLooper() != Looper.getMainLooper()) return null
 
         return warmPool.removeFirstOrNull()?.let { webView ->

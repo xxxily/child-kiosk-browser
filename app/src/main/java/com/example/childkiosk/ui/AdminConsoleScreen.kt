@@ -549,6 +549,12 @@ fun AdminConsoleScreen(
                                 }
 
                                 var orientationMode by remember { mutableStateOf(KioskPrefs.getOrientationMode(context)) }
+                                fun applyOrientationMode(mode: String) {
+                                    orientationMode = mode
+                                    KioskPrefs.setOrientationMode(context, mode)
+                                    (context as? android.app.Activity)?.requestedOrientation =
+                                        KioskPrefs.requestedOrientationForMode(mode)
+                                }
 
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -558,10 +564,7 @@ fun AdminConsoleScreen(
                                         RadioButton(
                                             selected = orientationMode == KioskPrefs.ORIENTATION_AUTO,
                                             onClick = {
-                                                orientationMode = KioskPrefs.ORIENTATION_AUTO
-                                                KioskPrefs.setOrientationMode(context, KioskPrefs.ORIENTATION_AUTO)
-                                                (context as? android.app.Activity)?.requestedOrientation =
-                                                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
+                                                applyOrientationMode(KioskPrefs.ORIENTATION_AUTO)
                                             }
                                         )
                                         Text("自适应")
@@ -571,10 +574,7 @@ fun AdminConsoleScreen(
                                         RadioButton(
                                             selected = orientationMode == KioskPrefs.ORIENTATION_LANDSCAPE,
                                             onClick = {
-                                                orientationMode = KioskPrefs.ORIENTATION_LANDSCAPE
-                                                KioskPrefs.setOrientationMode(context, KioskPrefs.ORIENTATION_LANDSCAPE)
-                                                (context as? android.app.Activity)?.requestedOrientation =
-                                                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                                applyOrientationMode(KioskPrefs.ORIENTATION_LANDSCAPE)
                                             }
                                         )
                                         Text("横屏")
@@ -584,10 +584,7 @@ fun AdminConsoleScreen(
                                         RadioButton(
                                             selected = orientationMode == KioskPrefs.ORIENTATION_PORTRAIT,
                                             onClick = {
-                                                orientationMode = KioskPrefs.ORIENTATION_PORTRAIT
-                                                KioskPrefs.setOrientationMode(context, KioskPrefs.ORIENTATION_PORTRAIT)
-                                                (context as? android.app.Activity)?.requestedOrientation =
-                                                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                                                applyOrientationMode(KioskPrefs.ORIENTATION_PORTRAIT)
                                             }
                                         )
                                         Text("竖屏")
@@ -1958,7 +1955,13 @@ fun AdminConsoleScreen(
                                         .getOrDefault("")
                                 }
                                 val effectiveUserAgent = remember(useBrowserUserAgent, customUserAgent, defaultUserAgent) {
-                                    WebViewRuntime.resolveUserAgent(context, defaultUserAgent)
+                                    WebViewRuntime.resolveUserAgent(
+                                        defaultUserAgent,
+                                        KioskPrefs.getWebViewRuntimeConfig(context).copy(
+                                            useBrowserUserAgent = useBrowserUserAgent,
+                                            customUserAgent = customUserAgent
+                                        )
+                                    )
                                 }
                                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                     Row(
