@@ -86,7 +86,7 @@ fun KioskMainScreen(
         }
     }
     
-    // 家长隐藏手势触发状态
+    // 隐藏手势触发状态
     var showMenuDialog by remember { mutableStateOf(false) }
     var showVerifyDialog by remember { mutableStateOf(false) }
     var nextActionAfterVerify by remember { mutableStateOf("") } // "ADMIN" or "EXIT"
@@ -233,7 +233,7 @@ fun KioskMainScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = if (webApps.isEmpty()) "这里空空如也，请联系家长在管理后台添加游戏！"
+                                text = if (webApps.isEmpty()) "这里空空如也，请在配置后台添加应用！"
                                        else "此分类下还没有应用哦，去看看其他分类吧！",
                                 fontSize = 18.sp,
                                 color = Color(0xFF8D6E63),
@@ -298,7 +298,7 @@ fun KioskMainScreen(
                     if (clicks.size == 5 && (now - clicks[0]) <= 2000) {
                         clicks.clear()
                         if (com.example.childkiosk.util.KioskPrefs.getVerifyAdminActions(context)) {
-                            // 弹窗家长验证
+                            // 弹窗认证
                             nextActionAfterVerify = "MENU"
                             showVerifyDialog = true
                         } else {
@@ -324,7 +324,7 @@ fun KioskMainScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Lock,
-                            contentDescription = "家长控制",
+                            contentDescription = "配置入口",
                             tint = Color(0xFF4E342E),
                             modifier = Modifier.size(24.dp)
                         )
@@ -351,7 +351,7 @@ fun KioskMainScreen(
             )
         }
 
-        // 家长选择菜单弹窗
+        // 配置菜单弹窗
         if (showMenuDialog) {
             ParentMenuDialog(
                 onDismiss = { showMenuDialog = false },
@@ -547,7 +547,7 @@ fun ParentMenuDialog(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
-                    text = "⚙️ 家长控制中心",
+                    text = "⚙️ 配置中心",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -556,7 +556,7 @@ fun ParentMenuDialog(
                     onClick = onEnterAdmin,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("进入系统白名单及时间配置后台", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Text("进入配置后台", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 }
 
                 QButton(
@@ -564,11 +564,11 @@ fun ParentMenuDialog(
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Text("退出并安全解锁（返回系统桌面）", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Text("返回系统桌面", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 }
 
                 TextButton(onClick = onDismiss) {
-                    Text("返回乐园")
+                    Text("返回空间")
                 }
             }
         }

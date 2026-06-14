@@ -7,7 +7,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,7 +19,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,31 +70,37 @@ fun ParentVerificationDialog(
                 .padding(24.dp),
             contentAlignment = Alignment.Center
         ) {
-            Surface(
-                modifier = Modifier
-                    .widthIn(max = 420.dp)
-                    .fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 6.dp
+            BoxWithConstraints(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
             ) {
-                if (isPinMode) {
-                    PinVerificationView(
-                        targetHash = config?.pinHash ?: "",
-                        onDismiss = onDismiss,
-                        onSuccess = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onVerified()
-                        }
-                    )
-                } else {
-                    MathVerificationView(
-                        onDismiss = onDismiss,
-                        onSuccess = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onVerified()
-                        }
-                    )
+                Surface(
+                    modifier = Modifier
+                        .widthIn(max = 420.dp)
+                        .fillMaxWidth()
+                        .heightIn(max = maxHeight),
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 6.dp
+                ) {
+                    if (isPinMode) {
+                        PinVerificationView(
+                            targetHash = config?.pinHash ?: "",
+                            onDismiss = onDismiss,
+                            onSuccess = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onVerified()
+                            }
+                        )
+                    } else {
+                        MathVerificationView(
+                            onDismiss = onDismiss,
+                            onSuccess = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onVerified()
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -137,51 +143,52 @@ fun MathVerificationView(
     val mathQuestion = remember { mutableStateOf(generateMathQuestion()) }
     var inputAnswer by remember { mutableStateOf("") }
     var showError by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
 
     Column(
         modifier = Modifier
-            .padding(24.dp)
-            .fillMaxWidth(),
+            .fillMaxWidth()
+            .verticalScroll(scrollState)
+            .padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = "家长验证",
-            fontSize = 22.sp,
+            text = "认证",
+            fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(bottom = 16.dp)
+            modifier = Modifier.padding(bottom = 10.dp)
         )
 
         Text(
-            text = "请解开以下算术题以证明您是家长：",
+            text = "请完成以下算术题：",
             fontSize = 14.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = 16.dp)
+            modifier = Modifier.padding(bottom = 10.dp)
         )
 
         Text(
             text = mathQuestion.value.expression,
-            fontSize = 32.sp,
+            fontSize = 30.sp,
             fontWeight = FontWeight.Black,
             color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(bottom = 24.dp)
+            modifier = Modifier.padding(bottom = 12.dp)
         )
 
-        OutlinedTextField(
-            value = inputAnswer,
-            onValueChange = {
-                inputAnswer = it
-                showError = false
+        Text(
+            text = inputAnswer.ifEmpty { "请输入答案" },
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (inputAnswer.isEmpty()) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.onSurface
             },
-            placeholder = { Text("输入计算答案") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            textAlign = TextAlign.Center,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 8.dp),
-            shape = RoundedCornerShape(12.dp),
-            isError = showError,
-            singleLine = true
+                .padding(bottom = 8.dp)
         )
 
         if (showError) {
@@ -189,11 +196,24 @@ fun MathVerificationView(
                 text = "答案错误，请再试一次！",
                 color = MaterialTheme.colorScheme.error,
                 fontSize = 12.sp,
-                modifier = Modifier.padding(bottom = 16.dp)
+                modifier = Modifier.padding(bottom = 8.dp)
             )
         } else {
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
         }
+
+        VerificationKeypad(
+            onKey = { key ->
+                showError = false
+                when (key) {
+                    "清除" -> inputAnswer = ""
+                    "删除" -> if (inputAnswer.isNotEmpty()) inputAnswer = inputAnswer.dropLast(1)
+                    else -> if (inputAnswer.length < 3) inputAnswer += key
+                }
+            }
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -234,25 +254,27 @@ fun PinVerificationView(
 ) {
     var enteredPin by remember { mutableStateOf("") }
     var showError by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
 
     Column(
         modifier = Modifier
-            .padding(24.dp)
-            .fillMaxWidth(),
+            .fillMaxWidth()
+            .verticalScroll(scrollState)
+            .padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = "输入家长密码",
-            fontSize = 22.sp,
+            text = "输入 PIN 密码",
+            fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(bottom = 16.dp)
+            modifier = Modifier.padding(bottom = 12.dp)
         )
 
         // 显示输入的圆点
         Row(
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            modifier = Modifier.padding(bottom = 24.dp)
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.padding(bottom = 14.dp)
         ) {
             repeat(4) { index ->
                 val filled = index < enteredPin.length
@@ -274,75 +296,37 @@ fun PinVerificationView(
                 text = "密码错误，请重新输入",
                 color = MaterialTheme.colorScheme.error,
                 fontSize = 12.sp,
-                modifier = Modifier.padding(bottom = 16.dp)
+                modifier = Modifier.padding(bottom = 8.dp)
             )
         } else {
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
         }
 
-        // 简易数字键盘 (0-9)
-        Column(
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            val keys = listOf(
-                listOf("1", "2", "3"),
-                listOf("4", "5", "6"),
-                listOf("7", "8", "9"),
-                listOf("清除", "0", "删除")
-            )
-
-            keys.forEach { row ->
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    row.forEach { key ->
-                        val haptic = LocalHapticFeedback.current
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(64.dp) // 键盘网格按钮高度
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .clickable {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    showError = false
-                                    when (key) {
-                                        "清除" -> enteredPin = ""
-                                        "删除" -> if (enteredPin.isNotEmpty()) enteredPin = enteredPin.dropLast(1)
-                                        else -> {
-                                            if (enteredPin.length < 4) {
-                                                enteredPin += key
-                                                if (enteredPin.length == 4) {
-                                                    // 校验密码
-                                                    val hash = HashUtils.sha256(enteredPin)
-                                                    if (hash == targetHash) {
-                                                        onSuccess()
-                                                    } else {
-                                                        showError = true
-                                                        enteredPin = ""
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+        VerificationKeypad(
+            onKey = { key ->
+                showError = false
+                when (key) {
+                    "清除" -> enteredPin = ""
+                    "删除" -> if (enteredPin.isNotEmpty()) enteredPin = enteredPin.dropLast(1)
+                    else -> {
+                        if (enteredPin.length < 4) {
+                            enteredPin += key
+                            if (enteredPin.length == 4) {
+                                val hash = HashUtils.sha256(enteredPin)
+                                if (hash == targetHash) {
+                                    onSuccess()
+                                } else {
+                                    showError = true
+                                    enteredPin = ""
                                 }
-                        ) {
-                            Text(
-                                text = key,
-                                fontSize = if (key.length > 1) 14.sp else 20.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            }
                         }
                     }
                 }
             }
-        }
+        )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         QButton(
             onClick = onDismiss,
@@ -350,6 +334,53 @@ fun PinVerificationView(
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurfaceVariant)
         ) {
             Text("取消", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun VerificationKeypad(
+    onKey: (String) -> Unit
+) {
+    val keys = listOf(
+        listOf("1", "2", "3"),
+        listOf("4", "5", "6"),
+        listOf("7", "8", "9"),
+        listOf("清除", "0", "删除")
+    )
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        keys.forEach { row ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                row.forEach { key ->
+                    val haptic = LocalHapticFeedback.current
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(50.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onKey(key)
+                            }
+                    ) {
+                        Text(
+                            text = key,
+                            fontSize = if (key.length > 1) 13.sp else 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
         }
     }
 }

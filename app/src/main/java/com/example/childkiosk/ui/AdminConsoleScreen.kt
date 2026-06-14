@@ -67,7 +67,7 @@ fun AdminConsoleScreen(
     var showAddDialog by remember { mutableStateOf(false) }
     var editingWebApp by remember { mutableStateOf<WebAppEntity?>(null) }
 
-    // 家长设置状态
+    // 配置状态
     var timeLimit by remember { mutableStateOf(config?.timeLimitMinutes ?: 0) }
     var dailyLimit by remember { mutableStateOf(config?.dailyLimitMinutes ?: 0) }
     var verificationMode by remember { mutableStateOf(config?.verificationMode ?: "MATH") }
@@ -158,12 +158,12 @@ fun AdminConsoleScreen(
                     val titleText = when (currentSubPage) {
                         "PROTECTION" -> "安全防护等级"
                         "TIME_LIMIT" -> "健康时间限制"
-                         "VERIFICATION" -> "家长验证设置"
+                         "VERIFICATION" -> "认证设置"
                         "INTERFACE" -> "界面与显示配置"
                         "SANDBOX_LIMITS" -> "安全沙箱与限制"
                         "PERFORMANCE" -> "网页性能优化"
                         "WHITELIST" -> "应用白名单管理"
-                        else -> "家长管理后台"
+                        else -> "配置后台"
                     }
                     Text(titleText, fontWeight = FontWeight.Bold)
                 },
@@ -233,7 +233,7 @@ fun AdminConsoleScreen(
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
                                         icon = Icons.Default.VerifiedUser,
-                                        title = "家长身份验证",
+                                        title = "身份认证",
                                         summary = if (verificationMode == "MATH") "当前使用动态口算题验证" else "当前使用数字 PIN 密码验证",
                                         onClick = { currentSubPage = "VERIFICATION" }
                                     )
@@ -310,7 +310,7 @@ fun AdminConsoleScreen(
                             )
                         }
 
-                        // 退出并安全解锁 (保留在首页底部)
+                        // 返回系统桌面 (保留在首页底部)
                         item {
                             Spacer(modifier = Modifier.height(8.dp))
                             QButton(
@@ -318,7 +318,7 @@ fun AdminConsoleScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                             ) {
-                                Text("退出并安全解锁（返回系统桌面）", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                Text("返回系统桌面", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -424,7 +424,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Icon(imageVector = Icons.Default.VerifiedUser, contentDescription = "验证", tint = MaterialTheme.colorScheme.primary)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("家长身份验证配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("身份认证配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 Row(
@@ -470,7 +470,7 @@ fun AdminConsoleScreen(
                                     TextButton(onClick = { showPinSetupDialog = true }) {
                                         Icon(imageVector = Icons.Default.Settings, contentDescription = "修改")
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("修改家长数字 PIN 码")
+                                        Text("修改数字 PIN 码")
                                     }
                                 }
                             }
@@ -486,7 +486,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Icon(imageVector = Icons.Default.Security, contentDescription = "验证安全", tint = MaterialTheme.colorScheme.primary)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("家长验证限制开关", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("认证限制开关", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 Row(
@@ -495,7 +495,7 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("启用家长验证限制", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("启用认证限制", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                         Text("若关闭，则进入后台或退出时免除验证，极大提升开发配置效率", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
@@ -664,7 +664,7 @@ fun AdminConsoleScreen(
                                     Text("主页界面与网站退出行为配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
-                                // 选项 1: 退出网站时需要家长验证
+                                // 选项 1: 退出网站时需要认证
                                 var verifyOnExit by remember { mutableStateOf(KioskPrefs.getVerifyOnWebExit(context)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -673,7 +673,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("退出网站时需要验证", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("关闭后按返回键可直接退回主页，开启则需输入家长密码", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("关闭后按返回键可直接退回主页，开启则需完成认证", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = verifyOnExit,
@@ -1198,7 +1198,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("禁用系统恢复出厂设置", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("防止通过系统重置来擦除应用及家长控制配置", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("防止通过系统重置来擦除应用及管控配置", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitFactoryReset,
@@ -2299,7 +2299,7 @@ fun ProtectionLevelCard(
             ProtectionOption(
                 selected = protectionMode == KioskPrefs.MODE_NONE,
                 title = "无系统级锁定",
-                desc = "仅沉浸式全屏 + 家长验证退出，不调用屏幕固定。适合开发调试或仅需防误触的场景。",
+                desc = "仅沉浸式全屏 + 认证退出，不调用屏幕固定。适合开发调试或仅需防误触的场景。",
                 onClick = { onModeChange(KioskPrefs.MODE_NONE) }
             )
 
@@ -2919,7 +2919,7 @@ fun PinSetupDialog(
                 modifier = Modifier.padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Text("设置家长 4 位数字密码", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("设置 4 位数字 PIN 码", fontSize = 18.sp, fontWeight = FontWeight.Bold)
 
                 OutlinedTextField(
                     value = pin1,

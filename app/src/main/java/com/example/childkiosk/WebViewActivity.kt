@@ -154,7 +154,7 @@ class WebViewActivity : ComponentActivity() {
             val keyCode = event.keyCode
             if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
                 if (event.action == KeyEvent.ACTION_DOWN) {
-                    Toast.makeText(this, "音量按键已被家长控制锁定", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "音量按键已被锁定", Toast.LENGTH_SHORT).show()
                 }
                 return true
             }
@@ -334,7 +334,7 @@ class WebViewActivity : ComponentActivity() {
                 hideTopProgress()
             },
             onDownloadBlocked = {
-                Toast.makeText(this, "下载功能已受阻，若要下载应用请联系家长。", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "下载功能已受限制，如需下载应用请联系管理员。", Toast.LENGTH_LONG).show()
             },
             onLoadingStateChanged = { loading ->
                 Log.d(
@@ -479,11 +479,11 @@ class WebViewActivity : ComponentActivity() {
             .setNegativeButton("好的，去休息") { _, _ ->
                 finish()
             }
-            .setPositiveButton("家长延长可用时间", null)
+            .setPositiveButton("延长可用时间", null)
             .create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                showParentVerificationDialog(config, "请完成家长验证后继续使用网页。") {
+                showParentVerificationDialog(config, "请完成认证后继续使用网页。") {
                     grantExtraWebTime()
                 }
             }
@@ -529,7 +529,7 @@ class WebViewActivity : ComponentActivity() {
                 AppDatabase.getInstance(this@WebViewActivity).systemConfigDao().getSystemConfig()
             }
             if (!isFinishing && !isDestroyed) {
-                showParentVerificationDialog(config, "请完成家长验证后退出网页。") {
+                showParentVerificationDialog(config, "请完成认证后退出网页。") {
                     finish()
                 }
             }
@@ -715,7 +715,7 @@ class WebViewActivity : ComponentActivity() {
         }
 
         dialog = AlertDialog.Builder(this)
-            .setTitle("家长验证")
+            .setTitle("认证")
             .setView(scrollView)
             .create()
         exitVerificationDialog = dialog
@@ -919,7 +919,7 @@ class WebViewActivity : ComponentActivity() {
         }
 
         dialog = AlertDialog.Builder(this)
-            .setTitle("家长验证")
+            .setTitle("认证")
             .setView(scrollView)
             .create()
         exitVerificationDialog = dialog

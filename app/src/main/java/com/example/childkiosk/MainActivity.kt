@@ -154,14 +154,14 @@ class MainActivity : ComponentActivity() {
         when {
             // Tier 1：Device Owner，企业级完全锁定
             dpm.isDeviceOwnerApp(packageName) -> setupAndStartKiosk()
-            // Tier 2：无 Device Owner，按家长配置进入屏幕固定软锁
+            // Tier 2：无 Device Owner，按配置进入屏幕固定软锁
             KioskPrefs.getProtectionMode(this) == KioskPrefs.MODE_SOFT_LOCK -> {
                 if (!isSoftLockDeferred && !isInLockTaskMode()) {
                     startSoftLock()
                 }
             }
             // Tier 3：纯沉浸式，无系统级锁定
-            else -> { /* 仅依赖沉浸式全屏 + 自定义 Launcher + 家长验证退出 */ }
+            else -> { /* 仅依赖沉浸式全屏 + 自定义 Launcher + 认证退出 */ }
         }
     }
 
@@ -308,7 +308,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 退出锁定并重置限制，使家长能够切回原生桌面。
+     * 退出锁定并重置限制，使用户能够切回原生桌面。
      * Device Owner 与屏幕固定软锁两种场景统一走此流程；非 Device Owner 时
      * 用户限制相关调用会因无权限被 runCatching 静默忽略。
      */
@@ -353,7 +353,7 @@ class MainActivity : ComponentActivity() {
             val keyCode = event.keyCode
             if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
                 if (event.action == KeyEvent.ACTION_DOWN) {
-                    Toast.makeText(this, "音量按键已被家长控制锁定", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "音量按键已被锁定", Toast.LENGTH_SHORT).show()
                 }
                 return true
             }

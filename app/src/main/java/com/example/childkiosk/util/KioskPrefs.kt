@@ -135,7 +135,7 @@ object KioskPrefs {
     /** 屏幕固定软锁：调用 startLockTask() 触发系统「屏幕固定」，拦截 Home/最近任务。 */
     const val MODE_SOFT_LOCK = "SOFT_LOCK"
 
-    /** 无系统级锁定：仅沉浸式全屏 + 自定义 Launcher + 家长验证退出。 */
+    /** 无系统级锁定：仅沉浸式全屏 + 自定义 Launcher + 认证退出。 */
     const val MODE_NONE = "NONE"
 
     /** 默认值：未取得 Device Owner 时，自动进入屏幕固定软锁。 */
@@ -436,7 +436,7 @@ object KioskPrefs {
     fun isChromeInspectEnabled(context: Context): Boolean = prefs(context).getBoolean("chrome_inspect_enabled", false)
     fun setChromeInspectEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("chrome_inspect_enabled", enabled).apply()
 
-    // 5. 家长操作验证机制
+    // 5. 操作验证机制
     fun getVerifyAdminActions(context: Context): Boolean = prefs(context).getBoolean("verify_admin_actions", true)
     fun setVerifyAdminActions(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("verify_admin_actions", enabled).apply()
 
