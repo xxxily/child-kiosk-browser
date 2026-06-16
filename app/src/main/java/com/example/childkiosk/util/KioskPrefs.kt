@@ -11,6 +11,7 @@ data class WebViewRuntimeConfig(
     val verifyAdminActions: Boolean,
     val limitFlagSecure: Boolean,
     val limitVolumeKeys: Boolean,
+    val floatingBrowserControlsEnabled: Boolean,
     val webViewTopProgressEnabled: Boolean,
     val webViewWarmPoolEnabled: Boolean,
     val webPreloadEnabled: Boolean,
@@ -44,6 +45,7 @@ data class WebViewRuntimeConfig(
             .put("verifyAdminActions", verifyAdminActions)
             .put("limitFlagSecure", limitFlagSecure)
             .put("limitVolumeKeys", limitVolumeKeys)
+            .put("floatingBrowserControlsEnabled", floatingBrowserControlsEnabled)
             .put("webViewTopProgressEnabled", webViewTopProgressEnabled)
             .put("webViewWarmPoolEnabled", webViewWarmPoolEnabled)
             .put("webPreloadEnabled", webPreloadEnabled)
@@ -79,6 +81,10 @@ data class WebViewRuntimeConfig(
                 verifyAdminActions = json.optBoolean("verifyAdminActions", fallback.verifyAdminActions),
                 limitFlagSecure = json.optBoolean("limitFlagSecure", fallback.limitFlagSecure),
                 limitVolumeKeys = json.optBoolean("limitVolumeKeys", fallback.limitVolumeKeys),
+                floatingBrowserControlsEnabled = json.optBoolean(
+                    "floatingBrowserControlsEnabled",
+                    fallback.floatingBrowserControlsEnabled
+                ),
                 webViewTopProgressEnabled = json.optBoolean("webViewTopProgressEnabled", fallback.webViewTopProgressEnabled),
                 webViewWarmPoolEnabled = json.optBoolean("webViewWarmPoolEnabled", fallback.webViewWarmPoolEnabled),
                 webPreloadEnabled = json.optBoolean("webPreloadEnabled", fallback.webPreloadEnabled),
@@ -132,6 +138,7 @@ object KioskPrefs {
     private const val KEY_ADMIN_ICON_ALPHA = "admin_icon_alpha"
     private const val KEY_MAIN_TITLE_TEXT = "main_title_text"
     private const val KEY_HIDE_MAIN_TITLE = "hide_main_title"
+    private const val KEY_FLOATING_BROWSER_CONTROLS_ENABLED = "floating_browser_controls_enabled"
     /** 屏幕固定软锁：调用 startLockTask() 触发系统「屏幕固定」，拦截 Home/最近任务。 */
     const val MODE_SOFT_LOCK = "SOFT_LOCK"
 
@@ -199,6 +206,7 @@ object KioskPrefs {
             .putBoolean(KEY_VERIFY_ON_WEB_EXIT, false)
             .putBoolean(KEY_HIDE_ADMIN_ICON, false)
             .putBoolean(KEY_ADMIN_QUICK_OPEN, true)
+            .putBoolean(KEY_FLOATING_BROWSER_CONTROLS_ENABLED, true)
             .putBoolean("verify_admin_actions", false)
             .putBoolean("limit_adb", false)
             .putBoolean("limit_safe_boot", false)
@@ -238,6 +246,7 @@ object KioskPrefs {
             .putBoolean(KEY_VERIFY_ON_WEB_EXIT, true)
             .putBoolean(KEY_HIDE_ADMIN_ICON, true)
             .putBoolean(KEY_ADMIN_QUICK_OPEN, false)
+            .putBoolean(KEY_FLOATING_BROWSER_CONTROLS_ENABLED, false)
             .putBoolean("verify_admin_actions", true)
             .putBoolean("limit_adb", true)
             .putBoolean("limit_safe_boot", true)
@@ -277,6 +286,7 @@ object KioskPrefs {
             .putBoolean(KEY_VERIFY_ON_WEB_EXIT, false)
             .putBoolean(KEY_HIDE_ADMIN_ICON, false)
             .putBoolean(KEY_ADMIN_QUICK_OPEN, true)
+            .putBoolean(KEY_FLOATING_BROWSER_CONTROLS_ENABLED, false)
             .putBoolean("verify_admin_actions", false)
             .putBoolean("limit_adb", false)
             .putBoolean("limit_safe_boot", false)
@@ -406,12 +416,23 @@ object KioskPrefs {
         prefs(context).edit().putBoolean(KEY_HIDE_MAIN_TITLE, hide).apply()
     }
 
+    fun isFloatingBrowserControlsEnabled(context: Context): Boolean {
+        return prefs(context).getBoolean(KEY_FLOATING_BROWSER_CONTROLS_ENABLED, true)
+    }
+
+    fun setFloatingBrowserControlsEnabled(context: Context, enabled: Boolean) {
+        customEditor(context)
+            .putBoolean(KEY_FLOATING_BROWSER_CONTROLS_ENABLED, enabled)
+            .apply()
+    }
+
     fun getWebViewRuntimeConfig(context: Context): WebViewRuntimeConfig {
         return WebViewRuntimeConfig(
             verifyOnWebExit = getVerifyOnWebExit(context),
             verifyAdminActions = getVerifyAdminActions(context),
             limitFlagSecure = isLimitFlagSecureEnabled(context),
             limitVolumeKeys = isLimitVolumeKeysEnabled(context),
+            floatingBrowserControlsEnabled = isFloatingBrowserControlsEnabled(context),
             webViewTopProgressEnabled = isWebViewTopProgressEnabled(context),
             webViewWarmPoolEnabled = getWebViewWarmPoolEnabled(context),
             webPreloadEnabled = getWebPreloadEnabled(context),

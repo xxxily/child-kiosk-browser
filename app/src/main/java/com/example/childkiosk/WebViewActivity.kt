@@ -29,6 +29,9 @@ import androidx.lifecycle.lifecycleScope
 import com.example.childkiosk.data.AppDatabase
 import com.example.childkiosk.data.SystemConfigEntity
 import com.example.childkiosk.data.WebAppEntity
+import com.example.childkiosk.ui.browser.FloatingBrowserControlsCallbacks
+import com.example.childkiosk.ui.browser.FloatingBrowserControlsOverlay
+import com.example.childkiosk.ui.browser.FloatingBrowserControlsState
 import com.example.childkiosk.util.AdBlocker
 import com.example.childkiosk.util.HashUtils
 import com.example.childkiosk.util.KioskPrefs
@@ -57,10 +60,14 @@ class WebViewActivity : ComponentActivity() {
     private val webViewStack = mutableListOf<WebView>()
     private var webViewRoot: FrameLayout? = null
     private var topProgress: ProgressBar? = null
+    private var floatingControlsOverlay: FloatingBrowserControlsOverlay? = null
     private var exitVerificationDialog: AlertDialog? = null
     private var timeoutDialog: AlertDialog? = null
     private var timeLimitJob: Job? = null
     private var sessionStartTimeMs: Long = 0L
+    private var currentPageLoading = false
+    private var currentPageProgress = 0
+    private var navigationRootHost = ""
     private lateinit var runtimeConfig: WebViewRuntimeConfig
 
     private val fileChooserLauncher = registerForActivityResult(
@@ -180,6 +187,7 @@ class WebViewActivity : ComponentActivity() {
                 destroyWebViewSafely(webView)
             }
         }
+        floatingControlsOverlay = null
         topProgress = null
         webViewRoot = null
         rootWebView = null
@@ -227,6 +235,10 @@ class WebViewActivity : ComponentActivity() {
         }
         fullscreenView = view
         fullscreenCallback = callback
+        floatingControlsOverlay?.apply {
+            collapsePanel()
+            visibility = View.GONE
+        }
         (window.decorView as? ViewGroup)?.addView(
             view,
             ViewGroup.LayoutParams(
@@ -245,6 +257,10 @@ class WebViewActivity : ComponentActivity() {
         fullscreenCallback?.onCustomViewHidden()
         fullscreenCallback = null
         rootWebView?.visibility = View.VISIBLE
+        if (runtimeConfig.floatingBrowserControlsEnabled) {
+            floatingControlsOverlay?.visibility = View.VISIBLE
+            updateFloatingControlsState()
+        }
         SystemUiHelper.enterImmersive(this)
     }
 
@@ -270,6 +286,9 @@ class WebViewActivity : ComponentActivity() {
                     (3 * resources.displayMetrics.density).toInt().coerceAtLeast(3)
                 )
             )
+        }
+        if (runtimeConfig.floatingBrowserControlsEnabled) {
+            attachFloatingControls(root)
         }
 
         Log.d(
@@ -306,6 +325,7 @@ class WebViewActivity : ComponentActivity() {
     private fun attachNativeWebView(root: FrameLayout, webApp: WebAppEntity) {
         val targetUrl = webApp.url
         val originalHost = WebViewRuntime.hostOf(targetUrl)
+        navigationRootHost = originalHost
         val preloadEntry = if (targetUrl != "about:blank") {
             WebViewPool.acquire(
                 url = targetUrl,
@@ -342,14 +362,21 @@ class WebViewActivity : ComponentActivity() {
                     "Native loading state: loading=$loading, progress=${rootWebView?.progress ?: -1}, url=${rootWebView?.url}"
                 )
                 if (loading) showTopProgress() else hideTopProgress()
+                updateFloatingControlsState(loading = loading)
             },
             onProgressUpdate = { progress ->
-                topProgress?.progress = progress.coerceIn(0, 100)
+                val safeProgress = progress.coerceIn(0, 100)
+                topProgress?.progress = safeProgress
+                updateFloatingControlsState(progress = safeProgress)
+            },
+            onNavigationStateChanged = {
+                updateFloatingControlsState()
             },
             onError = { error ->
                 Log.w("ChildKioskWebView", "Native WebView main frame error: $error")
                 Toast.makeText(this, "网页加载异常：$error", Toast.LENGTH_LONG).show()
                 hideTopProgress()
+                updateFloatingControlsState(loading = false)
             },
             existingWebView = preloadEntry?.webView,
             runtimeConfig = runtimeConfig,
@@ -394,6 +421,9 @@ class WebViewActivity : ComponentActivity() {
         rootWebView = webView
         webViewStack.add(webView)
         logWebViewSurfaceState(webView, "native_attached")
+        currentPageProgress = webView.progress.coerceIn(0, 100)
+        currentPageLoading = currentPageProgress in 1..99
+        updateFloatingControlsState()
     }
 
     private fun handleNativeBack() {
@@ -401,6 +431,7 @@ class WebViewActivity : ComponentActivity() {
         if (current != null && current.canGoBack()) {
             Log.d("ChildKioskWebView", "Native back: webView.goBack, url=${current.url}")
             current.goBack()
+            updateFloatingControlsState(loading = true)
             return
         }
 
@@ -410,6 +441,7 @@ class WebViewActivity : ComponentActivity() {
             destroyWebViewSafely(removed)
             rootWebView = webViewStack.lastOrNull()
             rootWebView?.visibility = View.VISIBLE
+            updateFloatingControlsState()
             return
         }
 
@@ -422,6 +454,96 @@ class WebViewActivity : ComponentActivity() {
 
     private fun hideTopProgress() {
         topProgress?.visibility = View.GONE
+    }
+
+    private fun attachFloatingControls(root: FrameLayout) {
+        if (floatingControlsOverlay != null) return
+        floatingControlsOverlay = FloatingBrowserControlsOverlay.attachTo(
+            root = root,
+            initialState = currentFloatingControlsState(),
+            callbacks = FloatingBrowserControlsCallbacks(
+                onNavigateToUrl = { url -> loadUrlFromFloatingControls(url) },
+                onBack = { goBackFromFloatingControls() },
+                onForward = { goForwardFromFloatingControls() },
+                onRefresh = { refreshFromFloatingControls() },
+                onStopLoading = { stopLoadingFromFloatingControls() },
+                onPanelExpandedChanged = {
+                    SystemUiHelper.enterImmersive(this)
+                },
+                onActionSelected = { actionId ->
+                    Log.d("ChildKioskWebView", "Floating browser action: $actionId")
+                }
+            )
+        )
+    }
+
+    private fun loadUrlFromFloatingControls(url: String) {
+        val current = rootWebView ?: return
+        if (!WebViewRuntime.isWebUrl(url)) {
+            Toast.makeText(this, "仅支持打开 http/https 网站", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (runtimeConfig.limitUrlRedirect) {
+            val targetHost = WebViewRuntime.hostOf(url)
+            if (!WebViewRuntime.isSameHostOrSubdomain(targetHost, navigationRootHost)) {
+                Toast.makeText(this, "已拦截跳转：$url", Toast.LENGTH_LONG).show()
+                updateFloatingControlsState()
+                return
+            }
+        }
+        currentPageLoading = true
+        currentPageProgress = 0
+        current.loadUrl(url)
+        updateFloatingControlsState()
+    }
+
+    private fun goBackFromFloatingControls() {
+        val current = rootWebView ?: return
+        if (!current.canGoBack()) return
+        currentPageLoading = true
+        current.goBack()
+        updateFloatingControlsState()
+    }
+
+    private fun goForwardFromFloatingControls() {
+        val current = rootWebView ?: return
+        if (!current.canGoForward()) return
+        currentPageLoading = true
+        current.goForward()
+        updateFloatingControlsState()
+    }
+
+    private fun refreshFromFloatingControls() {
+        val current = rootWebView ?: return
+        currentPageLoading = true
+        current.reload()
+        updateFloatingControlsState()
+    }
+
+    private fun stopLoadingFromFloatingControls() {
+        rootWebView?.stopLoading()
+        updateFloatingControlsState(loading = false)
+    }
+
+    private fun updateFloatingControlsState(
+        loading: Boolean? = null,
+        progress: Int? = null
+    ) {
+        loading?.let { currentPageLoading = it }
+        progress?.let { currentPageProgress = it.coerceIn(0, 100) }
+        floatingControlsOverlay?.updateState(currentFloatingControlsState())
+    }
+
+    private fun currentFloatingControlsState(): FloatingBrowserControlsState {
+        val current = rootWebView
+        return FloatingBrowserControlsState(
+            currentUrl = current?.url.orEmpty(),
+            pageTitle = current?.title.orEmpty(),
+            canGoBack = current?.canGoBack() == true,
+            canGoForward = current?.canGoForward() == true,
+            isLoading = currentPageLoading,
+            progress = currentPageProgress.coerceIn(0, 100)
+        )
     }
 
     private fun startTimeLimitTracking() {
@@ -964,6 +1086,7 @@ private fun createSecureWebView(
     onDownloadBlocked: () -> Unit,
     onLoadingStateChanged: (Boolean) -> Unit,
     onProgressUpdate: (Int) -> Unit,
+    onNavigationStateChanged: () -> Unit,
     onError: (String) -> Unit,
     existingWebView: WebView? = null,
     runtimeConfig: WebViewRuntimeConfig,
@@ -996,6 +1119,7 @@ private fun createSecureWebView(
                 if (view != null && view.progress < 100) {
                     onLoadingStateChanged(true)
                 }
+                onNavigationStateChanged()
                 if (view != null) {
                     injectPageScripts(view, ctx, runtimeConfig, "PAGE_STARTED")
                 }
@@ -1024,6 +1148,7 @@ private fun createSecureWebView(
                 }
 
                 onLoadingStateChanged(false)
+                onNavigationStateChanged()
             }
 
             override fun onReceivedError(
@@ -1038,6 +1163,7 @@ private fun createSecureWebView(
                         "Main frame error: ${error?.errorCode}, ${error?.description}, url=${request.url}"
                     )
                     onLoadingStateChanged(false)
+                    onNavigationStateChanged()
                     onError(error?.description?.toString() ?: "网络连接异常")
                 }
             }
@@ -1056,6 +1182,7 @@ private fun createSecureWebView(
                             "Main frame HTTP error: HTTP $code, url=${request.url}"
                         )
                         onLoadingStateChanged(false)
+                        onNavigationStateChanged()
                         onError("服务器返回异常: HTTP $code")
                     }
                 }
@@ -1124,10 +1251,12 @@ private fun createSecureWebView(
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 super.onProgressChanged(view, newProgress)
                 onProgressUpdate(newProgress)
+                onNavigationStateChanged()
                 if (newProgress >= 100) {
                     view?.postDelayed({
                         injectPageScripts(view, ctx, runtimeConfig, "BOTH")
                         onLoadingStateChanged(false)
+                        onNavigationStateChanged()
                     }, 250)
                 }
             }
@@ -1198,6 +1327,7 @@ private fun createSecureWebView(
                     onDownloadBlocked = onDownloadBlocked,
                     onLoadingStateChanged = onLoadingStateChanged,
                     onProgressUpdate = onProgressUpdate,
+                    onNavigationStateChanged = onNavigationStateChanged,
                     onError = onError,
                     runtimeConfig = runtimeConfig,
                     onShowFileChooser = onShowFileChooser,

@@ -1158,6 +1158,9 @@ fun AdminConsoleScreen(
                     var limitDownload by remember { mutableStateOf(KioskPrefs.isLimitDownloadEnabled(context)) }
                     var limitLongClick by remember { mutableStateOf(KioskPrefs.isLimitLongClickEnabled(context)) }
                     var limitUrlRedirect by remember { mutableStateOf(KioskPrefs.isLimitUrlRedirectEnabled(context)) }
+                    var floatingBrowserControlsEnabled by remember {
+                        mutableStateOf(KioskPrefs.isFloatingBrowserControlsEnabled(context))
+                    }
                     var limitGeolocation by remember { mutableStateOf(KioskPrefs.isLimitGeolocationEnabled(context)) }
                     var limitSslCheck by remember { mutableStateOf(KioskPrefs.isLimitSslCheckEnabled(context)) }
                     var limitMultiWindow by remember { mutableStateOf(KioskPrefs.isLimitMultiWindowEnabled(context)) }
@@ -1794,6 +1797,28 @@ fun AdminConsoleScreen(
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("网页悬浮球操作入口", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("正常模式默认开启。打开后网页内可通过悬浮球输入网址、查看当前 URL、后退、前进、刷新或停止加载", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = floatingBrowserControlsEnabled,
+                                        onCheckedChange = {
+                                            floatingBrowserControlsEnabled = it
+                                            KioskPrefs.setFloatingBrowserControlsEnabled(context, it)
+                                            quickMode = KioskPrefs.getQuickMode(context)
+                                            Toast.makeText(context, "新打开的网站生效", Toast.LENGTH_SHORT).show()
+                                        }
+                                    )
+                                }
 
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
