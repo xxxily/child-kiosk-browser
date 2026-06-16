@@ -6,6 +6,39 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-16
+
+### Added — 新增
+
+- **Adblock 规则生态兼容过滤**：
+  - 新增主流 Adblock 文本规则解析与过滤引擎，支持 ABP/EasyList、uBlock Origin 静态规则和 AdGuard 常用语法子集。
+  - 支持域名锚定、通配符、分隔符、正则、例外规则、资源类型、三方/一方、`domain=`、`badfilter`、`removeparam` 等高频网络过滤能力。
+  - 新增 EasyList、EasyPrivacy、AdGuard Chinese、AdGuard Mobile Ads、EasyList China、AdGuard Annoyances 等内置订阅目录和儿童过滤预设。
+- **自定义规则、订阅和站点例外**：
+  - 配置后台新增网页过滤总控、过滤强度、订阅列表、自定义 HTTPS 订阅、自定义规则输入和规则解析统计。
+  - 支持站点级关闭网络过滤、元素隐藏、scriptlet 或临时放行，用于处理误伤站点。
+  - 新增最近过滤事件列表，展示被拦截 URL、资源类型、命中规则和来源，方便管理员排查误伤。
+- **页面去干扰能力**：
+  - 支持标准元素隐藏规则、站点限定隐藏和隐藏例外，将匹配 CSS 注入到当前页面。
+  - 支持安全 allowlist scriptlet，包括阻止部分弹窗和常见反拦截干扰逻辑。
+  - 支持弹窗过滤和主框架导航追踪参数清理，减少广告跳转、污染参数和干扰窗口。
+
+### Changed — 变更
+
+- **过滤运行时一致性增强**：
+  - 打开 WebView 时通过运行时配置快照传递过滤设置和订阅元数据，避免独立 `:webview` 进程读取过期 SharedPreferences。
+  - WebView 预加载池按运行时配置 key 区分实例，过滤配置变化后不会复用旧配置的预加载 WebView。
+- **性能与可用性保护**：
+  - WebView 请求拦截、跳转清洗、元素隐藏注入、scriptlet 注入和弹窗判断只读取已预热的过滤引擎缓存。
+  - 过滤引擎在打开网页前于 IO 线程预热，避免 `shouldInterceptRequest` 热路径编译规则、读取订阅文件或访问数据库。
+  - 过滤事件改为后台串行写入原子文件，减少拦截线程上的同步磁盘读写。
+  - 新增过滤引擎缓存语义测试，确保未预热时不会在请求路径隐式构建引擎。
+
+### Documentation — 文档
+
+- **过滤能力需求文档**：
+  - 新增 `docs/adblock_filtering_requirements.md`，记录规则生态兼容范围、默认订阅策略、性能边界、误伤处理、跨进程配置快照和验收标准。
+
 ## [0.1.0] - 2026-06-16
 
 ### Added — 新增
