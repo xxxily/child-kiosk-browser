@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
+import com.example.childkiosk.util.filter.FilterPreset
+import com.example.childkiosk.util.filter.FilterRepository
+import com.example.childkiosk.util.filter.FilterRuntimeSnapshot
 import org.json.JSONObject
 
 data class WebViewRuntimeConfig(
@@ -27,6 +30,7 @@ data class WebViewRuntimeConfig(
     val useBrowserUserAgent: Boolean,
     val limitUrlRedirect: Boolean,
     val limitAdBlock: Boolean,
+    val filterSnapshot: FilterRuntimeSnapshot,
     val limitSslCheck: Boolean,
     val limitMediaCapture: Boolean,
     val limitDownload: Boolean,
@@ -61,6 +65,7 @@ data class WebViewRuntimeConfig(
             .put("useBrowserUserAgent", useBrowserUserAgent)
             .put("limitUrlRedirect", limitUrlRedirect)
             .put("limitAdBlock", limitAdBlock)
+            .put("filterSnapshot", filterSnapshot.toJson())
             .put("limitSslCheck", limitSslCheck)
             .put("limitMediaCapture", limitMediaCapture)
             .put("limitDownload", limitDownload)
@@ -100,6 +105,9 @@ data class WebViewRuntimeConfig(
                 useBrowserUserAgent = json.optBoolean("useBrowserUserAgent", fallback.useBrowserUserAgent),
                 limitUrlRedirect = json.optBoolean("limitUrlRedirect", fallback.limitUrlRedirect),
                 limitAdBlock = json.optBoolean("limitAdBlock", fallback.limitAdBlock),
+                filterSnapshot = FilterRuntimeSnapshot.fromJson(json.optJSONObject("filterSnapshot")).let {
+                    if (json.has("filterSnapshot")) it else fallback.filterSnapshot
+                },
                 limitSslCheck = json.optBoolean("limitSslCheck", fallback.limitSslCheck),
                 limitMediaCapture = json.optBoolean("limitMediaCapture", fallback.limitMediaCapture),
                 limitDownload = json.optBoolean("limitDownload", fallback.limitDownload),
@@ -198,6 +206,21 @@ object KioskPrefs {
             else -> applyNormalMode(editor)
         }
         editor.apply()
+        when (normalized) {
+            QUICK_MODE_CHILD -> {
+                FilterRepository.setPreset(context, FilterPreset.STANDARD_CHILD)
+                FilterRepository.setEnabled(context, true)
+            }
+            QUICK_MODE_DEBUG -> {
+                FilterRepository.setPreset(context, FilterPreset.LIGHT)
+                FilterRepository.setEnabled(context, false)
+            }
+            QUICK_MODE_CUSTOM -> Unit
+            else -> {
+                FilterRepository.setPreset(context, FilterPreset.LIGHT)
+                FilterRepository.setEnabled(context, false)
+            }
+        }
     }
 
     private fun applyNormalMode(editor: SharedPreferences.Editor) {
@@ -448,6 +471,9 @@ object KioskPrefs {
             useBrowserUserAgent = isUseBrowserUserAgentEnabled(context),
             limitUrlRedirect = isLimitUrlRedirectEnabled(context),
             limitAdBlock = isLimitAdBlockEnabled(context),
+            filterSnapshot = FilterRepository.getRuntimeSnapshot(context).let { snapshot ->
+                snapshot.copy(enabled = isLimitAdBlockEnabled(context))
+            },
             limitSslCheck = isLimitSslCheckEnabled(context),
             limitMediaCapture = isLimitMediaCaptureEnabled(context),
             limitDownload = isLimitDownloadEnabled(context),
@@ -581,7 +607,9 @@ object KioskPrefs {
     // 3. 网页浏览器沙箱限制
     fun isLimitAdBlockEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_ad_block", false)
     fun setLimitAdBlockEnabled(context: Context, enabled: Boolean) =
-        customEditor(context).putBoolean("limit_ad_block", enabled).apply()
+        customEditor(context).putBoolean("limit_ad_block", enabled).apply().also {
+            FilterRepository.setEnabled(context, enabled)
+        }
 
     fun isLimitDownloadEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_download", false)
     fun setLimitDownloadEnabled(context: Context, enabled: Boolean) =

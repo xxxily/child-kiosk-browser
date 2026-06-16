@@ -1,73 +1,89 @@
 package com.example.childkiosk.util
 
+import android.content.Context
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import com.example.childkiosk.util.filter.FilterAction
+import com.example.childkiosk.util.filter.FilterDecision
+import com.example.childkiosk.util.filter.FilterEvent
+import com.example.childkiosk.util.filter.FilterRepository
+import com.example.childkiosk.util.filter.FilterRequestContext
+import com.example.childkiosk.util.filter.FilterResourceType
+import com.example.childkiosk.util.filter.FilterRuntimeSnapshot
+import java.io.ByteArrayInputStream
+
 object AdBlocker {
 
-    private val AD_HOST_KEYWORDS = setOf(
-        "doubleclick.net",
-        "googleadservices.com",
-        "googlesyndication.com",
-        "google-analytics.com",
-        "googletagmanager.com",
-        "googletagservices.com",
-        "adsystem.com",
-        "adservice.google",
-        "adnxs.com",
-        "advertising.com",
-        "adcolony.com",
-        "applovin.com",
-        "facebook.com/tr",
-        "fbcdn.net/ads",
-        "scorecardresearch.com",
-        "criteo.com",
-        "criteo.net",
-        "moatads.com",
-        "outbrain.com",
-        "taboola.com",
-        "yieldmo.com",
-        "pubmatic.com",
-        "rubiconproject.com",
-        "openx.net",
-        "casalemedia.com",
-        "adsafeprotected.com",
-        "amazon-adsystem.com",
-        "iqiyi.com/ads",
-        "ad.youku.com",
-        "atm.youku.com",
-        "miaozhen.com",
-        "umeng.com",
-        "umtrack.com",
-        "cnzz.com",
-        "alimama.com",
-        "tanx.com",
-        "mmstat.com",
-        "track.uc.cn",
-        "growingio.com",
-        "sensorsdata.cn",
-        "appsflyer.com",
-        "kochava.com",
-        "branch.io",
-        "adjust.com",
-        "mixpanel.com",
-        "hotjar.com",
-        "segment.com",
-        "amplitude.com"
-    )
-
-    fun isAdHost(host: String?): Boolean {
-        if (host.isNullOrBlank()) return false
-        val lower = host.lowercase()
-        return AD_HOST_KEYWORDS.any { keyword ->
-            lower == keyword || lower.endsWith(".$keyword") || lower.contains(keyword)
+    fun shouldBlock(
+        context: Context,
+        request: WebResourceRequest?,
+        topLevelUrl: String,
+        snapshot: FilterRuntimeSnapshot
+    ): FilterDecision {
+        if (!snapshot.enabled || request?.url == null) return FilterDecision.ALLOW
+        val requestUrl = request.url.toString()
+        val requestContext = FilterRequestContext(
+            requestUrl = requestUrl,
+            topLevelUrl = topLevelUrl,
+            resourceType = FilterResourceType.infer(
+                url = requestUrl,
+                acceptHeader = request.requestHeaders?.get("Accept"),
+                isMainFrame = request.isForMainFrame
+            ),
+            isMainFrame = request.isForMainFrame,
+            method = request.method.orEmpty(),
+            hasGesture = request.hasGesture()
+        )
+        val siteOverride = FilterRepository.siteOverrideFor(snapshot, requestContext.topLevelHost)
+        val decision = FilterRepository.getEngine(context, snapshot).decide(requestContext, siteOverride)
+        if (decision.action != FilterAction.ALLOW) {
+            FilterRepository.recordEvent(
+                context,
+                FilterEvent(
+                    timestamp = System.currentTimeMillis(),
+                    action = decision.action.name,
+                    url = requestUrl,
+                    topLevelUrl = topLevelUrl,
+                    resourceType = requestContext.resourceType.optionName,
+                    ruleText = decision.rule?.rawText.orEmpty(),
+                    sourceName = decision.rule?.sourceName.orEmpty(),
+                    reason = decision.reason
+                )
+            )
         }
+        return decision
     }
 
-    /**
-     * 判断完整 URL 是否命中广告/统计黑名单。
-     * 同时检查 host 和 path 中是否包含黑名单关键字（部分广告 SDK 通过统一 CDN 分发）。
-     */
+    fun emptyResponse(resourceType: FilterResourceType): WebResourceResponse {
+        val mimeType = when (resourceType) {
+            FilterResourceType.SCRIPT -> "application/javascript"
+            FilterResourceType.STYLESHEET -> "text/css"
+            FilterResourceType.IMAGE -> "image/gif"
+            FilterResourceType.FONT -> "font/woff2"
+            FilterResourceType.MEDIA -> "video/mp4"
+            else -> "text/plain"
+        }
+        return WebResourceResponse(
+            mimeType,
+            "utf-8",
+            204,
+            "No Content",
+            mapOf("Cache-Control" to "no-store"),
+            ByteArrayInputStream(ByteArray(0))
+        )
+    }
+
     fun isAdRequest(url: String?): Boolean {
         if (url.isNullOrBlank()) return false
-        val lower = url.lowercase()
-        return AD_HOST_KEYWORDS.any { keyword -> lower.contains(keyword) }
+        val snapshot = FilterRuntimeSnapshot.default().copy(enabled = true)
+        val requestContext = FilterRequestContext(
+            requestUrl = url,
+            topLevelUrl = url,
+            resourceType = FilterResourceType.OTHER,
+            isMainFrame = false,
+            method = "GET",
+            hasGesture = false
+        )
+        return FilterRepository.getEngine(snapshot).decide(requestContext).action == FilterAction.BLOCK
     }
 }

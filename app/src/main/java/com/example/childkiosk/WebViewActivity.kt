@@ -40,6 +40,8 @@ import com.example.childkiosk.util.TimeLimiter
 import com.example.childkiosk.util.WebViewRuntime
 import com.example.childkiosk.util.WebViewRuntimeConfig
 import com.example.childkiosk.util.WebViewPool
+import com.example.childkiosk.util.filter.FilterAction
+import com.example.childkiosk.util.filter.FilterResourceType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -1217,15 +1219,22 @@ private fun createSecureWebView(
                 view: WebView?,
                 request: WebResourceRequest?
             ): WebResourceResponse? {
-                val url = request?.url?.toString()
-                val host = request?.url?.host
-                if (runtimeConfig.limitAdBlock && AdBlocker.isAdRequest(url ?: host)) {
-                    Log.d("ChildKioskWebView", "Blocked ad request: ${url ?: host}")
-                    return WebResourceResponse(
-                        "text/plain",
-                        "utf-8",
-                        java.io.ByteArrayInputStream(ByteArray(0))
-                    )
+                if (runtimeConfig.limitAdBlock) {
+                    val topLevelUrl = view?.url ?: targetUrl
+                    val decision = AdBlocker.shouldBlock(ctx, request, topLevelUrl, runtimeConfig.filterSnapshot)
+                    if (decision.action == FilterAction.BLOCK) {
+                        val requestUrl = request?.url?.toString().orEmpty()
+                        Log.d(
+                            "ChildKioskWebView",
+                            "Blocked filter request: $requestUrl, rule=${decision.rule?.rawText}, source=${decision.rule?.sourceName}"
+                        )
+                        val resourceType = FilterResourceType.infer(
+                            url = requestUrl,
+                            acceptHeader = request?.requestHeaders?.get("Accept"),
+                            isMainFrame = request?.isForMainFrame == true
+                        )
+                        return AdBlocker.emptyResponse(resourceType)
+                    }
                 }
                 return super.shouldInterceptRequest(view, request)
             }

@@ -5,6 +5,8 @@ import android.content.Context
 import android.net.http.SslError
 import android.os.Looper
 import android.webkit.*
+import com.example.childkiosk.util.filter.FilterAction
+import com.example.childkiosk.util.filter.FilterResourceType
 
 data class PreloadEntry(
     val webView: WebView,
@@ -92,14 +94,19 @@ object WebViewPool {
                 view: WebView?,
                 request: WebResourceRequest?
             ): WebResourceResponse? {
-                val requestUrl = request?.url?.toString()
-                val host = request?.url?.host
-                if (KioskPrefs.isLimitAdBlockEnabled(ctx) && AdBlocker.isAdRequest(requestUrl ?: host)) {
-                    return WebResourceResponse(
-                        "text/plain",
-                        "utf-8",
-                        java.io.ByteArrayInputStream(ByteArray(0))
-                    )
+                if (KioskPrefs.isLimitAdBlockEnabled(ctx)) {
+                    val snapshot = KioskPrefs.getWebViewRuntimeConfig(ctx).filterSnapshot
+                    val topLevelUrl = view?.url ?: url
+                    val decision = AdBlocker.shouldBlock(ctx, request, topLevelUrl, snapshot)
+                    if (decision.action == FilterAction.BLOCK) {
+                        val requestUrl = request?.url?.toString().orEmpty()
+                        val resourceType = FilterResourceType.infer(
+                            url = requestUrl,
+                            acceptHeader = request?.requestHeaders?.get("Accept"),
+                            isMainFrame = request?.isForMainFrame == true
+                        )
+                        return AdBlocker.emptyResponse(resourceType)
+                    }
                 }
                 return super.shouldInterceptRequest(view, request)
             }

@@ -39,6 +39,10 @@ import com.example.childkiosk.util.WebDataManager
 import com.example.childkiosk.util.WebDataStats
 import com.example.childkiosk.util.WebViewRuntime
 import com.example.childkiosk.util.WebViewPool
+import com.example.childkiosk.util.filter.FilterPreset
+import com.example.childkiosk.util.filter.FilterRepository
+import com.example.childkiosk.util.filter.SiteFilterOverride
+import com.example.childkiosk.util.filter.normalizeHost
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -83,7 +87,7 @@ fun AdminConsoleScreen(
     var latestReleaseInfo by remember { mutableStateOf<ReleaseInfo?>(null) }
     var isCheckingUpdate by remember { mutableStateOf(false) }
 
-    // 当前二级子页面导航状态：null 代表首页目录，可选："PROTECTION", "TIME_LIMIT", "VERIFICATION", "INTERFACE", "PERFORMANCE", "WHITELIST"
+    // 当前二级子页面导航状态：null 代表首页目录
     var currentSubPage by remember { mutableStateOf<String?>(null) }
 
     // 接管返回键/手势：如果在二级子页面则返回后台主页，如果在后台主页则退出后台
@@ -166,6 +170,7 @@ fun AdminConsoleScreen(
                         "TIME_LIMIT" -> "健康时间限制"
                          "VERIFICATION" -> "认证设置"
                         "INTERFACE" -> "界面与显示配置"
+                        "WEB_FILTERING" -> "网页过滤管理"
                         "SANDBOX_LIMITS" -> "安全沙箱与限制"
                         "PERFORMANCE" -> "网页性能优化"
                         "WHITELIST" -> "应用白名单管理"
@@ -268,9 +273,16 @@ fun AdminConsoleScreen(
                                     )
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
+                                        icon = Icons.Default.FilterAlt,
+                                        title = "网页过滤管理",
+                                        summary = "订阅 Adblock 规则、管理自定义规则、站点例外和过滤日志",
+                                        onClick = { currentSubPage = "WEB_FILTERING" }
+                                    )
+                                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                                    AdminMenuItem(
                                         icon = Icons.Default.Lock,
                                         title = "安全沙箱与限制",
-                                        summary = "系统防逃逸、物理按键控制及网页沙箱精细配置",
+                                        summary = "系统防逃逸、物理按键控制及非过滤类网页沙箱配置",
                                         onClick = { currentSubPage = "SANDBOX_LIMITS" }
                                     )
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
@@ -1137,6 +1149,15 @@ fun AdminConsoleScreen(
                             }
                         }
                     }
+                }
+                "WEB_FILTERING" -> {
+                    WebFilteringSettingsScreen(
+                        onFilteringChanged = {
+                            quickMode = KioskPrefs.getQuickMode(context)
+                            WebViewPool.clear()
+                            onSandboxLimitsChanged()
+                        }
+                    )
                 }
                 "SANDBOX_LIMITS" -> {
                     // 统一提升 State，方便联动与修改
@@ -2418,6 +2439,362 @@ private fun quickModeLabel(mode: String): String {
         KioskPrefs.QUICK_MODE_DEBUG -> "调试模式"
         KioskPrefs.QUICK_MODE_CUSTOM -> "自定义模式"
         else -> "正常模式"
+    }
+}
+
+@Composable
+private fun WebFilteringSettingsScreen(
+    onFilteringChanged: () -> Unit
+) {
+    val context = LocalContext.current
+    var settingsVersion by remember { mutableStateOf(0) }
+    val settings = remember(settingsVersion) { FilterRepository.getSettings(context) }
+    val report = remember(settingsVersion) {
+        FilterRepository.getEngine(context, settings.toRuntimeSnapshot()).report
+    }
+    var customRules by remember(settings.customRules) { mutableStateOf(settings.customRules) }
+    var customRuleReport by remember { mutableStateOf(FilterRepository.validateCustomRules(customRules)) }
+    var newOverrideHost by remember { mutableStateOf("") }
+    var updatingSubscriptionId by remember { mutableStateOf<String?>(null) }
+    val events = remember(settingsVersion) { FilterRepository.getRecentEvents(context) }
+    val scope = rememberCoroutineScope()
+
+    fun refresh() {
+        settingsVersion++
+        onFilteringChanged()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.FilterAlt, contentDescription = "网页过滤", tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("网页过滤总控", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            "兼容 ABP/EasyList、uBlock Origin 静态规则和 AdGuard 常用规则语法。",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = settings.enabled,
+                        onCheckedChange = { enabled ->
+                            KioskPrefs.setLimitAdBlockEnabled(context, enabled)
+                            FilterRepository.setEnabled(context, enabled)
+                            refresh()
+                            Toast.makeText(context, "新打开的网站生效", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
+
+                Text(
+                    "已编译规则 ${report.enabledRuleCount}/${report.ruleCount} 条，不支持语法 ${report.unsupportedRuleCount} 条。",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("过滤强度", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    FilterPreset.entries.forEach { preset ->
+                        FilterPresetOption(
+                            selected = settings.preset == preset,
+                            preset = preset,
+                            onClick = {
+                                FilterRepository.setPreset(context, preset)
+                                refresh()
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.ListAlt, contentDescription = "订阅", tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("内置订阅目录", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+                settings.subscriptions.forEach { subscription ->
+                    val sourceReport = report.sourceReports.firstOrNull { it.sourceId == subscription.id }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(subscription.title, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                "${subscription.category} | ${subscription.subscriptionUrl}",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (sourceReport != null) {
+                                Text(
+                                    "启用 ${sourceReport.enabledRules}/${sourceReport.totalLines}，不支持 ${sourceReport.unsupportedRules}",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            TextButton(
+                                enabled = updatingSubscriptionId == null && subscription.subscriptionUrl.startsWith("https://"),
+                                onClick = {
+                                    updatingSubscriptionId = subscription.id
+                                    scope.launch {
+                                        val result = withContext(Dispatchers.IO) {
+                                            runCatching { FilterRepository.updateSubscription(context, subscription.id) }
+                                        }
+                                        updatingSubscriptionId = null
+                                        result.onSuccess {
+                                            refresh()
+                                            Toast.makeText(context, "订阅已更新：${subscription.title}", Toast.LENGTH_SHORT).show()
+                                        }.onFailure {
+                                            Toast.makeText(context, it.message ?: "订阅更新失败", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                }
+                            ) {
+                                Text(if (updatingSubscriptionId == subscription.id) "更新中" else "更新")
+                            }
+                            Switch(
+                                checked = subscription.enabled,
+                                onCheckedChange = { enabled ->
+                                    FilterRepository.setSubscriptionEnabled(context, subscription.id, enabled)
+                                    refresh()
+                                }
+                            )
+                        }
+                    }
+                    if (subscription.lastUpdatedAt > 0L || subscription.lastError.isNotBlank()) {
+                        Text(
+                            "更新时间：${subscription.lastUpdatedAt}${if (subscription.lastError.isNotBlank()) " | ${subscription.lastError}" else ""}",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+                }
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Edit, contentDescription = "自定义规则", tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("自定义 Adblock 规则", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+                Text(
+                    "支持 `||domain^`、`@@`、`${'$'}script`、`${'$'}image`、`${'$'}third-party`、`${'$'}domain=`、`${'$'}important`、`${'$'}badfilter` 等核心语法。",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = customRules,
+                    onValueChange = {
+                        customRules = it
+                        customRuleReport = FilterRepository.validateCustomRules(it)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 140.dp, max = 240.dp),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = FontFamily.Monospace),
+                    placeholder = { Text("||example-ad.com^\n@@||example.com/allowed.js${'$'}script") }
+                )
+                Text(
+                    "校验：启用 ${customRuleReport.enabledRuleCount}/${customRuleReport.ruleCount}，不支持 ${customRuleReport.unsupportedRuleCount}",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            FilterRepository.setCustomRules(context, customRules)
+                            refresh()
+                            Toast.makeText(context, "自定义规则已保存，新打开的网站生效", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("保存规则")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            customRules = ""
+                            customRuleReport = FilterRepository.validateCustomRules("")
+                            FilterRepository.setCustomRules(context, "")
+                            refresh()
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("清空")
+                    }
+                }
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Public, contentDescription = "站点例外", tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("站点例外", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = newOverrideHost,
+                        onValueChange = { newOverrideHost = it },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        label = { Text("域名") },
+                        placeholder = { Text("example.com") }
+                    )
+                    Button(
+                        onClick = {
+                            val host = newOverrideHost.normalizeHost()
+                            if (host.isBlank()) {
+                                Toast.makeText(context, "请输入有效域名", Toast.LENGTH_SHORT).show()
+                            } else {
+                                FilterRepository.setSiteOverride(
+                                    context,
+                                    SiteFilterOverride(host = host, networkDisabled = true)
+                                )
+                                newOverrideHost = ""
+                                refresh()
+                            }
+                        }
+                    ) {
+                        Text("放行")
+                    }
+                }
+                if (settings.siteOverrides.isEmpty()) {
+                    Text("暂无站点例外。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    settings.siteOverrides.forEach { override ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(override.host, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    "网络过滤：${if (override.networkDisabled) "关闭" else "开启"}",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            TextButton(onClick = {
+                                FilterRepository.removeSiteOverride(context, override.host)
+                                refresh()
+                            }) {
+                                Text("删除")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.ReceiptLong, contentDescription = "日志", tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("过滤日志", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = {
+                        FilterRepository.clearEvents(context)
+                        refresh()
+                    }) {
+                        Text("清空")
+                    }
+                }
+                if (events.isEmpty()) {
+                    Text("暂无拦截或例外事件。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    events.take(20).forEach { event ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f))
+                                .padding(10.dp)
+                        ) {
+                            Text("${event.action} | ${event.resourceType}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(event.url, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                            if (event.ruleText.isNotBlank()) {
+                                Text("${event.sourceName}: ${event.ruleText}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterPresetOption(
+    selected: Boolean,
+    preset: FilterPreset,
+    onClick: () -> Unit
+) {
+    val description = when (preset) {
+        FilterPreset.LIGHT -> "仅轻量本地高置信规则，优先兼容性和低性能设备。"
+        FilterPreset.STANDARD_CHILD -> "儿童模式默认，启用 EasyList、EasyPrivacy、中文和移动广告规则。"
+        FilterPreset.STRONG -> "叠加弹窗/干扰规则，误伤概率更高，适合家长手动开启。"
+        FilterPreset.CUSTOM -> "保留当前订阅、自定义规则和例外设置。"
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) MaterialTheme.colorScheme.surface.copy(alpha = 0.8f) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 6.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(preset.label, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text(description, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
