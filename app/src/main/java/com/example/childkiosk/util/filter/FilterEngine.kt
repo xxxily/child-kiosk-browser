@@ -1,12 +1,16 @@
 package com.example.childkiosk.util.filter
 
 import java.util.Locale
+import java.net.URI
 import java.util.regex.Pattern
 
 data class FilterBuildReport(
     val ruleCount: Int,
     val enabledRuleCount: Int,
     val unsupportedRuleCount: Int,
+    val networkRuleCount: Int = 0,
+    val cosmeticRuleCount: Int = 0,
+    val scriptletRuleCount: Int = 0,
     val sourceReports: List<FilterSourceReport>,
     val errors: List<String>
 )
@@ -17,6 +21,9 @@ data class FilterSourceReport(
     val totalLines: Int,
     val enabledRules: Int,
     val unsupportedRules: Int,
+    val networkRules: Int = 0,
+    val cosmeticRules: Int = 0,
+    val scriptletRules: Int = 0,
     val errors: List<String>
 )
 
@@ -121,7 +128,7 @@ class FilterEngine private constructor(
     }
 
     companion object {
-        val EMPTY = FilterEngine(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), FilterBuildReport(0, 0, 0, emptyList(), emptyList()))
+        val EMPTY = FilterEngine(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), FilterBuildReport(0, 0, 0, 0, 0, 0, emptyList(), emptyList()))
 
         fun build(sources: List<FilterRuleSource>): FilterEngine {
             val compiled = mutableListOf<CompiledRule>()
@@ -138,6 +145,9 @@ class FilterEngine private constructor(
                     totalLines = parseResult.totalLines,
                     enabledRules = parseResult.enabledRules,
                     unsupportedRules = parseResult.unsupportedRules,
+                    networkRules = parseResult.rules.count { !it.badFilter },
+                    cosmeticRules = parseResult.cosmeticRules.count { !it.isException },
+                    scriptletRules = parseResult.scriptletRules.size,
                     errors = parseResult.errors
                 )
                 errors += parseResult.errors
@@ -177,6 +187,9 @@ class FilterEngine private constructor(
                     ruleCount = reports.sumOf { it.totalLines },
                     enabledRuleCount = enabledRuleCount,
                     unsupportedRuleCount = unsupportedRuleCount,
+                    networkRuleCount = activeCompiled.size,
+                    cosmeticRuleCount = cosmetic.count { !it.isException },
+                    scriptletRuleCount = scriptlets.size,
                     sourceReports = reports,
                     errors = errors.take(30)
                 )
@@ -262,21 +275,33 @@ private fun isSafePropertyPath(value: String): Boolean {
 }
 
 private fun removeParamsFromUrl(url: String, params: Set<String>): String? {
-    val uri = android.net.Uri.parse(url)
-    val names = uri.queryParameterNames
-    val toRemove = names.filter { name ->
+    val uri = URI(url)
+    val rawQuery = uri.rawQuery ?: return null
+    val pairs = rawQuery.split("&")
+        .filter { it.isNotBlank() }
+        .map { item ->
+            val name = item.substringBefore("=")
+            val value = item.substringAfter("=", missingDelimiterValue = "")
+            name to value
+        }
+    val toRemove = pairs.map { it.first }.filter { name ->
         params.any { param ->
             if (param.endsWith("*")) name.startsWith(param.removeSuffix("*")) else name == param
         }
     }.toSet()
     if (toRemove.isEmpty()) return null
-    val builder = uri.buildUpon().clearQuery()
-    names.filterNot { it in toRemove }.forEach { name ->
-        uri.getQueryParameters(name).forEach { value ->
-            builder.appendQueryParameter(name, value)
+    val newQuery = pairs
+        .filterNot { it.first in toRemove }
+        .joinToString("&") { (name, value) ->
+            if (value.isBlank()) name else "$name=$value"
         }
-    }
-    return builder.build().toString()
+    return URI(
+        uri.scheme,
+        uri.authority,
+        uri.path,
+        newQuery.ifBlank { null },
+        uri.fragment
+    ).toString()
 }
 
 private fun isSafeCssSelector(selector: String): Boolean {
@@ -325,14 +350,16 @@ private class CompiledRule(
     }
 
     private fun matchesDomainAnchor(context: FilterRequestContext): Boolean {
-        val pattern = rule.pattern
+        val rawPattern = rule.pattern
             .removePrefix("http://")
             .removePrefix("https://")
-            .substringBefore("/")
-            .normalizeHost()
-        if (pattern.isBlank()) return false
-        if (isSameOrSubdomain(context.requestHost, pattern)) return true
-        return context.requestUrl.lowercase(Locale.US).contains(pattern.lowercase(Locale.US))
+        val hostPattern = rawPattern.substringBefore("^").substringBefore("/").normalizeHost()
+        val pathPattern = rawPattern.substringAfter("/", missingDelimiterValue = "")
+            .substringBefore("^")
+        if (hostPattern.isBlank()) return false
+        if (!isSameOrSubdomain(context.requestHost, hostPattern)) return false
+        if (pathPattern.isBlank()) return true
+        return context.requestUrl.lowercase(Locale.US).contains(pathPattern.lowercase(Locale.US))
     }
 
     companion object {

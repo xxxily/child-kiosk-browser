@@ -255,7 +255,7 @@ object FilterRuleParser {
             else -> FilterMatchType.SUBSTRING
         }
         val normalizedPattern = when (matchType) {
-            FilterMatchType.DOMAIN_ANCHOR -> matchPattern.removePrefix("||").trimStart('|').substringBefore("^")
+            FilterMatchType.DOMAIN_ANCHOR -> matchPattern.removePrefix("||").trimStart('|')
             FilterMatchType.STARTS_WITH -> matchPattern.removePrefix("|")
             FilterMatchType.ENDS_WITH -> matchPattern.removeSuffix("|")
             FilterMatchType.REGEX -> matchPattern.removePrefix("/").removeSuffix("/")

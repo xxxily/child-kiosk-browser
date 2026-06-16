@@ -1565,6 +1565,7 @@ private fun injectCosmeticCssIfNeeded(
     config: WebViewRuntimeConfig
 ) {
     if (!config.limitAdBlock || !config.filterSnapshot.enabled) return
+    if (config.filterSnapshot.preset == "LIGHT") return
     val pageUrl = webView.url ?: return
     val host = WebViewRuntime.hostOf(pageUrl)
     if (host.isBlank()) return
@@ -1595,6 +1596,7 @@ private fun injectFilterScriptletsIfNeeded(
     config: WebViewRuntimeConfig
 ) {
     if (!config.limitAdBlock || !config.filterSnapshot.enabled) return
+    if (config.filterSnapshot.preset == "LIGHT") return
     val pageUrl = webView.url ?: return
     val host = WebViewRuntime.hostOf(pageUrl)
     if (host.isBlank()) return

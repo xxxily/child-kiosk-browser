@@ -129,4 +129,6 @@ dependencies {
 
     // Coil Image Loader
     implementation(libs.coil.compose)
+
+    testImplementation(libs.junit)
 }

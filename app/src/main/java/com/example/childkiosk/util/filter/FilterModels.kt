@@ -1,8 +1,8 @@
 package com.example.childkiosk.util.filter
 
-import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URI
 import java.util.Locale
 
 enum class FilterPreset(val storageValue: String, val label: String) {
@@ -276,7 +276,7 @@ internal fun JSONArray?.toSiteOverrideList(): List<SiteFilterOverride> {
 internal fun String.hostFromUrl(): String {
     if (isBlank()) return ""
     return runCatching {
-        Uri.parse(this).host.orEmpty().normalizeHost()
+        URI(this).host.orEmpty().normalizeHost()
     }.getOrDefault("")
 }
 

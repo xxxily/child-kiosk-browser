@@ -2499,7 +2499,7 @@ private fun WebFilteringSettingsScreen(
                 }
 
                 Text(
-                    "已编译规则 ${report.enabledRuleCount}/${report.ruleCount} 条，不支持语法 ${report.unsupportedRuleCount} 条。",
+                    "已编译规则 ${report.enabledRuleCount}/${report.ruleCount} 条：网络 ${report.networkRuleCount}、元素隐藏 ${report.cosmeticRuleCount}、scriptlet ${report.scriptletRuleCount}；不支持语法 ${report.unsupportedRuleCount} 条。",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2546,7 +2546,7 @@ private fun WebFilteringSettingsScreen(
                             )
                             if (sourceReport != null) {
                                 Text(
-                                    "启用 ${sourceReport.enabledRules}/${sourceReport.totalLines}，不支持 ${sourceReport.unsupportedRules}",
+                                    "启用 ${sourceReport.enabledRules}/${sourceReport.totalLines}，网络 ${sourceReport.networkRules}，隐藏 ${sourceReport.cosmeticRules}，scriptlet ${sourceReport.scriptletRules}，不支持 ${sourceReport.unsupportedRules}",
                                     fontSize = 10.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
