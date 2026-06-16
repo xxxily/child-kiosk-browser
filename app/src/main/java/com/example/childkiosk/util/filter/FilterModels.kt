@@ -90,6 +90,32 @@ data class FilterSubscription(
             .put("unsupportedCount", unsupportedCount)
             .put("lastError", lastError)
     }
+
+    companion object {
+        fun fromJson(json: JSONObject): FilterSubscription? {
+            val id = json.optString("id")
+            if (id.isBlank()) return null
+            val builtIn = FilterCatalog.builtInSubscriptions.firstOrNull { it.id == id }
+            val url = json.optString("subscriptionUrl", builtIn?.subscriptionUrl.orEmpty())
+            if (url.isBlank()) return null
+            return FilterSubscription(
+                id = id,
+                title = json.optString("title", builtIn?.title ?: url).ifBlank { url },
+                category = json.optString("category", builtIn?.category ?: "自定义订阅"),
+                homepageUrl = json.optString("homepageUrl", builtIn?.homepageUrl ?: url),
+                subscriptionUrl = url,
+                defaultInStandard = builtIn?.defaultInStandard ?: false,
+                defaultInStrong = builtIn?.defaultInStrong ?: false,
+                bundledRules = builtIn?.bundledRules.orEmpty(),
+                enabled = json.optBoolean("enabled", builtIn?.enabled ?: false),
+                ruleCount = json.optInt("ruleCount", builtIn?.ruleCount ?: 0),
+                enabledRuleCount = json.optInt("enabledRuleCount", builtIn?.enabledRuleCount ?: 0),
+                unsupportedCount = json.optInt("unsupportedCount", builtIn?.unsupportedCount ?: 0),
+                lastUpdatedAt = json.optLong("lastUpdatedAt", builtIn?.lastUpdatedAt ?: 0L),
+                lastError = json.optString("lastError", builtIn?.lastError.orEmpty())
+            )
+        }
+    }
 }
 
 data class SiteFilterOverride(
@@ -135,12 +161,14 @@ data class FilterSettings(
     val siteOverrides: List<SiteFilterOverride>
 ) {
     fun toRuntimeSnapshot(): FilterRuntimeSnapshot {
+        val enabledSubscriptions = subscriptions.filter { it.enabled }
         return FilterRuntimeSnapshot(
             enabled = enabled,
             preset = preset.storageValue,
             customRules = customRules,
-            enabledSubscriptionIds = subscriptions.filter { it.enabled }.map { it.id },
-            siteOverrides = siteOverrides
+            enabledSubscriptionIds = enabledSubscriptions.map { it.id },
+            siteOverrides = siteOverrides,
+            subscriptions = enabledSubscriptions
         )
     }
 }
@@ -150,7 +178,8 @@ data class FilterRuntimeSnapshot(
     val preset: String,
     val customRules: String,
     val enabledSubscriptionIds: List<String>,
-    val siteOverrides: List<SiteFilterOverride>
+    val siteOverrides: List<SiteFilterOverride>,
+    val subscriptions: List<FilterSubscription> = emptyList()
 ) {
     fun toJson(): JSONObject {
         return JSONObject()
@@ -159,6 +188,7 @@ data class FilterRuntimeSnapshot(
             .put("customRules", customRules)
             .put("enabledSubscriptionIds", JSONArray(enabledSubscriptionIds))
             .put("siteOverrides", JSONArray(siteOverrides.map { it.toJson() }))
+            .put("subscriptions", JSONArray(subscriptions.map { it.toJson() }))
     }
 
     companion object {
@@ -166,24 +196,27 @@ data class FilterRuntimeSnapshot(
             if (json == null) return default()
             val subscriptionIds = json.optJSONArray("enabledSubscriptionIds").toStringList()
             val overrides = json.optJSONArray("siteOverrides").toSiteOverrideList()
+            val subscriptions = json.optJSONArray("subscriptions").toSubscriptionList()
             return FilterRuntimeSnapshot(
                 enabled = json.optBoolean("enabled", false),
                 preset = json.optString("preset", FilterPreset.STANDARD_CHILD.storageValue),
                 customRules = json.optString("customRules", ""),
                 enabledSubscriptionIds = subscriptionIds,
-                siteOverrides = overrides
+                siteOverrides = overrides,
+                subscriptions = subscriptions
             )
         }
 
         fun default(): FilterRuntimeSnapshot {
+            val subscriptions = FilterCatalog.defaultSubscriptionsFor(FilterPreset.STANDARD_CHILD)
+                .filter { it.enabled }
             return FilterRuntimeSnapshot(
                 enabled = false,
                 preset = FilterPreset.STANDARD_CHILD.storageValue,
                 customRules = "",
-                enabledSubscriptionIds = FilterCatalog.defaultSubscriptionsFor(FilterPreset.STANDARD_CHILD)
-                    .filter { it.enabled }
-                    .map { it.id },
-                siteOverrides = emptyList()
+                enabledSubscriptionIds = subscriptions.map { it.id },
+                siteOverrides = emptyList(),
+                subscriptions = subscriptions
             )
         }
     }
@@ -272,6 +305,17 @@ internal fun JSONArray?.toSiteOverrideList(): List<SiteFilterOverride> {
         for (i in 0 until length()) {
             optJSONObject(i)?.let { json ->
                 SiteFilterOverride.fromJson(json)?.let(::add)
+            }
+        }
+    }
+}
+
+internal fun JSONArray?.toSubscriptionList(): List<FilterSubscription> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (i in 0 until length()) {
+            optJSONObject(i)?.let { json ->
+                FilterSubscription.fromJson(json)?.let(::add)
             }
         }
     }

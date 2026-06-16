@@ -13,7 +13,8 @@ data class PreloadEntry(
     var progress: Int = 0,
     var isLoaded: Boolean = false,
     val isUrlPreload: Boolean = true,
-    val shouldDestroyOnDispose: Boolean = true
+    val shouldDestroyOnDispose: Boolean = true,
+    val runtimeConfigKey: String = ""
 )
 
 object WebViewPool {
@@ -52,10 +53,11 @@ object WebViewPool {
         if (pool.size >= MAX_POOL_SIZE) return
 
         val originalHost = WebViewRuntime.hostOf(cleanUrl)
+        val runtimeConfig = KioskPrefs.getWebViewRuntimeConfig(ctx)
 
-        val webView = acquireWarmWebView(ctx, cleanUrl)
+        val webView = acquireWarmWebView(ctx, cleanUrl, runtimeConfig)
 
-        val entry = PreloadEntry(webView)
+        val entry = PreloadEntry(webView, runtimeConfigKey = runtimeConfig.poolKey())
         pool[cleanUrl] = entry
 
         webView.webViewClient = object : WebViewClient() {
@@ -95,7 +97,7 @@ object WebViewPool {
                 request: WebResourceRequest?
             ): WebResourceResponse? {
                 if (KioskPrefs.isLimitAdBlockEnabled(ctx)) {
-                    val snapshot = KioskPrefs.getWebViewRuntimeConfig(ctx).filterSnapshot
+                    val snapshot = runtimeConfig.filterSnapshot
                     val topLevelUrl = view?.url ?: url
                     val decision = AdBlocker.shouldBlock(ctx, request, topLevelUrl, snapshot)
                     if (decision.action == FilterAction.BLOCK) {
@@ -141,13 +143,16 @@ object WebViewPool {
     fun acquire(
         url: String,
         allowUrlPreload: Boolean = true,
-        allowWarmPool: Boolean? = null
+        allowWarmPool: Boolean? = null,
+        runtimeConfig: WebViewRuntimeConfig? = null
     ): PreloadEntry? {
         val ctx = appContext ?: return null
         if (!ProcessUtils.isWebViewProcess(ctx)) return null
+        val effectiveRuntimeConfig = runtimeConfig ?: KioskPrefs.getWebViewRuntimeConfig(ctx)
         val cleanUrl = url.trim()
+        val runtimeConfigKey = effectiveRuntimeConfig.poolKey()
         pool.remove(cleanUrl)?.let { entry ->
-            if (allowUrlPreload) {
+            if (allowUrlPreload && entry.runtimeConfigKey == runtimeConfigKey) {
                 return entry
             }
             destroyWebView(entry.webView)
@@ -158,12 +163,13 @@ object WebViewPool {
         if (Looper.myLooper() != Looper.getMainLooper()) return null
 
         return warmPool.removeFirstOrNull()?.let { webView ->
-            WebViewRuntime.applySettings(webView, ctx, cleanUrl)
+            WebViewRuntime.applySettings(webView, ctx, cleanUrl, effectiveRuntimeConfig)
             PreloadEntry(
                 webView = webView,
                 isLoaded = false,
                 isUrlPreload = false,
-                shouldDestroyOnDispose = true
+                shouldDestroyOnDispose = true,
+                runtimeConfigKey = runtimeConfigKey
             )
         }
     }
@@ -230,12 +236,16 @@ object WebViewPool {
         return "热备 ${warmPool.size}/${MAX_WARM_POOL_SIZE}，预加载 ${pool.size}/$MAX_POOL_SIZE"
     }
 
-    private fun acquireWarmWebView(ctx: Context, targetUrl: String): WebView {
+    private fun acquireWarmWebView(
+        ctx: Context,
+        targetUrl: String,
+        runtimeConfig: WebViewRuntimeConfig
+    ): WebView {
         return warmPool.removeFirstOrNull()?.apply {
-            WebViewRuntime.applySettings(this, ctx, targetUrl)
+            WebViewRuntime.applySettings(this, ctx, targetUrl, runtimeConfig)
             setBackgroundColor(android.graphics.Color.parseColor("#FFF8E1"))
         } ?: WebView(ctx).apply {
-            WebViewRuntime.applySettings(this, ctx, targetUrl)
+            WebViewRuntime.applySettings(this, ctx, targetUrl, runtimeConfig)
             setBackgroundColor(android.graphics.Color.parseColor("#FFF8E1"))
         }
     }
@@ -264,5 +274,9 @@ object WebViewPool {
             resetToBlank(webView)
             webView.destroy()
         }
+    }
+
+    private fun WebViewRuntimeConfig.poolKey(): String {
+        return toJson().toString()
     }
 }

@@ -38,7 +38,8 @@ data class ScriptletFilterRule(
     val name: String,
     val args: List<String>,
     val domains: Set<String> = emptySet(),
-    val excludedDomains: Set<String> = emptySet()
+    val excludedDomains: Set<String> = emptySet(),
+    val supported: Boolean = true
 )
 
 enum class FilterMatchType {
@@ -78,6 +79,7 @@ object FilterRuleParser {
 
             parseScriptletLine(line, sourceId, sourceName)?.let { rule ->
                 scriptletRules += rule
+                if (!rule.supported) unsupportedRules++
                 return@forEachIndexed
             }
 
@@ -113,7 +115,7 @@ object FilterRuleParser {
             cosmeticRules = cosmeticRules,
             scriptletRules = scriptletRules,
             totalLines = totalLines,
-            enabledRules = enabledRules + cosmeticRules.count { !it.isException } + scriptletRules.size,
+            enabledRules = enabledRules + cosmeticRules.count { !it.isException } + scriptletRules.count { it.supported },
             unsupportedRules = unsupportedRules,
             errors = errors.take(20)
         )
@@ -149,7 +151,8 @@ object FilterRuleParser {
             name = name,
             args = parts.drop(1).map { it.trim('\'', '"').trim() }.filter { it.length <= 180 },
             domains = domains,
-            excludedDomains = excludedDomains
+            excludedDomains = excludedDomains,
+            supported = isSupportedScriptletName(name)
         )
     }
 
@@ -402,4 +405,17 @@ object FilterRuleParser {
         "redirect-rule",
         "csp"
     )
+
+    private val SUPPORTED_SCRIPTLETS = setOf(
+        "no-window-open-if",
+        "nowoif",
+        "abort-on-property-read",
+        "aopr",
+        "set-constant",
+        "set"
+    )
+
+    private fun isSupportedScriptletName(name: String): Boolean {
+        return name.removeSuffix(".js").lowercase(Locale.US) in SUPPORTED_SCRIPTLETS
+    }
 }

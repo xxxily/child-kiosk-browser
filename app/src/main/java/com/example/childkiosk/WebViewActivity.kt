@@ -334,7 +334,8 @@ class WebViewActivity : ComponentActivity() {
             WebViewPool.acquire(
                 url = targetUrl,
                 allowUrlPreload = runtimeConfig.webPreloadEnabled,
-                allowWarmPool = runtimeConfig.webViewWarmPoolEnabled
+                allowWarmPool = runtimeConfig.webViewWarmPoolEnabled,
+                runtimeConfig = runtimeConfig
             )
         } else {
             null

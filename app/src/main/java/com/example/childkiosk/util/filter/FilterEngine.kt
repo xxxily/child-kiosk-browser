@@ -147,12 +147,12 @@ class FilterEngine private constructor(
                     unsupportedRules = parseResult.unsupportedRules,
                     networkRules = parseResult.rules.count { !it.badFilter },
                     cosmeticRules = parseResult.cosmeticRules.count { !it.isException },
-                    scriptletRules = parseResult.scriptletRules.size,
+                    scriptletRules = parseResult.scriptletRules.count { it.supported },
                     errors = parseResult.errors
                 )
                 errors += parseResult.errors
                 cosmetic += parseResult.cosmeticRules
-                scriptlets += parseResult.scriptletRules
+                scriptlets += parseResult.scriptletRules.filter { it.supported }
                 parseResult.rules.filter { !it.badFilter }.forEach { rule ->
                     CompiledRule.from(rule)?.let { compiledRule ->
                         compiled += compiledRule
@@ -164,12 +164,12 @@ class FilterEngine private constructor(
 
             val badFilters = sources.flatMap {
                 FilterRuleParser.parse(it.rulesText, it.id, it.name).rules.filter { rule -> rule.badFilter }
-            }.map { it.rawText.removeSuffix("\$badfilter") }.toSet()
+            }.map { it.canonicalBadFilterTarget() }.toSet()
 
             val activeCompiled = if (badFilters.isEmpty()) {
                 compiled
             } else {
-                compiled.filterNot { it.rule.rawText in badFilters }
+                compiled.filterNot { it.rule.rawText in badFilters || it.rule.canonicalBadFilterTarget() in badFilters }
             }
 
             val important = activeCompiled.filter { !it.rule.isException && it.rule.important }
@@ -189,7 +189,7 @@ class FilterEngine private constructor(
                     unsupportedRuleCount = unsupportedRuleCount,
                     networkRuleCount = activeCompiled.size,
                     cosmeticRuleCount = cosmetic.count { !it.isException },
-                    scriptletRuleCount = scriptlets.size,
+                    scriptletRuleCount = scriptlets.count { it.supported },
                     sourceReports = reports,
                     errors = errors.take(30)
                 )
@@ -206,6 +206,22 @@ private fun CosmeticFilterRule.matchesHost(host: String): Boolean {
 private fun ScriptletFilterRule.matchesHost(host: String): Boolean {
     if (excludedDomains.any { isSameOrSubdomain(host, it) }) return false
     return domains.isEmpty() || domains.any { isSameOrSubdomain(host, it) }
+}
+
+private fun FilterRule.canonicalBadFilterTarget(): String {
+    val raw = rawText.trim()
+    val optionIndex = raw.indexOf('$')
+    if (optionIndex < 0) return raw
+    val pattern = raw.substring(0, optionIndex)
+    val options = raw.substring(optionIndex + 1)
+        .split(',')
+        .map { it.trim() }
+        .filter { it.isNotBlank() && !it.equals("badfilter", ignoreCase = true) }
+    return if (options.isEmpty()) {
+        pattern
+    } else {
+        pattern + "$" + options.joinToString(",")
+    }
 }
 
 private fun scriptletToJs(rule: ScriptletFilterRule): String? {

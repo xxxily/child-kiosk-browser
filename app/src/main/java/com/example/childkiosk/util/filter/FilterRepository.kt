@@ -44,7 +44,7 @@ object FilterRepository {
             }
         } + subscriptionOverrides.values
             .filter { json -> FilterCatalog.builtInSubscriptions.none { it.id == json.optString("id") } }
-            .mapNotNull { json -> subscriptionFromJson(json) }
+            .mapNotNull { json -> FilterSubscription.fromJson(json) }
         return FilterSettings(
             enabled = enabled,
             preset = preset,
@@ -245,7 +245,10 @@ object FilterRepository {
         val sources = mutableListOf<FilterRuleSource>()
         val subscriptionsById = buildMap {
             FilterCatalog.builtInSubscriptions.forEach { put(it.id, it) }
-            context?.let { getSettings(it).subscriptions.forEach { subscription -> put(subscription.id, subscription) } }
+            snapshot.subscriptions.forEach { subscription -> put(subscription.id, subscription) }
+            if (snapshot.subscriptions.isEmpty()) {
+                context?.let { getSettings(it).subscriptions.forEach { subscription -> put(subscription.id, subscription) } }
+            }
         }
         ids.mapNotNull { subscriptionsById[it] }.forEach { subscription ->
             val cached = context?.let { readCachedRules(it, subscription.id) }
@@ -309,29 +312,6 @@ object FilterRepository {
                 if (id.isNotBlank()) put(id, json)
             }
         }
-    }
-
-    private fun subscriptionFromJson(json: JSONObject): FilterSubscription? {
-        val id = json.optString("id")
-        val title = json.optString("title")
-        val url = json.optString("subscriptionUrl")
-        if (id.isBlank() || url.isBlank()) return null
-        return FilterSubscription(
-            id = id,
-            title = title.ifBlank { url },
-            category = json.optString("category", "自定义订阅"),
-            homepageUrl = json.optString("homepageUrl", url),
-            subscriptionUrl = url,
-            defaultInStandard = false,
-            defaultInStrong = false,
-            bundledRules = "",
-            enabled = json.optBoolean("enabled", false),
-            ruleCount = json.optInt("ruleCount", 0),
-            enabledRuleCount = json.optInt("enabledRuleCount", 0),
-            unsupportedCount = json.optInt("unsupportedCount", 0),
-            lastUpdatedAt = json.optLong("lastUpdatedAt", 0L),
-            lastError = json.optString("lastError", "")
-        )
     }
 
     private fun readSiteOverrides(prefs: SharedPreferences): List<SiteFilterOverride> {

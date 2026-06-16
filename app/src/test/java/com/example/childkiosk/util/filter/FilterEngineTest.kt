@@ -126,6 +126,8 @@ class FilterEngineTest {
         val js = engine.scriptletJsFor("example.com")
         assertTrue(js.contains("window.open"))
         assertFalse(js.contains("unknown-scriptlet"))
+        assertEquals(1, engine.report.scriptletRuleCount)
+        assertEquals(1, engine.report.unsupportedRuleCount)
     }
 
     @Test
@@ -136,6 +138,50 @@ class FilterEngineTest {
 
         assertTrue(report.unsupportedRuleCount > 0)
         assertNotNull(report.sourceReports.firstOrNull())
+    }
+
+    @Test
+    fun badfilterDisablesMatchingRuleWithOptions() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    id = "test",
+                    name = "test",
+                    rulesText = """
+                        ||ads.example.com^${'$'}script,third-party
+                        ||ads.example.com^${'$'}script,third-party,badfilter
+                    """.trimIndent()
+                )
+            )
+        )
+
+        val decision = engine.decide(
+            context(
+                url = "https://ads.example.com/banner.js",
+                topLevelUrl = "https://site.example/page",
+                type = FilterResourceType.SCRIPT
+            )
+        )
+        assertEquals(FilterAction.ALLOW, decision.action)
+    }
+
+    @Test
+    fun runtimeSnapshotCarriesCustomSubscriptionMetadata() {
+        val subscription = FilterCatalog.customSubscription(
+            title = "Family list",
+            url = "https://filters.example.test/family.txt"
+        )
+        val snapshot = FilterSettings(
+            enabled = true,
+            preset = FilterPreset.CUSTOM,
+            customRules = "",
+            subscriptions = listOf(subscription),
+            siteOverrides = emptyList()
+        ).toRuntimeSnapshot()
+
+        assertEquals(listOf(subscription.id), snapshot.enabledSubscriptionIds)
+        assertEquals(subscription.id, snapshot.subscriptions.single().id)
+        assertEquals(subscription.subscriptionUrl, snapshot.subscriptions.single().subscriptionUrl)
     }
 
     private fun context(
