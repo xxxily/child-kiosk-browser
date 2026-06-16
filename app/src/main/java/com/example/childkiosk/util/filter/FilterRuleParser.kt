@@ -20,6 +20,16 @@ data class FilterRule(
     val unsupportedOptions: Set<String> = emptySet()
 )
 
+data class CosmeticFilterRule(
+    val rawText: String,
+    val sourceId: String,
+    val sourceName: String,
+    val selector: String,
+    val domains: Set<String> = emptySet(),
+    val excludedDomains: Set<String> = emptySet(),
+    val isException: Boolean = false
+)
+
 enum class FilterMatchType {
     SUBSTRING,
     DOMAIN_ANCHOR,
@@ -30,6 +40,7 @@ enum class FilterMatchType {
 
 data class FilterParseResult(
     val rules: List<FilterRule>,
+    val cosmeticRules: List<CosmeticFilterRule>,
     val totalLines: Int,
     val enabledRules: Int,
     val unsupportedRules: Int,
@@ -40,16 +51,27 @@ object FilterRuleParser {
 
     fun parse(text: String, sourceId: String, sourceName: String): FilterParseResult {
         val rules = mutableListOf<FilterRule>()
+        val cosmeticRules = mutableListOf<CosmeticFilterRule>()
         val errors = mutableListOf<String>()
         var totalLines = 0
         var unsupportedRules = 0
 
         text.lineSequence().forEachIndexed { index, rawLine ->
             val line = rawLine.trim()
-            if (line.isBlank() || line.startsWith("!") || line.startsWith("[") || line.startsWith("#")) {
+            if (line.isBlank() || line.startsWith("!") || line.startsWith("[")) {
                 return@forEachIndexed
             }
             totalLines++
+
+            parseCosmeticLine(line, sourceId, sourceName)?.let { rule ->
+                cosmeticRules += rule
+                return@forEachIndexed
+            }
+
+            if (line.startsWith("#")) {
+                unsupportedRules++
+                return@forEachIndexed
+            }
 
             parseHostsLine(line, sourceId, sourceName)?.let { rule ->
                 rules += rule
@@ -70,10 +92,44 @@ object FilterRuleParser {
         val enabledRules = rules.count { !it.badFilter }
         return FilterParseResult(
             rules = rules,
+            cosmeticRules = cosmeticRules,
             totalLines = totalLines,
-            enabledRules = enabledRules,
+            enabledRules = enabledRules + cosmeticRules.count { !it.isException },
             unsupportedRules = unsupportedRules,
             errors = errors.take(20)
+        )
+    }
+
+    private fun parseCosmeticLine(line: String, sourceId: String, sourceName: String): CosmeticFilterRule? {
+        val marker = when {
+            "#@#" in line -> "#@#"
+            "##" in line -> "##"
+            else -> return null
+        }
+        val parts = line.split(marker, limit = 2)
+        if (parts.size != 2) return null
+        val domainPart = parts[0].trim()
+        val selector = parts[1].trim()
+        if (selector.isBlank()) return null
+        val domains = mutableSetOf<String>()
+        val excludedDomains = mutableSetOf<String>()
+        if (domainPart.isNotBlank()) {
+            domainPart.split(",").map { it.trim() }.filter { it.isNotBlank() }.forEach { domain ->
+                val excluded = domain.startsWith("~")
+                val clean = domain.removePrefix("~").normalizeHost()
+                if (clean.isNotBlank()) {
+                    if (excluded) excludedDomains += clean else domains += clean
+                }
+            }
+        }
+        return CosmeticFilterRule(
+            rawText = line,
+            sourceId = sourceId,
+            sourceName = sourceName,
+            selector = selector,
+            domains = domains,
+            excludedDomains = excludedDomains,
+            isException = marker == "#@#"
         )
     }
 
@@ -178,6 +234,7 @@ object FilterRuleParser {
                 normalized == "~first-party" -> thirdParty = true
                 normalized == "important" -> important = true
                 normalized == "badfilter" -> badFilter = true
+                normalized == "popup" -> resourceTypes += FilterResourceType.POPUP
                 normalized.startsWith("domain=") -> {
                     normalized.removePrefix("domain=").split("|").forEach { domain ->
                         val excluded = domain.startsWith("~")
@@ -232,7 +289,6 @@ object FilterRuleParser {
     )
 
     private val SUPPORTED_BUT_PHASE_LATER_OPTIONS = setOf(
-        "popup",
         "removeparam",
         "redirect",
         "redirect-rule",

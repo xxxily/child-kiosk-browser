@@ -2608,7 +2608,7 @@ private fun WebFilteringSettingsScreen(
                     Text("自定义 Adblock 规则", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
                 Text(
-                    "支持 `||domain^`、`@@`、`${'$'}script`、`${'$'}image`、`${'$'}third-party`、`${'$'}domain=`、`${'$'}important`、`${'$'}badfilter` 等核心语法。",
+                    "支持 `||domain^`、`@@`、`${'$'}script`、`${'$'}image`、`${'$'}popup`、`${'$'}third-party`、`${'$'}domain=`、`##`、`#@#` 等核心语法。",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2711,10 +2711,19 @@ private fun WebFilteringSettingsScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(override.host, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                 Text(
-                                    "网络过滤：${if (override.networkDisabled) "关闭" else "开启"}",
+                                    "网络：${if (override.networkDisabled) "关闭" else "开启"} | 元素隐藏：${if (override.cosmeticDisabled) "关闭" else "开启"}",
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                            }
+                            TextButton(onClick = {
+                                FilterRepository.setSiteOverride(
+                                    context,
+                                    override.copy(cosmeticDisabled = !override.cosmeticDisabled)
+                                )
+                                refresh()
+                            }) {
+                                Text(if (override.cosmeticDisabled) "启用隐藏" else "停用隐藏")
                             }
                             TextButton(onClick = {
                                 FilterRepository.removeSiteOverride(context, override.host)

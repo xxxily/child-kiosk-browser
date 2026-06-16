@@ -27,6 +27,7 @@ enum class FilterResourceType(val optionName: String) {
     MEDIA("media"),
     XMLHTTPREQUEST("xmlhttprequest"),
     SUBDOCUMENT("subdocument"),
+    POPUP("popup"),
     WEBSOCKET("websocket"),
     PING("ping"),
     OTHER("other");

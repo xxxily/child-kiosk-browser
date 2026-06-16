@@ -55,6 +55,11 @@ fbcdn.net/ads${'$'}image,third-party
 ||openx.net^
 /ads/*${'$'}image,script,third-party
 /adserver/*${'$'}script,image,third-party
+##.ad
+##.ads
+##.advertisement
+##[class*="ad-banner"]
+##[id*="ad-banner"]
 """
 
     private const val EASYPRIVACY_SEED_RULES = """
@@ -78,6 +83,7 @@ fbcdn.net/ads${'$'}image,third-party
 ||branch.io^
 /analytics.js${'$'}script,third-party
 /tracking/*${'$'}script,image,third-party
+##.tracking-pixel
 """
 
     private const val ADGUARD_CHINESE_SEED_RULES = """
@@ -96,6 +102,8 @@ fbcdn.net/ads${'$'}image,third-party
 ||iqiyi.com/ads^
 /union/ads/${'$'}script,image,third-party
 /adplus/${'$'}script,image,third-party
+##.ggad
+##.ad-wrap
 """
 
     private const val ADGUARD_MOBILE_SEED_RULES = """
@@ -119,6 +127,9 @@ fbcdn.net/ads${'$'}image,third-party
 ||cdn.cookielaw.org^${'$'}script,third-party
 ||privacy-mgmt.com^${'$'}script,third-party
 ||quantcast.mgr.consensu.org^
+##.popup-ad
+##.modal-ad
+##.cookie-banner
 """
 
     val builtInSubscriptions: List<FilterSubscription> = listOf(

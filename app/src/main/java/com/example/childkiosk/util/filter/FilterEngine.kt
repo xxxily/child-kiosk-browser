@@ -25,12 +25,34 @@ class FilterEngine private constructor(
     private val blockingRules: List<CompiledRule>,
     private val exceptionRules: List<CompiledRule>,
     private val importantBlockingRules: List<CompiledRule>,
+    private val cosmeticRules: List<CosmeticFilterRule>,
     val report: FilterBuildReport
 ) {
     private val decisionCache = object : LinkedHashMap<String, FilterDecision>(256, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, FilterDecision>?): Boolean {
             return size > 512
         }
+    }
+
+    fun cosmeticCssFor(host: String, siteOverride: SiteFilterOverride? = null): String {
+        if (siteOverride?.isTemporarilyAllowed() == true || siteOverride?.cosmeticDisabled == true) return ""
+        val normalizedHost = host.normalizeHost()
+        if (normalizedHost.isBlank()) return ""
+        val exceptions = cosmeticRules
+            .filter { it.isException && it.matchesHost(normalizedHost) }
+            .map { it.selector }
+            .toSet()
+        val selectors = cosmeticRules
+            .asSequence()
+            .filter { !it.isException }
+            .filter { it.matchesHost(normalizedHost) }
+            .map { it.selector }
+            .filterNot { it in exceptions }
+            .filter { isSafeCssSelector(it) }
+            .take(800)
+            .toList()
+        if (selectors.isEmpty()) return ""
+        return selectors.joinToString(",\n") + " { display: none !important; visibility: hidden !important; }"
     }
 
     @Synchronized
@@ -67,10 +89,11 @@ class FilterEngine private constructor(
     }
 
     companion object {
-        val EMPTY = FilterEngine(emptyList(), emptyList(), emptyList(), FilterBuildReport(0, 0, 0, emptyList(), emptyList()))
+        val EMPTY = FilterEngine(emptyList(), emptyList(), emptyList(), emptyList(), FilterBuildReport(0, 0, 0, emptyList(), emptyList()))
 
         fun build(sources: List<FilterRuleSource>): FilterEngine {
             val compiled = mutableListOf<CompiledRule>()
+            val cosmetic = mutableListOf<CosmeticFilterRule>()
             val reports = mutableListOf<FilterSourceReport>()
             val errors = mutableListOf<String>()
 
@@ -85,6 +108,7 @@ class FilterEngine private constructor(
                     errors = parseResult.errors
                 )
                 errors += parseResult.errors
+                cosmetic += parseResult.cosmeticRules
                 parseResult.rules.filter { !it.badFilter }.forEach { rule ->
                     CompiledRule.from(rule)?.let { compiledRule ->
                         compiled += compiledRule
@@ -113,6 +137,7 @@ class FilterEngine private constructor(
                 blockingRules = blocking.sortedByDescending { it.weight },
                 exceptionRules = exceptions.sortedByDescending { it.weight },
                 importantBlockingRules = important.sortedByDescending { it.weight },
+                cosmeticRules = cosmetic,
                 report = FilterBuildReport(
                     ruleCount = reports.sumOf { it.totalLines },
                     enabledRuleCount = enabledRuleCount,
@@ -123,6 +148,17 @@ class FilterEngine private constructor(
             )
         }
     }
+}
+
+private fun CosmeticFilterRule.matchesHost(host: String): Boolean {
+    if (excludedDomains.any { isSameOrSubdomain(host, it) }) return false
+    return domains.isEmpty() || domains.any { isSameOrSubdomain(host, it) }
+}
+
+private fun isSafeCssSelector(selector: String): Boolean {
+    if (selector.length !in 1..300) return false
+    val unsupported = listOf(":-abp-", ":has-text", ":contains(", ":matches-css", ":xpath", "##", "#@#")
+    return unsupported.none { selector.contains(it, ignoreCase = true) }
 }
 
 data class FilterRuleSource(

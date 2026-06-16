@@ -41,6 +41,8 @@ import com.example.childkiosk.util.WebViewRuntime
 import com.example.childkiosk.util.WebViewRuntimeConfig
 import com.example.childkiosk.util.WebViewPool
 import com.example.childkiosk.util.filter.FilterAction
+import com.example.childkiosk.util.filter.FilterRepository
+import com.example.childkiosk.util.filter.FilterRequestContext
 import com.example.childkiosk.util.filter.FilterResourceType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1327,6 +1329,10 @@ private fun createSecureWebView(
                 resultMsg: android.os.Message?
             ): Boolean {
                 if (resultMsg == null) return false
+                if (runtimeConfig.limitAdBlock && shouldBlockPopup(ctx, view, runtimeConfig)) {
+                    Log.d("ChildKioskWebView", "Blocked popup window: parent=${view?.url}")
+                    return false
+                }
                 val newWebView = createSecureWebView(
                     ctx = ctx,
                     targetUrl = "",
@@ -1537,8 +1543,60 @@ private fun injectPageScripts(
     currentTiming: String
 ) {
     webView ?: return
+    injectCosmeticCssIfNeeded(webView, context, config)
     injectDebugToolIfNeeded(webView, context, config, currentTiming)
     injectCustomScriptIfNeeded(webView, config, currentTiming)
+}
+
+private fun injectCosmeticCssIfNeeded(
+    webView: WebView,
+    context: Context,
+    config: WebViewRuntimeConfig
+) {
+    if (!config.limitAdBlock || !config.filterSnapshot.enabled) return
+    val pageUrl = webView.url ?: return
+    val host = WebViewRuntime.hostOf(pageUrl)
+    if (host.isBlank()) return
+    val siteOverride = FilterRepository.siteOverrideFor(config.filterSnapshot, host)
+    val css = FilterRepository.getEngine(context, config.filterSnapshot)
+        .cosmeticCssFor(host, siteOverride)
+        .take(256 * 1024)
+    if (css.isBlank()) return
+    val cssJson = JSONObject.quote(css)
+    val js = """
+        (function() {
+            var id = 'child-kiosk-cosmetic-style';
+            var style = document.getElementById(id);
+            if (!style) {
+                style = document.createElement('style');
+                style.id = id;
+                (document.head || document.documentElement).appendChild(style);
+            }
+            style.textContent = $cssJson;
+        })();
+    """.trimIndent()
+    webView.evaluateJavascript(js, null)
+}
+
+private fun shouldBlockPopup(
+    context: Context,
+    parent: WebView?,
+    config: WebViewRuntimeConfig
+): Boolean {
+    val parentUrl = parent?.url.orEmpty()
+    if (parentUrl.isBlank()) return false
+    val requestContext = FilterRequestContext(
+        requestUrl = parentUrl,
+        topLevelUrl = parentUrl,
+        resourceType = FilterResourceType.POPUP,
+        isMainFrame = true,
+        method = "GET",
+        hasGesture = false
+    )
+    val siteOverride = FilterRepository.siteOverrideFor(config.filterSnapshot, requestContext.topLevelHost)
+    return FilterRepository.getEngine(context, config.filterSnapshot)
+        .decide(requestContext, siteOverride)
+        .action == FilterAction.BLOCK
 }
 
 private fun destroyWebViewSafely(webView: WebView) {
