@@ -2455,6 +2455,8 @@ private fun WebFilteringSettingsScreen(
     var customRules by remember(settings.customRules) { mutableStateOf(settings.customRules) }
     var customRuleReport by remember { mutableStateOf(FilterRepository.validateCustomRules(customRules)) }
     var newOverrideHost by remember { mutableStateOf("") }
+    var customSubscriptionTitle by remember { mutableStateOf("") }
+    var customSubscriptionUrl by remember { mutableStateOf("") }
     var updatingSubscriptionId by remember { mutableStateOf<String?>(null) }
     val events = remember(settingsVersion) { FilterRepository.getRecentEvents(context) }
     val scope = rememberCoroutineScope()
@@ -2530,6 +2532,39 @@ private fun WebFilteringSettingsScreen(
                     Spacer(Modifier.width(8.dp))
                     Text("内置订阅目录", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = customSubscriptionTitle,
+                        onValueChange = { customSubscriptionTitle = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("自定义订阅名称") }
+                    )
+                    OutlinedTextField(
+                        value = customSubscriptionUrl,
+                        onValueChange = { customSubscriptionUrl = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("HTTPS 订阅 URL") }
+                    )
+                    Button(
+                        onClick = {
+                            runCatching {
+                                FilterRepository.addCustomSubscription(context, customSubscriptionTitle, customSubscriptionUrl)
+                            }.onSuccess {
+                                customSubscriptionTitle = ""
+                                customSubscriptionUrl = ""
+                                refresh()
+                                Toast.makeText(context, "自定义订阅已添加，可点击更新拉取规则", Toast.LENGTH_SHORT).show()
+                            }.onFailure {
+                                Toast.makeText(context, it.message ?: "添加失败", Toast.LENGTH_LONG).show()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("添加自定义订阅")
+                    }
+                }
                 settings.subscriptions.forEach { subscription ->
                     val sourceReport = report.sourceReports.firstOrNull { it.sourceId == subscription.id }
                     Row(
@@ -2583,6 +2618,14 @@ private fun WebFilteringSettingsScreen(
                                     refresh()
                                 }
                             )
+                        }
+                    }
+                    if (subscription.category == "自定义订阅") {
+                        TextButton(onClick = {
+                            FilterRepository.removeCustomSubscription(context, subscription.id)
+                            refresh()
+                        }) {
+                            Text("删除自定义订阅")
                         }
                     }
                     if (subscription.lastUpdatedAt > 0L || subscription.lastError.isNotBlank()) {
@@ -2703,33 +2746,55 @@ private fun WebFilteringSettingsScreen(
                     Text("暂无站点例外。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
                     settings.siteOverrides.forEach { override ->
-                        Row(
+                        Column(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(override.host, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                Text(
-                                    "网络：${if (override.networkDisabled) "关闭" else "开启"} | 元素隐藏：${if (override.cosmeticDisabled) "关闭" else "开启"}",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            TextButton(onClick = {
-                                FilterRepository.setSiteOverride(
-                                    context,
-                                    override.copy(cosmeticDisabled = !override.cosmeticDisabled)
-                                )
-                                refresh()
-                            }) {
-                                Text(if (override.cosmeticDisabled) "启用隐藏" else "停用隐藏")
-                            }
-                            TextButton(onClick = {
-                                FilterRepository.removeSiteOverride(context, override.host)
-                                refresh()
-                            }) {
-                                Text("删除")
+                            Text(override.host, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                "网络：${if (override.networkDisabled) "关闭" else "开启"} | 元素隐藏：${if (override.cosmeticDisabled) "关闭" else "开启"} | 脚本：${if (override.scriptletDisabled) "关闭" else "开启"}",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                TextButton(onClick = {
+                                    FilterRepository.setSiteOverride(
+                                        context,
+                                        override.copy(cosmeticDisabled = !override.cosmeticDisabled)
+                                    )
+                                    refresh()
+                                }) {
+                                    Text(if (override.cosmeticDisabled) "启用隐藏" else "停用隐藏")
+                                }
+                                TextButton(onClick = {
+                                    FilterRepository.setSiteOverride(
+                                        context,
+                                        override.copy(scriptletDisabled = !override.scriptletDisabled)
+                                    )
+                                    refresh()
+                                }) {
+                                    Text(if (override.scriptletDisabled) "启用脚本" else "停用脚本")
+                                }
+                                TextButton(onClick = {
+                                    FilterRepository.setSiteOverride(
+                                        context,
+                                        override.copy(temporaryAllowUntil = System.currentTimeMillis() + 15 * 60 * 1000L)
+                                    )
+                                    refresh()
+                                }) {
+                                    Text("放行15分钟")
+                                }
+                                TextButton(onClick = {
+                                    FilterRepository.removeSiteOverride(context, override.host)
+                                    refresh()
+                                }) {
+                                    Text("删除")
+                                }
                             }
                         }
                     }

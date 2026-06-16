@@ -79,6 +79,10 @@ data class FilterSubscription(
     fun toJson(): JSONObject {
         return JSONObject()
             .put("id", id)
+            .put("title", title)
+            .put("category", category)
+            .put("homepageUrl", homepageUrl)
+            .put("subscriptionUrl", subscriptionUrl)
             .put("enabled", enabled)
             .put("lastUpdatedAt", lastUpdatedAt)
             .put("ruleCount", ruleCount)

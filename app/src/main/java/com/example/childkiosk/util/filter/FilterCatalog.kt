@@ -212,4 +212,22 @@ fbcdn.net/ads${'$'}image,third-party
     fun subscriptionsForIds(ids: Set<String>): List<FilterSubscription> {
         return builtInSubscriptions.map { it.copy(enabled = it.id in ids) }
     }
+
+    fun customSubscription(
+        title: String,
+        url: String
+    ): FilterSubscription {
+        val id = "custom-" + url.hashCode().toUInt().toString(16)
+        return FilterSubscription(
+            id = id,
+            title = title.ifBlank { url.substringAfter("://").substringBefore("/") },
+            category = "自定义订阅",
+            homepageUrl = url,
+            subscriptionUrl = url,
+            defaultInStandard = false,
+            defaultInStrong = false,
+            bundledRules = "",
+            enabled = true
+        )
+    }
 }
