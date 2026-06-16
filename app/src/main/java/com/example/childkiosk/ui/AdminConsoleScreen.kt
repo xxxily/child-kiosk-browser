@@ -74,6 +74,7 @@ fun AdminConsoleScreen(
 
     // 非 Device Owner 场景下的防护等级（屏幕固定软锁 / 无系统级锁定）
     var protectionMode by remember { mutableStateOf(KioskPrefs.getProtectionMode(context)) }
+    var quickMode by remember { mutableStateOf(KioskPrefs.getQuickMode(context)) }
 
     var showPinSetupDialog by remember { mutableStateOf(false) }
 
@@ -151,6 +152,11 @@ fun AdminConsoleScreen(
         }
     }
 
+    LaunchedEffect(currentSubPage) {
+        quickMode = KioskPrefs.getQuickMode(context)
+        protectionMode = KioskPrefs.getProtectionMode(context)
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -211,6 +217,22 @@ fun AdminConsoleScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
+                        item {
+                            QuickModeCard(
+                                quickMode = quickMode,
+                                onModeSelected = { mode ->
+                                    KioskPrefs.applyQuickMode(context, mode)
+                                    quickMode = KioskPrefs.getQuickMode(context)
+                                    protectionMode = KioskPrefs.getProtectionMode(context)
+                                    WebViewPool.clear()
+                                    onProtectionModeChanged(protectionMode)
+                                    onSandboxLimitsChanged()
+                                    val label = quickModeLabel(quickMode)
+                                    Toast.makeText(context, "已切换为$label", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        }
+
                         item {
                             Card(
                                 shape = RoundedCornerShape(16.dp),
@@ -688,6 +710,27 @@ fun AdminConsoleScreen(
 
                                 // 选项 2: 隐藏右上角管理锁图标
                                 var hideAdminIcon by remember { mutableStateOf(KioskPrefs.getHideAdminIcon(context)) }
+                                var adminQuickOpen by remember { mutableStateOf(KioskPrefs.getAdminQuickOpen(context)) }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("单击管理入口直接打开菜单", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("关闭后需要在右上角区域 2 秒内连续点击 5 次才会打开菜单", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = adminQuickOpen,
+                                        onCheckedChange = {
+                                            adminQuickOpen = it
+                                            KioskPrefs.setAdminQuickOpen(context, it)
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1105,6 +1148,8 @@ fun AdminConsoleScreen(
                     var limitScreenshot by remember { mutableStateOf(KioskPrefs.isLimitScreenshotEnabled(context)) }
                     var limitStatusBar by remember { mutableStateOf(KioskPrefs.isLimitStatusBarEnabled(context)) }
                     var limitKeyguard by remember { mutableStateOf(KioskPrefs.isLimitKeyguardEnabled(context)) }
+                    var limitVoiceAssistants by remember { mutableStateOf(KioskPrefs.isLimitVoiceAssistantsEnabled(context)) }
+                    var limitUnknownSources by remember { mutableStateOf(KioskPrefs.isLimitUnknownSourcesEnabled(context)) }
 
                     var limitFlagSecure by remember { mutableStateOf(KioskPrefs.isLimitFlagSecureEnabled(context)) }
                     var limitVolumeKeys by remember { mutableStateOf(KioskPrefs.isLimitVolumeKeysEnabled(context)) }
@@ -1315,6 +1360,48 @@ fun AdminConsoleScreen(
                                         onCheckedChange = {
                                             limitKeyguard = it
                                             KioskPrefs.setLimitKeyguardEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁用语音助手入口", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("阻断通过系统语音助手、快捷唤醒等入口离开儿童桌面", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitVoiceAssistants,
+                                        onCheckedChange = {
+                                            limitVoiceAssistants = it
+                                            KioskPrefs.setLimitVoiceAssistantsEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁止安装未知来源应用", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("阻止通过浏览器下载、文件管理器或第三方渠道安装未授权 APK", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitUnknownSources,
+                                        onCheckedChange = {
+                                            limitUnknownSources = it
+                                            KioskPrefs.setLimitUnknownSourcesEnabled(context, it)
                                             onSandboxLimitsChanged()
                                         }
                                     )
@@ -2179,6 +2266,133 @@ fun AdminConsoleScreen(
             releaseInfo = latestReleaseInfo!!,
             onDismiss = { showUpdateDialog = false }
         )
+    }
+}
+
+/**
+ * 快速模式选择卡片。
+ */
+@Composable
+fun QuickModeCard(
+    quickMode: String,
+    onModeSelected: (String) -> Unit
+) {
+    val options = listOf(
+        KioskPrefs.QUICK_MODE_NORMAL to Triple(
+            "正常模式",
+            "单击打开管理菜单，无认证无软锁，网页保持浏览器兼容默认。",
+            Icons.Default.Home
+        ),
+        KioskPrefs.QUICK_MODE_CHILD to Triple(
+            "儿童模式",
+            "隐藏管理入口，启用认证、软锁和网页/系统限制。",
+            Icons.Default.ChildCare
+        ),
+        KioskPrefs.QUICK_MODE_DEBUG to Triple(
+            "调试模式",
+            "放开限制并开启 Chrome Inspect 与内置调试面板。",
+            Icons.Default.BugReport
+        ),
+        KioskPrefs.QUICK_MODE_CUSTOM to Triple(
+            "自定义模式",
+            "保留当前细项配置，不批量重置任何选项。",
+            Icons.Default.Tune
+        )
+    )
+
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.AutoFixHigh,
+                    contentDescription = "快速模式",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("快速模式", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "当前：${quickModeLabel(quickMode)}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Text(
+                "模式只批量调整锁定、认证、沙箱和调试相关选项，不会改变屏幕方向、图标大小、标题或白名单。",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            options.forEach { (mode, meta) ->
+                QuickModeOption(
+                    selected = quickMode == mode,
+                    title = meta.first,
+                    desc = meta.second,
+                    icon = meta.third,
+                    onClick = { onModeSelected(mode) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickModeOption(
+    selected: Boolean,
+    title: String,
+    desc: String,
+    icon: ImageVector,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                if (selected) {
+                    MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)
+                } else {
+                    Color.Transparent
+                }
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = onClick,
+            modifier = Modifier.padding(top = 2.dp)
+        )
+        Icon(
+            imageVector = icon,
+            contentDescription = title,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .padding(top = 8.dp, end = 8.dp)
+                .size(20.dp)
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text(desc, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+private fun quickModeLabel(mode: String): String {
+    return when (mode) {
+        KioskPrefs.QUICK_MODE_CHILD -> "儿童模式"
+        KioskPrefs.QUICK_MODE_DEBUG -> "调试模式"
+        KioskPrefs.QUICK_MODE_CUSTOM -> "自定义模式"
+        else -> "正常模式"
     }
 }
 

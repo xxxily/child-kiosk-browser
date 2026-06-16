@@ -2,6 +2,7 @@ package com.example.childkiosk.util
 
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
 import org.json.JSONObject
 
@@ -120,26 +121,31 @@ object KioskPrefs {
 
     private const val PREFS_NAME = "kiosk_prefs"
     private const val EXTRA_WEBVIEW_RUNTIME_CONFIG = "WEBVIEW_RUNTIME_CONFIG_JSON"
+    private const val KEY_QUICK_MODE = "quick_mode"
     private const val KEY_PROTECTION_MODE = "non_owner_protection_mode"
     private const val KEY_ORIENTATION_MODE = "orientation_mode"
     private const val KEY_ICON_SIZE_MODE = "icon_size_mode"
 
     private const val KEY_VERIFY_ON_WEB_EXIT = "verify_on_web_exit"
     private const val KEY_HIDE_ADMIN_ICON = "hide_admin_icon"
+    private const val KEY_ADMIN_QUICK_OPEN = "admin_quick_open"
     private const val KEY_ADMIN_ICON_ALPHA = "admin_icon_alpha"
     private const val KEY_MAIN_TITLE_TEXT = "main_title_text"
     private const val KEY_HIDE_MAIN_TITLE = "hide_main_title"
-    private const val KEY_BROWSER_SANDBOX_BASELINE_VERSION = "browser_sandbox_baseline_version"
-    private const val BROWSER_SANDBOX_BASELINE_VERSION = 1
-
     /** 屏幕固定软锁：调用 startLockTask() 触发系统「屏幕固定」，拦截 Home/最近任务。 */
     const val MODE_SOFT_LOCK = "SOFT_LOCK"
 
     /** 无系统级锁定：仅沉浸式全屏 + 自定义 Launcher + 认证退出。 */
     const val MODE_NONE = "NONE"
 
-    /** 默认值：未取得 Device Owner 时，自动进入屏幕固定软锁。 */
-    private const val DEFAULT_MODE = MODE_SOFT_LOCK
+    /** 默认值：正常模式下不主动进入屏幕固定软锁。 */
+    private const val DEFAULT_MODE = MODE_NONE
+
+    const val QUICK_MODE_NORMAL = "NORMAL"
+    const val QUICK_MODE_CHILD = "CHILD"
+    const val QUICK_MODE_DEBUG = "DEBUG"
+    const val QUICK_MODE_CUSTOM = "CUSTOM"
+    private const val DEFAULT_QUICK_MODE = QUICK_MODE_NORMAL
 
     const val ORIENTATION_AUTO = "AUTO"
     const val ORIENTATION_LANDSCAPE = "LANDSCAPE"
@@ -157,12 +163,162 @@ object KioskPrefs {
     private const val KEY_LEGACY_LIGHTWEIGHT_NATIVE_LOADING_INDICATOR_ENABLED =
         "webview_lightweight_native_loading_indicator_enabled"
 
+    fun getQuickMode(context: Context): String {
+        return when (prefs(context).getString(KEY_QUICK_MODE, DEFAULT_QUICK_MODE)) {
+            QUICK_MODE_CHILD -> QUICK_MODE_CHILD
+            QUICK_MODE_DEBUG -> QUICK_MODE_DEBUG
+            QUICK_MODE_CUSTOM -> QUICK_MODE_CUSTOM
+            else -> QUICK_MODE_NORMAL
+        }
+    }
+
+    fun setQuickModeCustom(context: Context) {
+        prefs(context).edit().putString(KEY_QUICK_MODE, QUICK_MODE_CUSTOM).apply()
+    }
+
+    fun applyQuickMode(context: Context, mode: String) {
+        val normalized = when (mode) {
+            QUICK_MODE_CHILD -> QUICK_MODE_CHILD
+            QUICK_MODE_DEBUG -> QUICK_MODE_DEBUG
+            QUICK_MODE_CUSTOM -> QUICK_MODE_CUSTOM
+            else -> QUICK_MODE_NORMAL
+        }
+        val editor = prefs(context).edit().putString(KEY_QUICK_MODE, normalized)
+        when (normalized) {
+            QUICK_MODE_CHILD -> applyChildMode(editor)
+            QUICK_MODE_DEBUG -> applyDebugMode(editor)
+            QUICK_MODE_CUSTOM -> Unit
+            else -> applyNormalMode(editor)
+        }
+        editor.apply()
+    }
+
+    private fun applyNormalMode(editor: SharedPreferences.Editor) {
+        editor
+            .putString(KEY_PROTECTION_MODE, MODE_NONE)
+            .putBoolean(KEY_VERIFY_ON_WEB_EXIT, false)
+            .putBoolean(KEY_HIDE_ADMIN_ICON, false)
+            .putBoolean(KEY_ADMIN_QUICK_OPEN, true)
+            .putBoolean("verify_admin_actions", false)
+            .putBoolean("limit_adb", false)
+            .putBoolean("limit_safe_boot", false)
+            .putBoolean("limit_factory_reset", false)
+            .putBoolean("limit_add_user", false)
+            .putBoolean("limit_usb_transfer", false)
+            .putBoolean("limit_screenshot", false)
+            .putBoolean("limit_status_bar", false)
+            .putBoolean("limit_keyguard", false)
+            .putBoolean("limit_voice_assistants", false)
+            .putBoolean("limit_unknown_sources", false)
+            .putBoolean("limit_flag_secure", false)
+            .putBoolean("limit_volume_keys", false)
+            .putBoolean("limit_ad_block", false)
+            .putBoolean("limit_download", false)
+            .putBoolean("limit_long_click", false)
+            .putBoolean("limit_url_redirect", false)
+            .putBoolean("limit_geolocation", false)
+            .putBoolean("limit_ssl_check", true)
+            .putBoolean("limit_multi_window", false)
+            .putBoolean("limit_file_access", false)
+            .putBoolean("limit_media_capture", false)
+            .putBoolean("third_party_cookies_enabled", true)
+            .putBoolean("strict_mixed_content", false)
+            .putBoolean("use_browser_user_agent", true)
+            .putString("custom_user_agent", "")
+            .putBoolean("chrome_inspect_enabled", false)
+            .putString("web_debug_tool", "NONE")
+            .putString("inject_timing_mode", "BOTH")
+            .putBoolean("custom_js_inject_enabled", false)
+            .putString("custom_js_inject_timing", "BOTH")
+    }
+
+    private fun applyChildMode(editor: SharedPreferences.Editor) {
+        editor
+            .putString(KEY_PROTECTION_MODE, MODE_SOFT_LOCK)
+            .putBoolean(KEY_VERIFY_ON_WEB_EXIT, true)
+            .putBoolean(KEY_HIDE_ADMIN_ICON, true)
+            .putBoolean(KEY_ADMIN_QUICK_OPEN, false)
+            .putBoolean("verify_admin_actions", true)
+            .putBoolean("limit_adb", true)
+            .putBoolean("limit_safe_boot", true)
+            .putBoolean("limit_factory_reset", true)
+            .putBoolean("limit_add_user", true)
+            .putBoolean("limit_usb_transfer", true)
+            .putBoolean("limit_screenshot", true)
+            .putBoolean("limit_status_bar", true)
+            .putBoolean("limit_keyguard", true)
+            .putBoolean("limit_voice_assistants", true)
+            .putBoolean("limit_unknown_sources", true)
+            .putBoolean("limit_flag_secure", true)
+            .putBoolean("limit_volume_keys", true)
+            .putBoolean("limit_ad_block", true)
+            .putBoolean("limit_download", true)
+            .putBoolean("limit_long_click", true)
+            .putBoolean("limit_url_redirect", true)
+            .putBoolean("limit_geolocation", true)
+            .putBoolean("limit_ssl_check", true)
+            .putBoolean("limit_multi_window", true)
+            .putBoolean("limit_file_access", true)
+            .putBoolean("limit_media_capture", true)
+            .putBoolean("third_party_cookies_enabled", true)
+            .putBoolean("strict_mixed_content", true)
+            .putBoolean("use_browser_user_agent", true)
+            .putString("custom_user_agent", "")
+            .putBoolean("chrome_inspect_enabled", false)
+            .putString("web_debug_tool", "NONE")
+            .putString("inject_timing_mode", "BOTH")
+            .putBoolean("custom_js_inject_enabled", false)
+            .putString("custom_js_inject_timing", "BOTH")
+    }
+
+    private fun applyDebugMode(editor: SharedPreferences.Editor) {
+        editor
+            .putString(KEY_PROTECTION_MODE, MODE_NONE)
+            .putBoolean(KEY_VERIFY_ON_WEB_EXIT, false)
+            .putBoolean(KEY_HIDE_ADMIN_ICON, false)
+            .putBoolean(KEY_ADMIN_QUICK_OPEN, true)
+            .putBoolean("verify_admin_actions", false)
+            .putBoolean("limit_adb", false)
+            .putBoolean("limit_safe_boot", false)
+            .putBoolean("limit_factory_reset", false)
+            .putBoolean("limit_add_user", false)
+            .putBoolean("limit_usb_transfer", false)
+            .putBoolean("limit_screenshot", false)
+            .putBoolean("limit_status_bar", false)
+            .putBoolean("limit_keyguard", false)
+            .putBoolean("limit_voice_assistants", false)
+            .putBoolean("limit_unknown_sources", false)
+            .putBoolean("limit_flag_secure", false)
+            .putBoolean("limit_volume_keys", false)
+            .putBoolean("limit_ad_block", false)
+            .putBoolean("limit_download", false)
+            .putBoolean("limit_long_click", false)
+            .putBoolean("limit_url_redirect", false)
+            .putBoolean("limit_geolocation", false)
+            .putBoolean("limit_ssl_check", false)
+            .putBoolean("limit_multi_window", false)
+            .putBoolean("limit_file_access", false)
+            .putBoolean("limit_media_capture", false)
+            .putBoolean("third_party_cookies_enabled", true)
+            .putBoolean("strict_mixed_content", false)
+            .putBoolean("use_browser_user_agent", true)
+            .putString("custom_user_agent", "")
+            .putBoolean("chrome_inspect_enabled", true)
+            .putString("web_debug_tool", "VCONSOLE")
+            .putString("inject_timing_mode", "BOTH")
+            .putBoolean("custom_js_inject_enabled", false)
+            .putString("custom_js_inject_timing", "BOTH")
+    }
+
     fun getProtectionMode(context: Context): String {
         return prefs(context).getString(KEY_PROTECTION_MODE, DEFAULT_MODE) ?: DEFAULT_MODE
     }
 
     fun setProtectionMode(context: Context, mode: String) {
-        prefs(context).edit().putString(KEY_PROTECTION_MODE, mode).apply()
+        prefs(context).edit()
+            .putString(KEY_PROTECTION_MODE, mode)
+            .putString(KEY_QUICK_MODE, QUICK_MODE_CUSTOM)
+            .apply()
     }
 
     fun getOrientationMode(context: Context): String {
@@ -198,7 +354,10 @@ object KioskPrefs {
     }
 
     fun setVerifyOnWebExit(context: Context, verify: Boolean) {
-        prefs(context).edit().putBoolean(KEY_VERIFY_ON_WEB_EXIT, verify).apply()
+        prefs(context).edit()
+            .putBoolean(KEY_VERIFY_ON_WEB_EXIT, verify)
+            .putString(KEY_QUICK_MODE, QUICK_MODE_CUSTOM)
+            .apply()
     }
 
     fun getHideAdminIcon(context: Context): Boolean {
@@ -206,7 +365,21 @@ object KioskPrefs {
     }
 
     fun setHideAdminIcon(context: Context, hide: Boolean) {
-        prefs(context).edit().putBoolean(KEY_HIDE_ADMIN_ICON, hide).apply()
+        prefs(context).edit()
+            .putBoolean(KEY_HIDE_ADMIN_ICON, hide)
+            .putString(KEY_QUICK_MODE, QUICK_MODE_CUSTOM)
+            .apply()
+    }
+
+    fun getAdminQuickOpen(context: Context): Boolean {
+        return prefs(context).getBoolean(KEY_ADMIN_QUICK_OPEN, true)
+    }
+
+    fun setAdminQuickOpen(context: Context, enabled: Boolean) {
+        prefs(context).edit()
+            .putBoolean(KEY_ADMIN_QUICK_OPEN, enabled)
+            .putString(KEY_QUICK_MODE, QUICK_MODE_CUSTOM)
+            .apply()
     }
 
     fun getAdminIconAlpha(context: Context): Float {
@@ -231,18 +404,6 @@ object KioskPrefs {
 
     fun setHideMainTitle(context: Context, hide: Boolean) {
         prefs(context).edit().putBoolean(KEY_HIDE_MAIN_TITLE, hide).apply()
-    }
-
-    fun applyBrowserSandboxDefaultBaseline(context: Context) {
-        val storage = prefs(context)
-        val appliedVersion = storage.getInt(KEY_BROWSER_SANDBOX_BASELINE_VERSION, 0)
-        if (appliedVersion >= BROWSER_SANDBOX_BASELINE_VERSION) return
-
-        storage.edit()
-            .putBoolean("limit_ad_block", false)
-            .putBoolean("limit_url_redirect", false)
-            .putInt(KEY_BROWSER_SANDBOX_BASELINE_VERSION, BROWSER_SANDBOX_BASELINE_VERSION)
-            .apply()
     }
 
     fun getWebViewRuntimeConfig(context: Context): WebViewRuntimeConfig {
@@ -347,80 +508,112 @@ object KioskPrefs {
     }
 
     // 1. 系统加固开关 (Device Owner)
-    fun isLimitAdbEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_adb", true)
-    fun setLimitAdbEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_adb", enabled).apply()
+    fun isLimitAdbEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_adb", false)
+    fun setLimitAdbEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_adb", enabled).apply()
 
-    fun isLimitSafeBootEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_safe_boot", true)
-    fun setLimitSafeBootEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_safe_boot", enabled).apply()
+    fun isLimitSafeBootEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_safe_boot", false)
+    fun setLimitSafeBootEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_safe_boot", enabled).apply()
 
-    fun isLimitFactoryResetEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_factory_reset", true)
-    fun setLimitFactoryResetEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_factory_reset", enabled).apply()
+    fun isLimitFactoryResetEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_factory_reset", false)
+    fun setLimitFactoryResetEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_factory_reset", enabled).apply()
 
-    fun isLimitAddUserEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_add_user", true)
-    fun setLimitAddUserEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_add_user", enabled).apply()
+    fun isLimitAddUserEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_add_user", false)
+    fun setLimitAddUserEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_add_user", enabled).apply()
 
-    fun isLimitUsbTransferEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_usb_transfer", true)
-    fun setLimitUsbTransferEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_usb_transfer", enabled).apply()
+    fun isLimitUsbTransferEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_usb_transfer", false)
+    fun setLimitUsbTransferEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_usb_transfer", enabled).apply()
 
-    fun isLimitScreenshotEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_screenshot", true)
-    fun setLimitScreenshotEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_screenshot", enabled).apply()
+    fun isLimitScreenshotEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_screenshot", false)
+    fun setLimitScreenshotEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_screenshot", enabled).apply()
 
-    fun isLimitStatusBarEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_status_bar", true)
-    fun setLimitStatusBarEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_status_bar", enabled).apply()
+    fun isLimitStatusBarEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_status_bar", false)
+    fun setLimitStatusBarEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_status_bar", enabled).apply()
 
-    fun isLimitKeyguardEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_keyguard", true)
-    fun setLimitKeyguardEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_keyguard", enabled).apply()
+    fun isLimitKeyguardEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_keyguard", false)
+    fun setLimitKeyguardEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_keyguard", enabled).apply()
+
+    fun isLimitVoiceAssistantsEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_voice_assistants", false)
+    fun setLimitVoiceAssistantsEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_voice_assistants", enabled).apply()
+
+    fun isLimitUnknownSourcesEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_unknown_sources", false)
+    fun setLimitUnknownSourcesEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_unknown_sources", enabled).apply()
 
     // 2. 物理与界面限制开关
-    fun isLimitFlagSecureEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_flag_secure", true)
-    fun setLimitFlagSecureEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_flag_secure", enabled).apply()
+    fun isLimitFlagSecureEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_flag_secure", false)
+    fun setLimitFlagSecureEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_flag_secure", enabled).apply()
 
     fun isLimitVolumeKeysEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_volume_keys", false)
-    fun setLimitVolumeKeysEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_volume_keys", enabled).apply()
+    fun setLimitVolumeKeysEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_volume_keys", enabled).apply()
 
     // 3. 网页浏览器沙箱限制
     fun isLimitAdBlockEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_ad_block", false)
-    fun setLimitAdBlockEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_ad_block", enabled).apply()
+    fun setLimitAdBlockEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_ad_block", enabled).apply()
 
     fun isLimitDownloadEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_download", false)
-    fun setLimitDownloadEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_download", enabled).apply()
+    fun setLimitDownloadEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_download", enabled).apply()
 
     fun isLimitLongClickEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_long_click", false)
-    fun setLimitLongClickEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_long_click", enabled).apply()
+    fun setLimitLongClickEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_long_click", enabled).apply()
 
     fun isLimitUrlRedirectEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_url_redirect", false)
-    fun setLimitUrlRedirectEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_url_redirect", enabled).apply()
+    fun setLimitUrlRedirectEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_url_redirect", enabled).apply()
 
     fun isLimitGeolocationEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_geolocation", false)
-    fun setLimitGeolocationEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_geolocation", enabled).apply()
+    fun setLimitGeolocationEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_geolocation", enabled).apply()
 
     fun isLimitSslCheckEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_ssl_check", true)
-    fun setLimitSslCheckEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_ssl_check", enabled).apply()
+    fun setLimitSslCheckEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_ssl_check", enabled).apply()
 
     fun isLimitMultiWindowEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_multi_window", false)
-    fun setLimitMultiWindowEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_multi_window", enabled).apply()
+    fun setLimitMultiWindowEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_multi_window", enabled).apply()
 
     fun isLimitFileAccessEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_file_access", false)
-    fun setLimitFileAccessEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_file_access", enabled).apply()
+    fun setLimitFileAccessEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_file_access", enabled).apply()
 
     fun isLimitMediaCaptureEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_media_capture", false)
-    fun setLimitMediaCaptureEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("limit_media_capture", enabled).apply()
+    fun setLimitMediaCaptureEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_media_capture", enabled).apply()
 
     fun isThirdPartyCookiesEnabled(context: Context): Boolean = prefs(context).getBoolean("third_party_cookies_enabled", true)
-    fun setThirdPartyCookiesEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("third_party_cookies_enabled", enabled).apply()
+    fun setThirdPartyCookiesEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("third_party_cookies_enabled", enabled).apply()
 
     fun isStrictMixedContentEnabled(context: Context): Boolean = prefs(context).getBoolean("strict_mixed_content", false)
-    fun setStrictMixedContentEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("strict_mixed_content", enabled).apply()
+    fun setStrictMixedContentEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("strict_mixed_content", enabled).apply()
 
     fun isUseBrowserUserAgentEnabled(context: Context): Boolean = prefs(context).getBoolean("use_browser_user_agent", true)
-    fun setUseBrowserUserAgentEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("use_browser_user_agent", enabled).apply()
+    fun setUseBrowserUserAgentEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("use_browser_user_agent", enabled).apply()
 
     fun getCustomUserAgent(context: Context): String = prefs(context).getString("custom_user_agent", "") ?: ""
-    fun setCustomUserAgent(context: Context, userAgent: String) = prefs(context).edit().putString("custom_user_agent", userAgent).apply()
+    fun setCustomUserAgent(context: Context, userAgent: String) =
+        customEditor(context).putString("custom_user_agent", userAgent).apply()
 
     // 4. 网页调试与开发配置
     fun getWebDebugTool(context: Context): String = prefs(context).getString("web_debug_tool", "NONE") ?: "NONE"
-    fun setWebDebugTool(context: Context, tool: String) = prefs(context).edit().putString("web_debug_tool", tool).apply()
+    fun setWebDebugTool(context: Context, tool: String) =
+        customEditor(context).putString("web_debug_tool", tool).apply()
 
     fun getVConsoleCdnUrl(context: Context): String =
         prefs(context).getString("vconsole_cdn_url", "https://unpkg.com/vconsole@latest/dist/vconsole.min.js") ?: "https://unpkg.com/vconsole@latest/dist/vconsole.min.js"
@@ -431,27 +624,35 @@ object KioskPrefs {
     fun setErudaCdnUrl(context: Context, url: String) = prefs(context).edit().putString("eruda_cdn_url", url).apply()
 
     fun getInjectTimingMode(context: Context): String = prefs(context).getString("inject_timing_mode", "BOTH") ?: "BOTH"
-    fun setInjectTimingMode(context: Context, mode: String) = prefs(context).edit().putString("inject_timing_mode", mode).apply()
+    fun setInjectTimingMode(context: Context, mode: String) =
+        customEditor(context).putString("inject_timing_mode", mode).apply()
 
     fun isChromeInspectEnabled(context: Context): Boolean = prefs(context).getBoolean("chrome_inspect_enabled", false)
-    fun setChromeInspectEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("chrome_inspect_enabled", enabled).apply()
+    fun setChromeInspectEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("chrome_inspect_enabled", enabled).apply()
 
     // 5. 操作验证机制
-    fun getVerifyAdminActions(context: Context): Boolean = prefs(context).getBoolean("verify_admin_actions", true)
-    fun setVerifyAdminActions(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("verify_admin_actions", enabled).apply()
+    fun getVerifyAdminActions(context: Context): Boolean = prefs(context).getBoolean("verify_admin_actions", false)
+    fun setVerifyAdminActions(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("verify_admin_actions", enabled).apply()
 
     // 6. 自定义独立 JS 注入配置
     fun isCustomJsInjectEnabled(context: Context): Boolean = prefs(context).getBoolean("custom_js_inject_enabled", false)
-    fun setCustomJsInjectEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean("custom_js_inject_enabled", enabled).apply()
+    fun setCustomJsInjectEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("custom_js_inject_enabled", enabled).apply()
 
     fun getCustomJsInjectTiming(context: Context): String = prefs(context).getString("custom_js_inject_timing", "BOTH") ?: "BOTH"
-    fun setCustomJsInjectTiming(context: Context, timing: String) = prefs(context).edit().putString("custom_js_inject_timing", timing).apply()
+    fun setCustomJsInjectTiming(context: Context, timing: String) =
+        customEditor(context).putString("custom_js_inject_timing", timing).apply()
 
     fun getCustomJsInjectUrl(context: Context): String = prefs(context).getString("custom_js_inject_url", "") ?: ""
     fun setCustomJsInjectUrl(context: Context, url: String) = prefs(context).edit().putString("custom_js_inject_url", url).apply()
 
     fun getCustomJsInjectCode(context: Context): String = prefs(context).getString("custom_js_inject_code", "") ?: ""
     fun setCustomJsInjectCode(context: Context, code: String) = prefs(context).edit().putString("custom_js_inject_code", code).apply()
+
+    private fun customEditor(context: Context): SharedPreferences.Editor =
+        prefs(context).edit().putString(KEY_QUICK_MODE, QUICK_MODE_CUSTOM)
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

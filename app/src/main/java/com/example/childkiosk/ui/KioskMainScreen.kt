@@ -132,6 +132,9 @@ fun KioskMainScreen(
     val hideAdminIcon = remember {
         com.example.childkiosk.util.KioskPrefs.getHideAdminIcon(context)
     }
+    val adminQuickOpen = remember {
+        com.example.childkiosk.util.KioskPrefs.getAdminQuickOpen(context)
+    }
     val adminIconAlpha = remember {
         com.example.childkiosk.util.KioskPrefs.getAdminIconAlpha(context)
     }
@@ -291,19 +294,29 @@ fun KioskMainScreen(
                     indication = null
                 ) {
                     val now = System.currentTimeMillis()
-                    clicks.add(now)
-                    if (clicks.size > 5) {
-                        clicks.removeAt(0)
-                    }
-                    if (clicks.size == 5 && (now - clicks[0]) <= 2000) {
+                    if (adminQuickOpen) {
                         clicks.clear()
                         if (com.example.childkiosk.util.KioskPrefs.getVerifyAdminActions(context)) {
-                            // 弹窗认证
                             nextActionAfterVerify = "MENU"
                             showVerifyDialog = true
                         } else {
-                            // 免验证直接进入菜单
                             showMenuDialog = true
+                        }
+                    } else {
+                        clicks.add(now)
+                        if (clicks.size > 5) {
+                            clicks.removeAt(0)
+                        }
+                        if (clicks.size == 5 && (now - clicks[0]) <= 2000) {
+                            clicks.clear()
+                            if (com.example.childkiosk.util.KioskPrefs.getVerifyAdminActions(context)) {
+                                // 弹窗认证
+                                nextActionAfterVerify = "MENU"
+                                showVerifyDialog = true
+                            } else {
+                                // 免验证直接进入菜单
+                                showMenuDialog = true
+                            }
                         }
                     }
                 },

@@ -123,9 +123,15 @@ class MainActivity : ComponentActivity() {
                             onExitKiosk = { stopLockTaskMode() },
                             onGoToHomeSettings = { openHomeSettings() },
                             onProtectionModeChanged = { mode ->
-                                if (mode == KioskPrefs.MODE_SOFT_LOCK) {
-                                    isSoftLockDeferred = false
-                                    triggerKioskIfNeeded()
+                                if (!dpm.isDeviceOwnerApp(packageName)) {
+                                    if (mode == KioskPrefs.MODE_SOFT_LOCK) {
+                                        isSoftLockDeferred = false
+                                        triggerKioskIfNeeded()
+                                    } else {
+                                        isSoftLockDeferred = true
+                                        runCatching { stopLockTask() }
+                                        applySystemUiMode()
+                                    }
                                 }
                             },
                             onSandboxLimitsChanged = {
@@ -211,6 +217,10 @@ class MainActivity : ComponentActivity() {
         applyUserRestriction(admin, UserManager.DISALLOW_FACTORY_RESET, KioskPrefs.isLimitFactoryResetEnabled(this))
         applyUserRestriction(admin, UserManager.DISALLOW_ADD_USER, KioskPrefs.isLimitAddUserEnabled(this))
         applyUserRestriction(admin, UserManager.DISALLOW_USB_FILE_TRANSFER, KioskPrefs.isLimitUsbTransferEnabled(this))
+        applyUserRestriction(admin, UserManager.DISALLOW_INSTALL_UNKNOWN_SOURCES, KioskPrefs.isLimitUnknownSourcesEnabled(this))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            applyUserRestriction(admin, "no_voice_assistants", KioskPrefs.isLimitVoiceAssistantsEnabled(this))
+        }
 
         runCatching {
             dpm.setScreenCaptureDisabled(admin, KioskPrefs.isLimitScreenshotEnabled(this))
@@ -264,16 +274,6 @@ class MainActivity : ComponentActivity() {
                 )
             }
 
-            // 限制语音助手、未知来源等多维度逃逸路径
-            runCatching {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    dpm.addUserRestriction(adminComponent, "no_voice_assistants")
-                }
-            }
-            runCatching {
-                dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_INSTALL_UNKNOWN_SOURCES)
-            }
-
             // 应用可配置的沙箱限制
             applySandboxLimits()
 
@@ -319,7 +319,11 @@ class MainActivity : ComponentActivity() {
             if (dpm.isDeviceOwnerApp(packageName)) {
                 runCatching { dpm.clearUserRestriction(adminComponent, "no_voice_assistants") }
                 runCatching { dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_DEBUGGING_FEATURES) }
+                runCatching { dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_SAFE_BOOT) }
+                runCatching { dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET) }
+                runCatching { dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_ADD_USER) }
                 runCatching { dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_USB_FILE_TRANSFER) }
+                runCatching { dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_INSTALL_UNKNOWN_SOURCES) }
                 runCatching { dpm.setScreenCaptureDisabled(adminComponent, false) }
                 runCatching { dpm.setStatusBarDisabled(adminComponent, false) }
                 runCatching { dpm.setKeyguardDisabled(adminComponent, false) }

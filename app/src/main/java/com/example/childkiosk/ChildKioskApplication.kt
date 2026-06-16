@@ -26,7 +26,6 @@ class ChildKioskApplication : Application(), ComponentCallbacks2 {
             }
         }
         Log.d("ChildKioskApp", "Process started: $processName, webViewProcess=$isWebViewProcess")
-        KioskPrefs.applyBrowserSandboxDefaultBaseline(this)
 
         // 1. 初始化 WebView 预加载池
         WebViewPool.init(this)
