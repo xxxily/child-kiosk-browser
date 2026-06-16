@@ -37,6 +37,8 @@ import com.example.childkiosk.util.HashUtils
 import com.example.childkiosk.util.KioskPrefs
 import com.example.childkiosk.util.WebDataManager
 import com.example.childkiosk.util.WebDataStats
+import com.example.childkiosk.util.WebViewProviderDiagnostics
+import com.example.childkiosk.util.WebViewProviderSnapshot
 import com.example.childkiosk.util.WebViewRuntime
 import com.example.childkiosk.util.WebViewPool
 import com.example.childkiosk.util.filter.FilterPreset
@@ -50,6 +52,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -108,32 +111,46 @@ fun AdminConsoleScreen(
         }
     }
 
-    val webViewInfo = remember {
-        try {
-            val packageInfo = androidx.webkit.WebViewCompat.getCurrentWebViewPackage(context)
-            if (packageInfo != null) {
-                "${packageInfo.packageName} (${packageInfo.versionName})"
-            } else {
-                val userAgent = android.webkit.WebSettings.getDefaultUserAgent(context)
-                val regex = "Chrome/([\\d.]+)".toRegex()
-                val match = regex.find(userAgent)
-                if (match != null) {
-                    "System WebView (Chrome ${match.groupValues[1]})"
-                } else {
-                    "System WebView (无法获取版本)"
-                }
-            }
-        } catch (e: Throwable) {
-            "System WebView (读取失败)"
+    var webViewSnapshot by remember { mutableStateOf(WebViewProviderDiagnostics.collect(context)) }
+
+    fun refreshWebViewSnapshot() {
+        webViewSnapshot = WebViewProviderDiagnostics.collect(context)
+    }
+
+    fun openUri(uri: String, errorMessage: String) {
+        runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)))
+        }.onFailure {
+            Toast.makeText(context, errorMessage, Toast.LENGTH_SHORT).show()
         }
     }
 
-    val deviceInfo = remember {
-        "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
+    fun openWebViewMarket(packageName: String) {
+        runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$packageName")))
+        }.onFailure {
+            openUri(
+                "https://play.google.com/store/apps/details?id=$packageName",
+                "无法打开应用商店，请手动搜索 $packageName"
+            )
+        }
     }
 
-    val androidVersion = remember {
-        android.os.Build.VERSION.RELEASE
+    fun openWebViewSettings() {
+        val intents = listOf(
+            Intent(Settings.ACTION_WEBVIEW_SETTINGS),
+            Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS),
+            Intent(Settings.ACTION_SETTINGS)
+        )
+        val opened = intents.any { intent ->
+            runCatching {
+                context.startActivity(intent)
+                true
+            }.getOrDefault(false)
+        }
+        if (!opened) {
+            Toast.makeText(context, "无法打开系统 WebView 设置", Toast.LENGTH_SHORT).show()
+        }
     }
 
     val protectionLevel = remember(isDeviceOwner) {
@@ -173,6 +190,7 @@ fun AdminConsoleScreen(
                         "WEB_FILTERING" -> "网页过滤管理"
                         "SANDBOX_LIMITS" -> "安全沙箱与限制"
                         "PERFORMANCE" -> "网页性能优化"
+                        "WEBVIEW_PROVIDER" -> "WebView 内核环境"
                         "WHITELIST" -> "应用白名单管理"
                         else -> "配置后台"
                     }
@@ -294,6 +312,16 @@ fun AdminConsoleScreen(
                                     )
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
+                                        icon = Icons.Default.Language,
+                                        title = "WebView 内核环境",
+                                        summary = "${webViewSnapshot.providerSummary} | ${webViewSnapshot.status.label}",
+                                        onClick = {
+                                            refreshWebViewSnapshot()
+                                            currentSubPage = "WEBVIEW_PROVIDER"
+                                        }
+                                    )
+                                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                                    AdminMenuItem(
                                         icon = Icons.Default.List,
                                         title = "应用白名单管理",
                                         summary = "管理并分类展示允许访问的应用（共 ${webApps.size} 个应用）",
@@ -307,9 +335,9 @@ fun AdminConsoleScreen(
                         item {
                             AboutAndSystemCard(
                                 currentVersion = currentVersion,
-                                webViewInfo = webViewInfo,
-                                deviceInfo = deviceInfo,
-                                androidVersion = androidVersion,
+                                webViewInfo = webViewSnapshot.providerSummary,
+                                deviceInfo = webViewSnapshot.deviceModel,
+                                androidVersion = webViewSnapshot.androidVersion,
                                 protectionLevel = protectionLevel,
                                 isCheckingUpdate = isCheckingUpdate,
                                 onCheckUpdate = {
@@ -1156,6 +1184,28 @@ fun AdminConsoleScreen(
                             quickMode = KioskPrefs.getQuickMode(context)
                             WebViewPool.clear()
                             onSandboxLimitsChanged()
+                        }
+                    )
+                }
+                "WEBVIEW_PROVIDER" -> {
+                    WebViewProviderScreen(
+                        snapshot = webViewSnapshot,
+                        onRefresh = {
+                            refreshWebViewSnapshot()
+                            Toast.makeText(context, "WebView 内核信息已重新检测", Toast.LENGTH_SHORT).show()
+                        },
+                        onCopyDiagnostics = {
+                            clipboardManager.setText(AnnotatedString(webViewSnapshot.diagnosticText()))
+                            Toast.makeText(context, "WebView 诊断信息已复制", Toast.LENGTH_SHORT).show()
+                        },
+                        onOpenWebViewUpdate = {
+                            openWebViewMarket("com.google.android.webview")
+                        },
+                        onOpenChromeUpdate = {
+                            openWebViewMarket("com.android.chrome")
+                        },
+                        onOpenSystemSettings = {
+                            openWebViewSettings()
                         }
                     )
                 }
@@ -3856,21 +3906,229 @@ fun AboutAndSystemCard(
 }
 
 @Composable
+fun WebViewProviderScreen(
+    snapshot: WebViewProviderSnapshot,
+    onRefresh: () -> Unit,
+    onCopyDiagnostics: () -> Unit,
+    onOpenWebViewUpdate: () -> Unit,
+    onOpenChromeUpdate: () -> Unit,
+    onOpenSystemSettings: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Language,
+                        contentDescription = "WebView 内核环境",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("WebView 内核运行环境", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(snapshot.status.label, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Text(snapshot.status.description, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    AssistChip(
+                        onClick = onRefresh,
+                        label = { Text("重新检测") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "重新检测",
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    )
+                }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.65f))
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    DiagnosticItem(label = "Provider 包名", value = snapshot.providerPackageName ?: "无法读取")
+                    DiagnosticItem(label = "Provider 版本", value = snapshot.providerVersionName ?: "无法读取")
+                    DiagnosticItem(label = "versionCode", value = snapshot.providerVersionCode?.toString() ?: "无法读取")
+                    DiagnosticItem(label = "Chromium", value = snapshot.chromiumVersion ?: "无法解析")
+                    DiagnosticItem(label = "Android", value = "${snapshot.androidVersion} (SDK ${snapshot.androidSdk})")
+                    DiagnosticItem(label = "设备型号", value = snapshot.deviceModel)
+                    DiagnosticItem(label = "进程", value = snapshot.processName)
+                    DiagnosticItem(label = "独立 WebView 进程", value = if (snapshot.isWebViewProcess) "是" else "否")
+                    DiagnosticItem(label = "渲染路径", value = "WebViewActivity -> FrameLayout -> WebView")
+                    snapshot.readError?.let {
+                        DiagnosticItem(label = "读取错误", value = it)
+                    }
+                }
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Tune,
+                        contentDescription = "兼容性开关",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("关键 WebView 配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+
+                val config = snapshot.runtimeConfig
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.65f))
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    DiagnosticItem(label = "Chrome Inspect", value = enabledLabel(config.chromeInspectEnabled))
+                    DiagnosticItem(label = "手机浏览器 UA", value = enabledLabel(config.useBrowserUserAgent))
+                    DiagnosticItem(label = "自定义 UA", value = if (config.customUserAgent.isBlank()) "未设置" else "已设置")
+                    DiagnosticItem(label = "第三方 Cookie", value = enabledLabel(config.thirdPartyCookiesEnabled))
+                    DiagnosticItem(label = "严格混合内容", value = enabledLabel(config.strictMixedContent))
+                    DiagnosticItem(label = "热备 WebView", value = enabledLabel(config.webViewWarmPoolEnabled))
+                    DiagnosticItem(label = "后台预加载", value = enabledLabel(config.webPreloadEnabled))
+                    DiagnosticItem(label = "顶部进度条", value = enabledLabel(config.webViewTopProgressEnabled))
+                }
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.SystemUpdate,
+                        contentDescription = "更新引导",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("升级与设置入口", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Text(
+                    "新 WebView 是否生效由 Android 系统决定。如果系统不允许切换 WebView 实现，本应用无法单独替换内核。升级或切换后请完全关闭并重新打开网页，必要时重启应用或设备。",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(
+                        onClick = onCopyDiagnostics,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "复制诊断")
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("复制诊断信息")
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onOpenWebViewUpdate,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.SystemUpdate, contentDescription = "更新 WebView")
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("WebView")
+                        }
+                        OutlinedButton(
+                            onClick = onOpenChromeUpdate,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.OpenInBrowser, contentDescription = "更新 Chrome")
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Chrome")
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = onOpenSystemSettings,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Settings, contentDescription = "系统设置")
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("打开系统 WebView 设置")
+                    }
+                }
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("系统默认 WebView UA", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text(
+                    text = snapshot.defaultUserAgent.ifBlank { "无法读取" },
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+private fun enabledLabel(enabled: Boolean): String = if (enabled) "开启" else "关闭"
+
+@Composable
 fun DiagnosticItem(label: String, value: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top
     ) {
-        Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            label,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.widthIn(min = 72.dp, max = 120.dp)
+        )
         Text(
             value,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2,
-            modifier = Modifier.padding(start = 16.dp).weight(1f, fill = false)
+            modifier = Modifier
+                .padding(start = 16.dp)
+                .weight(1f)
         )
     }
 }
