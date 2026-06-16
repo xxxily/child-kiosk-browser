@@ -322,6 +322,18 @@ class WebViewActivity : ComponentActivity() {
                 finish()
                 return@launch
             }
+            withContext(Dispatchers.IO) {
+                if (runtimeConfig.limitAdBlock && runtimeConfig.filterSnapshot.enabled) {
+                    runCatching {
+                        FilterRepository.getEngine(
+                            this@WebViewActivity.applicationContext,
+                            runtimeConfig.filterSnapshot
+                        )
+                    }.onFailure { e ->
+                        Log.w("ChildKioskWebView", "Filter engine prewarm failed", e)
+                    }
+                }
+            }
             attachNativeWebView(root, webApp)
         }
     }
@@ -1208,9 +1220,9 @@ private fun createSecureWebView(
                     return true
                 }
 
-                if (runtimeConfig.limitAdBlock && request?.isForMainFrame == true) {
-                    val cleanedUrl = FilterRepository.getEngine(ctx, runtimeConfig.filterSnapshot)
-                        .cleanUrlForNavigation(urlStr, view?.url ?: targetUrl)
+                if (runtimeConfig.limitAdBlock && request.isForMainFrame) {
+                    val cleanedUrl = FilterRepository.getCachedEngine(runtimeConfig.filterSnapshot)
+                        ?.cleanUrlForNavigation(urlStr, view?.url ?: targetUrl)
                     if (!cleanedUrl.isNullOrBlank() && cleanedUrl != urlStr) {
                         Log.d("ChildKioskWebView", "Cleaned tracking params: $urlStr -> $cleanedUrl")
                         view?.loadUrl(cleanedUrl)
@@ -1340,7 +1352,7 @@ private fun createSecureWebView(
                 resultMsg: android.os.Message?
             ): Boolean {
                 if (resultMsg == null) return false
-                if (runtimeConfig.limitAdBlock && shouldBlockPopup(ctx, view, runtimeConfig)) {
+                if (runtimeConfig.limitAdBlock && shouldBlockPopup(view, runtimeConfig)) {
                     Log.d("ChildKioskWebView", "Blocked popup window: parent=${view?.url}")
                     return false
                 }
@@ -1554,15 +1566,14 @@ private fun injectPageScripts(
     currentTiming: String
 ) {
     webView ?: return
-    injectCosmeticCssIfNeeded(webView, context, config)
-    injectFilterScriptletsIfNeeded(webView, context, config)
+    injectCosmeticCssIfNeeded(webView, config)
+    injectFilterScriptletsIfNeeded(webView, config)
     injectDebugToolIfNeeded(webView, context, config, currentTiming)
     injectCustomScriptIfNeeded(webView, config, currentTiming)
 }
 
 private fun injectCosmeticCssIfNeeded(
     webView: WebView,
-    context: Context,
     config: WebViewRuntimeConfig
 ) {
     if (!config.limitAdBlock || !config.filterSnapshot.enabled) return
@@ -1571,9 +1582,10 @@ private fun injectCosmeticCssIfNeeded(
     val host = WebViewRuntime.hostOf(pageUrl)
     if (host.isBlank()) return
     val siteOverride = FilterRepository.siteOverrideFor(config.filterSnapshot, host)
-    val css = FilterRepository.getEngine(context, config.filterSnapshot)
-        .cosmeticCssFor(host, siteOverride)
-        .take(256 * 1024)
+    val css = FilterRepository.getCachedEngine(config.filterSnapshot)
+        ?.cosmeticCssFor(host, siteOverride)
+        ?.take(256 * 1024)
+        ?: return
     if (css.isBlank()) return
     val cssJson = JSONObject.quote(css)
     val js = """
@@ -1593,7 +1605,6 @@ private fun injectCosmeticCssIfNeeded(
 
 private fun injectFilterScriptletsIfNeeded(
     webView: WebView,
-    context: Context,
     config: WebViewRuntimeConfig
 ) {
     if (!config.limitAdBlock || !config.filterSnapshot.enabled) return
@@ -1602,8 +1613,9 @@ private fun injectFilterScriptletsIfNeeded(
     val host = WebViewRuntime.hostOf(pageUrl)
     if (host.isBlank()) return
     val siteOverride = FilterRepository.siteOverrideFor(config.filterSnapshot, host)
-    val scriptlets = FilterRepository.getEngine(context, config.filterSnapshot)
-        .scriptletJsFor(host, siteOverride)
+    val scriptlets = FilterRepository.getCachedEngine(config.filterSnapshot)
+        ?.scriptletJsFor(host, siteOverride)
+        ?: return
     if (scriptlets.isBlank()) return
     val js = """
         (function() {
@@ -1616,7 +1628,6 @@ private fun injectFilterScriptletsIfNeeded(
 }
 
 private fun shouldBlockPopup(
-    context: Context,
     parent: WebView?,
     config: WebViewRuntimeConfig
 ): Boolean {
@@ -1631,9 +1642,9 @@ private fun shouldBlockPopup(
         hasGesture = false
     )
     val siteOverride = FilterRepository.siteOverrideFor(config.filterSnapshot, requestContext.topLevelHost)
-    return FilterRepository.getEngine(context, config.filterSnapshot)
-        .decide(requestContext, siteOverride)
-        .action == FilterAction.BLOCK
+    return FilterRepository.getCachedEngine(config.filterSnapshot)
+        ?.decide(requestContext, siteOverride)
+        ?.action == FilterAction.BLOCK
 }
 
 private fun destroyWebViewSafely(webView: WebView) {

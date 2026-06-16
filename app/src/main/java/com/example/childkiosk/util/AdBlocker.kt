@@ -34,8 +34,9 @@ object AdBlocker {
             method = request.method.orEmpty(),
             hasGesture = request.hasGesture()
         )
+        val engine = FilterRepository.getCachedEngine(snapshot) ?: return FilterDecision.ALLOW
         val siteOverride = FilterRepository.siteOverrideFor(snapshot, requestContext.topLevelHost)
-        val decision = FilterRepository.getEngine(context, snapshot).decide(requestContext, siteOverride)
+        val decision = engine.decide(requestContext, siteOverride)
         if (decision.action != FilterAction.ALLOW) {
             FilterRepository.recordEvent(
                 context,

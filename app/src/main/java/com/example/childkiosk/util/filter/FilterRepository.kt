@@ -2,12 +2,14 @@ package com.example.childkiosk.util.filter
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.AtomicFile
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 object FilterRepository {
     private const val PREFS_NAME = "kiosk_filter_prefs"
@@ -18,9 +20,20 @@ object FilterRepository {
     private const val KEY_SITE_OVERRIDES = "site_overrides"
     private const val KEY_EVENTS = "events"
     private const val RULE_DIR = "filter_subscriptions"
+    private const val EVENTS_FILE = "filter_events.json"
+    private const val EVENTS_CLEARED_FILE = "filter_events_cleared_at.txt"
     private const val MAX_EVENTS = 200
 
-    private val engineCache = AtomicReference<CachedEngine?>(null)
+    private val engineCache = object : LinkedHashMap<String, FilterEngine>(4, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, FilterEngine>?): Boolean {
+            return size > 4
+        }
+    }
+    private val eventLock = Any()
+    private val eventGeneration = AtomicLong(0L)
+    private val eventExecutor = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "ChildKioskFilterEvents").apply { isDaemon = true }
+    }
 
     fun getSettings(context: Context): FilterSettings {
         val prefs = prefs(context)
@@ -183,24 +196,36 @@ object FilterRepository {
     fun getEngine(context: Context, snapshot: FilterRuntimeSnapshot? = null): FilterEngine {
         val runtimeSnapshot = snapshot ?: getRuntimeSnapshot(context)
         if (!runtimeSnapshot.enabled) return FilterEngine.EMPTY
-        val cacheKey = runtimeSnapshot.toJson().toString()
-        engineCache.get()?.let { cached ->
-            if (cached.key == cacheKey) return cached.engine
+        val cacheKey = engineCacheKey(runtimeSnapshot)
+        synchronized(engineCache) {
+            engineCache[cacheKey]?.let { return it }
         }
         val engine = buildEngine(context, runtimeSnapshot)
-        engineCache.set(CachedEngine(cacheKey, engine))
+        synchronized(engineCache) {
+            engineCache[cacheKey] = engine
+        }
         return engine
     }
 
     fun getEngine(snapshot: FilterRuntimeSnapshot): FilterEngine {
         if (!snapshot.enabled) return FilterEngine.EMPTY
-        val cacheKey = snapshot.toJson().toString()
-        engineCache.get()?.let { cached ->
-            if (cached.key == cacheKey) return cached.engine
+        val cacheKey = engineCacheKey(snapshot)
+        synchronized(engineCache) {
+            engineCache[cacheKey]?.let { return it }
         }
         val engine = buildEngine(null, snapshot)
-        engineCache.set(CachedEngine(cacheKey, engine))
+        synchronized(engineCache) {
+            engineCache[cacheKey] = engine
+        }
         return engine
+    }
+
+    fun getCachedEngine(snapshot: FilterRuntimeSnapshot): FilterEngine? {
+        if (!snapshot.enabled) return FilterEngine.EMPTY
+        val cacheKey = engineCacheKey(snapshot)
+        return synchronized(engineCache) {
+            engineCache[cacheKey]
+        }
     }
 
     fun siteOverrideFor(snapshot: FilterRuntimeSnapshot, host: String): SiteFilterOverride? {
@@ -209,27 +234,35 @@ object FilterRepository {
     }
 
     fun recordEvent(context: Context, event: FilterEvent) {
-        val prefs = prefs(context)
-        val events = getRecentEvents(context).toMutableList()
-        events.add(0, event)
-        val bounded = events.take(MAX_EVENTS)
-        prefs.edit().putString(KEY_EVENTS, JSONArray(bounded.map { it.toJson() }).toString()).apply()
-    }
-
-    fun getRecentEvents(context: Context): List<FilterEvent> {
-        val raw = prefs(context).getString(KEY_EVENTS, null) ?: return emptyList()
-        val array = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
-        return buildList {
-            for (i in 0 until array.length()) {
-                array.optJSONObject(i)?.let { json ->
-                    add(FilterEvent.fromJson(json))
+        val appContext = context.applicationContext
+        val generation = eventGeneration.get()
+        eventExecutor.execute {
+            runCatching {
+                if (event.timestamp <= readEventsClearedAt(appContext)) return@runCatching
+                synchronized(eventLock) {
+                    if (generation != eventGeneration.get()) return@synchronized
+                    if (event.timestamp <= readEventsClearedAt(appContext)) return@synchronized
+                    val events = readRecentEvents(appContext).toMutableList()
+                    events.add(0, event)
+                    writeRecentEvents(appContext, events.take(MAX_EVENTS))
                 }
             }
         }
     }
 
+    fun getRecentEvents(context: Context): List<FilterEvent> {
+        return synchronized(eventLock) {
+            readRecentEvents(context)
+        }
+    }
+
     fun clearEvents(context: Context) {
-        prefs(context).edit().remove(KEY_EVENTS).apply()
+        eventGeneration.incrementAndGet()
+        synchronized(eventLock) {
+            writeEventsClearedAt(context, System.currentTimeMillis())
+            prefs(context).edit().remove(KEY_EVENTS).apply()
+            eventsAtomicFile(context).delete()
+        }
     }
 
     fun validateCustomRules(rules: String): FilterBuildReport {
@@ -237,7 +270,9 @@ object FilterRepository {
     }
 
     fun invalidate() {
-        engineCache.set(null)
+        synchronized(engineCache) {
+            engineCache.clear()
+        }
     }
 
     private fun buildEngine(context: Context?, snapshot: FilterRuntimeSnapshot): FilterEngine {
@@ -264,6 +299,44 @@ object FilterRepository {
         return FilterEngine.build(sources)
     }
 
+    private fun engineCacheKey(snapshot: FilterRuntimeSnapshot): String {
+        return buildString {
+            appendField(snapshot.enabled.toString())
+            appendField(snapshot.preset)
+            appendField(snapshot.customRules)
+            snapshot.enabledSubscriptionIds.forEach { appendField(it) }
+            append('|')
+            snapshot.siteOverrides.forEach { override ->
+                appendField(override.host)
+                appendField(override.networkDisabled.toString())
+                appendField(override.cosmeticDisabled.toString())
+                appendField(override.scriptletDisabled.toString())
+                appendField(override.temporaryAllowUntil.toString())
+            }
+            append('|')
+            snapshot.subscriptions.forEach { subscription ->
+                appendField(subscription.id)
+                appendField(subscription.title)
+                appendField(subscription.category)
+                appendField(subscription.homepageUrl)
+                appendField(subscription.subscriptionUrl)
+                appendField(subscription.enabled.toString())
+                appendField(subscription.lastUpdatedAt.toString())
+                appendField(subscription.ruleCount.toString())
+                appendField(subscription.enabledRuleCount.toString())
+                appendField(subscription.unsupportedCount.toString())
+                appendField(subscription.lastError)
+            }
+        }
+    }
+
+    private fun StringBuilder.appendField(value: String) {
+        append(value.length)
+        append(':')
+        append(value)
+        append(';')
+    }
+
     private fun saveSubscriptions(context: Context, subscriptions: List<FilterSubscription>) {
         prefs(context).edit()
             .putString(KEY_SUBSCRIPTIONS, JSONArray(subscriptions.map { it.toJson() }).toString())
@@ -278,6 +351,85 @@ object FilterRepository {
     private fun subscriptionFile(context: Context, id: String): File {
         val safeName = id.replace(Regex("[^A-Za-z0-9_.-]"), "_")
         return File(File(context.applicationContext.filesDir, RULE_DIR), "$safeName.txt")
+    }
+
+    private fun readRecentEvents(context: Context): List<FilterEvent> {
+        val raw = readEventsRaw(context) ?: prefs(context).getString(KEY_EVENTS, null) ?: return emptyList()
+        val array = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
+        val clearedAt = readEventsClearedAt(context)
+        return buildList {
+            for (i in 0 until array.length()) {
+                array.optJSONObject(i)?.let { json ->
+                    val event = FilterEvent.fromJson(json)
+                    if (event.timestamp > clearedAt) {
+                        add(event)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun readEventsRaw(context: Context): String? {
+        val file = eventsFile(context)
+        if (!file.isFile) return null
+        return runCatching {
+            String(eventsAtomicFile(context).readFully(), Charsets.UTF_8)
+        }.getOrNull()
+    }
+
+    private fun writeRecentEvents(context: Context, events: List<FilterEvent>) {
+        val file = eventsFile(context)
+        file.parentFile?.mkdirs()
+        val atomicFile = AtomicFile(file)
+        val output = atomicFile.startWrite()
+        try {
+            val clearedAt = readEventsClearedAt(context)
+            val text = JSONArray(events.filter { it.timestamp > clearedAt }.map { it.toJson() }).toString()
+            output.write(text.toByteArray(Charsets.UTF_8))
+            atomicFile.finishWrite(output)
+            prefs(context).edit().remove(KEY_EVENTS).apply()
+        } catch (e: Exception) {
+            atomicFile.failWrite(output)
+            throw e
+        }
+    }
+
+    private fun eventsFile(context: Context): File {
+        return File(context.applicationContext.filesDir, EVENTS_FILE)
+    }
+
+    private fun eventsAtomicFile(context: Context): AtomicFile {
+        return AtomicFile(eventsFile(context))
+    }
+
+    private fun readEventsClearedAt(context: Context): Long {
+        val file = eventsClearedFile(context)
+        if (!file.isFile) return 0L
+        return runCatching {
+            String(eventsClearedAtomicFile(context).readFully(), Charsets.UTF_8).trim().toLong()
+        }.getOrDefault(0L)
+    }
+
+    private fun writeEventsClearedAt(context: Context, timestamp: Long) {
+        val file = eventsClearedFile(context)
+        file.parentFile?.mkdirs()
+        val atomicFile = AtomicFile(file)
+        val output = atomicFile.startWrite()
+        try {
+            output.write(timestamp.toString().toByteArray(Charsets.UTF_8))
+            atomicFile.finishWrite(output)
+        } catch (e: Exception) {
+            atomicFile.failWrite(output)
+            throw e
+        }
+    }
+
+    private fun eventsClearedFile(context: Context): File {
+        return File(context.applicationContext.filesDir, EVENTS_CLEARED_FILE)
+    }
+
+    private fun eventsClearedAtomicFile(context: Context): AtomicFile {
+        return AtomicFile(eventsClearedFile(context))
     }
 
     private fun downloadRules(url: String): String {
@@ -324,8 +476,4 @@ object FilterRepository {
         return context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
 
-    private data class CachedEngine(
-        val key: String,
-        val engine: FilterEngine
-    )
 }

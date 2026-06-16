@@ -3,6 +3,8 @@ package com.example.childkiosk.util.filter
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -182,6 +184,28 @@ class FilterEngineTest {
         assertEquals(listOf(subscription.id), snapshot.enabledSubscriptionIds)
         assertEquals(subscription.id, snapshot.subscriptions.single().id)
         assertEquals(subscription.subscriptionUrl, snapshot.subscriptions.single().subscriptionUrl)
+    }
+
+    @Test
+    fun cachedEngineOnlyReturnsPrewarmedInstance() {
+        val snapshot = FilterRuntimeSnapshot(
+            enabled = true,
+            preset = FilterPreset.CUSTOM.storageValue,
+            customRules = "||ads.example^",
+            enabledSubscriptionIds = emptyList(),
+            siteOverrides = emptyList()
+        )
+
+        FilterRepository.invalidate()
+        try {
+            assertNull(FilterRepository.getCachedEngine(snapshot))
+            val engine = FilterRepository.getEngine(snapshot)
+            assertSame(engine, FilterRepository.getCachedEngine(snapshot))
+            FilterRepository.invalidate()
+            assertNull(FilterRepository.getCachedEngine(snapshot))
+        } finally {
+            FilterRepository.invalidate()
+        }
     }
 
     private fun context(

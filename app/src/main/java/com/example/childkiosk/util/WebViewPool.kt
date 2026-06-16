@@ -3,9 +3,11 @@ package com.example.childkiosk.util
 import android.annotation.SuppressLint
 import android.content.Context
 import android.net.http.SslError
+import android.os.Handler
 import android.os.Looper
 import android.webkit.*
 import com.example.childkiosk.util.filter.FilterAction
+import com.example.childkiosk.util.filter.FilterRepository
 import com.example.childkiosk.util.filter.FilterResourceType
 
 data class PreloadEntry(
@@ -14,7 +16,8 @@ data class PreloadEntry(
     var isLoaded: Boolean = false,
     val isUrlPreload: Boolean = true,
     val shouldDestroyOnDispose: Boolean = true,
-    val runtimeConfigKey: String = ""
+    val runtimeConfigKey: String = "",
+    @Volatile var isDisposed: Boolean = false
 )
 
 object WebViewPool {
@@ -85,8 +88,7 @@ object WebViewPool {
                     return true
                 }
                 val host = WebViewRuntime.hostOf(urlStr)
-                val shouldLimitRedirect = KioskPrefs.isLimitUrlRedirectEnabled(ctx)
-                if (shouldLimitRedirect && !WebViewRuntime.isSameHostOrSubdomain(host, originalHost)) {
+                if (runtimeConfig.limitUrlRedirect && !WebViewRuntime.isSameHostOrSubdomain(host, originalHost)) {
                     return true
                 }
                 return false
@@ -96,7 +98,7 @@ object WebViewPool {
                 view: WebView?,
                 request: WebResourceRequest?
             ): WebResourceResponse? {
-                if (KioskPrefs.isLimitAdBlockEnabled(ctx)) {
+                if (runtimeConfig.limitAdBlock) {
                     val snapshot = runtimeConfig.filterSnapshot
                     val topLevelUrl = view?.url ?: url
                     val decision = AdBlocker.shouldBlock(ctx, request, topLevelUrl, snapshot)
@@ -119,7 +121,7 @@ object WebViewPool {
                 handler: SslErrorHandler?,
                 error: SslError?
             ) {
-                if (KioskPrefs.isLimitSslCheckEnabled(ctx)) {
+                if (runtimeConfig.limitSslCheck) {
                     handler?.cancel()
                 } else {
                     handler?.proceed()
@@ -137,7 +139,24 @@ object WebViewPool {
             }
         }
 
-        webView.loadUrl(cleanUrl)
+        if (runtimeConfig.limitAdBlock && runtimeConfig.filterSnapshot.enabled) {
+            Thread {
+                runCatching {
+                    FilterRepository.getEngine(ctx, runtimeConfig.filterSnapshot)
+                }
+                Handler(Looper.getMainLooper()).post {
+                    if (!entry.isDisposed) {
+                        webView.loadUrl(cleanUrl)
+                    }
+                }
+            }.start()
+        } else {
+            Handler(Looper.getMainLooper()).post {
+                if (!entry.isDisposed) {
+                    webView.loadUrl(cleanUrl)
+                }
+            }
+        }
     }
 
     fun acquire(
@@ -155,6 +174,7 @@ object WebViewPool {
             if (allowUrlPreload && entry.runtimeConfigKey == runtimeConfigKey) {
                 return entry
             }
+            entry.isDisposed = true
             destroyWebView(entry.webView)
         }
 
@@ -192,18 +212,27 @@ object WebViewPool {
 
     fun release(url: String) {
         val cleanUrl = url.trim()
-        pool.remove(cleanUrl)?.webView?.let { destroyWebView(it) }
+        pool.remove(cleanUrl)?.let { entry ->
+            entry.isDisposed = true
+            destroyWebView(entry.webView)
+        }
     }
 
     fun clear() {
         if (Looper.myLooper() == Looper.getMainLooper()) {
-            pool.values.forEach { destroyWebView(it.webView) }
+            pool.values.forEach { entry ->
+                entry.isDisposed = true
+                destroyWebView(entry.webView)
+            }
             pool.clear()
             warmPool.forEach { destroyWebView(it) }
             warmPool.clear()
         } else {
             android.os.Handler(Looper.getMainLooper()).post {
-                pool.values.forEach { destroyWebView(it.webView) }
+                pool.values.forEach { entry ->
+                    entry.isDisposed = true
+                    destroyWebView(entry.webView)
+                }
                 pool.clear()
                 warmPool.forEach { destroyWebView(it) }
                 warmPool.clear()
@@ -215,7 +244,10 @@ object WebViewPool {
         val action = {
             while (pool.size > maxSize && pool.isNotEmpty()) {
                 val key = pool.keys.first()
-                pool.remove(key)?.webView?.let { destroyWebView(it) }
+                pool.remove(key)?.let { entry ->
+                    entry.isDisposed = true
+                    destroyWebView(entry.webView)
+                }
             }
             while (warmPool.size > MAX_WARM_POOL_SIZE) {
                 destroyWebView(warmPool.removeLast())
