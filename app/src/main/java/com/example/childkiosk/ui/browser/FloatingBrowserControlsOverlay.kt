@@ -3,6 +3,7 @@ package com.example.childkiosk.ui.browser
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.InputType
 import android.text.TextUtils
@@ -11,14 +12,18 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.View.MeasureSpec
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.annotation.DrawableRes
 import androidx.core.view.ViewCompat
@@ -44,7 +49,30 @@ data class FloatingBrowserControlsCallbacks(
     val onForward: () -> Unit = {},
     val onRefresh: () -> Unit = {},
     val onStopLoading: () -> Unit = {},
-    val onPanelExpandedChanged: (Boolean) -> Unit = {}
+    val onPanelExpandedChanged: (Boolean) -> Unit = {},
+    val onActionSelected: (String) -> Unit = {}
+)
+
+enum class FloatingControlActionStyle {
+    NORMAL,
+    PRIMARY,
+    DESTRUCTIVE
+}
+
+data class FloatingControlAction(
+    val id: String,
+    val title: String,
+    @DrawableRes val iconRes: Int,
+    val enabled: Boolean = true,
+    val highlighted: Boolean = false,
+    val style: FloatingControlActionStyle = FloatingControlActionStyle.NORMAL
+)
+
+data class FloatingControlSection(
+    val id: String,
+    val title: String,
+    val actions: List<FloatingControlAction>,
+    val helperText: String = ""
 )
 
 class FloatingBrowserControlsOverlay @JvmOverloads constructor(
@@ -64,6 +92,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
 
     private var callbacks = FloatingBrowserControlsCallbacks()
     private var state = FloatingBrowserControlsState()
+    private var extraSections: List<FloatingControlSection> = emptyList()
     private var panelExpanded = false
     private var isDraggingBubble = false
     private var isBubbleHiddenAtEdge = false
@@ -84,6 +113,13 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         textSize = 12f
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
+    }
+
+    private val panelCloseButton = browserIconButton(
+        iconRes = R.drawable.ic_browser_close_24,
+        contentDescription = "收起"
+    ) {
+        handleAction(ACTION_PANEL_CLOSE)
     }
 
     private val urlInput = EditText(context).apply {
@@ -127,46 +163,27 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         isVisible = false
     }
 
-    private val backButton = browserIconButton(
-        iconRes = R.drawable.ic_browser_back_24,
-        contentDescription = "后退"
-    ) {
-        callbacks.onBack()
-        scheduleEdgeHide()
-    }
-
-    private val forwardButton = browserIconButton(
-        iconRes = R.drawable.ic_browser_forward_24,
-        contentDescription = "前进"
-    ) {
-        callbacks.onForward()
-        scheduleEdgeHide()
-    }
-
-    private val refreshButton = browserIconButton(
-        iconRes = R.drawable.ic_browser_refresh_24,
-        contentDescription = "刷新"
-    ) {
-        if (state.isLoading) {
-            callbacks.onStopLoading()
-        } else {
-            callbacks.onRefresh()
-        }
-        scheduleEdgeHide()
-    }
-
-    private val closeButton = browserIconButton(
-        iconRes = R.drawable.ic_browser_close_24,
-        contentDescription = "收起"
-    ) {
-        setPanelExpanded(expanded = false, animated = true)
-    }
-
     private val goButton = browserIconButton(
         iconRes = R.drawable.ic_browser_go_24,
         contentDescription = "访问"
     ) {
         submitUrl()
+    }
+
+    private val sectionsContainer = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+    }
+
+    private val sectionsScrollView = HeightLimitedScrollView(context).apply {
+        isFillViewport = false
+        overScrollMode = OVER_SCROLL_IF_CONTENT_SCROLLS
+        addView(
+            sectionsContainer,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
     }
 
     private val panelView = LinearLayout(context).apply {
@@ -181,7 +198,24 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         isVisible = false
 
         addView(
-            titleView,
+            LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(
+                    titleView,
+                    LinearLayout.LayoutParams(
+                        0,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        1f
+                    )
+                )
+                addView(
+                    panelCloseButton,
+                    LinearLayout.LayoutParams(dp(56), dp(56)).apply {
+                        leftMargin = dp(8)
+                    }
+                )
+            },
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -226,15 +260,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         )
 
         addView(
-            LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                addView(backButton, actionButtonLayoutParams())
-                addView(forwardButton, actionButtonLayoutParams())
-                addView(refreshButton, actionButtonLayoutParams())
-                addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
-                addView(closeButton, actionButtonLayoutParams())
-            },
+            sectionsScrollView,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -272,6 +298,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                 gravity = Gravity.TOP or Gravity.START
             }
         )
+        renderSections()
 
         ViewCompat.setOnApplyWindowInsetsListener(this) { _, insets ->
             doOnLayout {
@@ -295,6 +322,12 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         this.callbacks = callbacks
     }
 
+    fun setExtraSections(sections: List<FloatingControlSection>) {
+        extraSections = sections
+        renderSections()
+        positionPanel()
+    }
+
     fun updateState(nextState: FloatingBrowserControlsState) {
         state = nextState.copy(progress = nextState.progress.coerceIn(0, 100))
         titleView.text = state.pageTitle.takeIf { it.isNotBlank() }
@@ -304,14 +337,9 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             urlInput.setText(state.currentUrl)
             urlInput.setSelection(urlInput.text?.length ?: 0)
         }
-        setButtonEnabled(backButton, state.canGoBack)
-        setButtonEnabled(forwardButton, state.canGoForward)
-        refreshButton.contentDescription = if (state.isLoading) "停止加载" else "刷新"
-        refreshButton.setImageResource(
-            if (state.isLoading) R.drawable.ic_browser_close_24 else R.drawable.ic_browser_refresh_24
-        )
         progressView.progress = state.progress
         progressView.isVisible = state.isLoading || state.progress in 1..99
+        renderSections()
     }
 
     fun setPanelExpanded(expanded: Boolean, animated: Boolean = true) {
@@ -344,6 +372,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         updatePanelWidth()
+        sectionsScrollView.maxContentHeight = maxScrollableSectionsHeight()
         if (w > 0 && h > 0) {
             if (oldw == 0 || oldh == 0) {
                 placeInitialBubble()
@@ -430,6 +459,196 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             lowerInput.contains("://") -> ""
             else -> "https://$trimmed"
         }
+    }
+
+    private fun renderSections() {
+        sectionsContainer.removeAllViews()
+        val sections = buildList {
+            add(defaultBrowserSection())
+            addAll(extraSections.filter { it.actions.isNotEmpty() })
+        }
+        sections.forEachIndexed { index, section ->
+            sectionsContainer.addView(sectionView(section, index == sections.lastIndex))
+        }
+        sectionsScrollView.maxContentHeight = maxScrollableSectionsHeight()
+    }
+
+    private fun defaultBrowserSection(): FloatingControlSection {
+        val refreshTitle = if (state.isLoading) "停止" else "刷新"
+        val refreshIcon = if (state.isLoading) {
+            R.drawable.ic_browser_close_24
+        } else {
+            R.drawable.ic_browser_refresh_24
+        }
+        return FloatingControlSection(
+            id = SECTION_BROWSER,
+            title = "浏览",
+            actions = listOf(
+                FloatingControlAction(
+                    id = ACTION_BROWSER_BACK,
+                    title = "后退",
+                    iconRes = R.drawable.ic_browser_back_24,
+                    enabled = state.canGoBack
+                ),
+                FloatingControlAction(
+                    id = ACTION_BROWSER_FORWARD,
+                    title = "前进",
+                    iconRes = R.drawable.ic_browser_forward_24,
+                    enabled = state.canGoForward
+                ),
+                FloatingControlAction(
+                    id = if (state.isLoading) ACTION_BROWSER_STOP else ACTION_BROWSER_REFRESH,
+                    title = refreshTitle,
+                    iconRes = refreshIcon,
+                    highlighted = state.isLoading
+                )
+            )
+        )
+    }
+
+    private fun sectionView(section: FloatingControlSection, isLast: Boolean): View {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            if (!isLast) {
+                setPadding(0, 0, 0, dp(12))
+            }
+            addView(
+                TextView(context).apply {
+                    text = section.title
+                    textSize = 12f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(PanelMutedTextColor)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                },
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    bottomMargin = dp(8)
+                }
+            )
+            addView(actionStripView(section))
+            if (section.helperText.isNotBlank()) {
+                addView(
+                    TextView(context).apply {
+                        text = section.helperText
+                        textSize = 12f
+                        setTextColor(PanelMutedTextColor)
+                        setPadding(0, dp(8), 0, 0)
+                    },
+                    LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
+                )
+            }
+        }
+    }
+
+    private fun actionStripView(section: FloatingControlSection): HorizontalScrollView {
+        return HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = OVER_SCROLL_IF_CONTENT_SCROLLS
+            addView(
+                LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    section.actions.forEach { action ->
+                        addView(actionButtonView(action), actionItemLayoutParams())
+                    }
+                },
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
+    }
+
+    private fun actionButtonView(action: FloatingControlAction): View {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            isEnabled = action.enabled
+            alpha = if (action.enabled) 1f else 0.36f
+            background = roundedBackground(actionBackgroundColor(action), dp(16))
+            minimumWidth = dp(64)
+            minimumHeight = dp(68)
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+            contentDescription = action.title
+            setOnClickListener {
+                if (action.enabled) {
+                    handleAction(action.id)
+                }
+            }
+            addView(
+                ImageView(context).apply {
+                    setImageResource(action.iconRes)
+                    imageTintList = ColorStateList.valueOf(actionTintColor(action))
+                    scaleType = ImageView.ScaleType.CENTER
+                },
+                LinearLayout.LayoutParams(dp(28), dp(28)).apply {
+                    bottomMargin = dp(4)
+                }
+            )
+            addView(
+                TextView(context).apply {
+                    text = action.title
+                    textSize = 11f
+                    setTextColor(actionTintColor(action))
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    gravity = Gravity.CENTER
+                },
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
+    }
+
+    private fun handleAction(actionId: String) {
+        when (actionId) {
+            ACTION_BROWSER_BACK -> callbacks.onBack()
+            ACTION_BROWSER_FORWARD -> callbacks.onForward()
+            ACTION_BROWSER_REFRESH -> callbacks.onRefresh()
+            ACTION_BROWSER_STOP -> callbacks.onStopLoading()
+            ACTION_PANEL_CLOSE -> setPanelExpanded(expanded = false, animated = true)
+            else -> Unit
+        }
+        callbacks.onActionSelected(actionId)
+        if (actionId != ACTION_PANEL_CLOSE) {
+            scheduleEdgeHide()
+        }
+    }
+
+    private fun actionItemLayoutParams(): LinearLayout.LayoutParams {
+        return LinearLayout.LayoutParams(dp(68), dp(72)).apply {
+            rightMargin = dp(8)
+        }
+    }
+
+    private fun actionBackgroundColor(action: FloatingControlAction): Int {
+        return when {
+            action.style == FloatingControlActionStyle.DESTRUCTIVE -> DestructiveSoftColor
+            action.highlighted || action.style == FloatingControlActionStyle.PRIMARY -> AccentSoftColor
+            else -> ActionBackgroundColor
+        }
+    }
+
+    private fun actionTintColor(action: FloatingControlAction): Int {
+        return when {
+            action.style == FloatingControlActionStyle.DESTRUCTIVE -> DestructiveColor
+            action.highlighted || action.style == FloatingControlActionStyle.PRIMARY -> AccentColor
+            else -> PanelTextColor
+        }
+    }
+
+    private fun maxScrollableSectionsHeight(): Int {
+        if (height <= 0) return dp(260)
+        return (height - panelMargin * 2 - dp(150)).coerceAtLeast(dp(120))
     }
 
     private fun placeInitialBubble() {
@@ -603,11 +822,6 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         imm?.hideSoftInputFromWindow(windowToken, 0)
     }
 
-    private fun setButtonEnabled(button: ImageButton, enabled: Boolean) {
-        button.isEnabled = enabled
-        button.alpha = if (enabled) 1f else 0.36f
-    }
-
     private fun browserIconButton(
         @DrawableRes iconRes: Int,
         contentDescription: String,
@@ -623,12 +837,6 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             minimumWidth = dp(56)
             minimumHeight = dp(56)
             setOnClickListener { onClick() }
-        }
-    }
-
-    private fun actionButtonLayoutParams(): LinearLayout.LayoutParams {
-        return LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-            rightMargin = dp(8)
         }
     }
 
@@ -662,12 +870,22 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
 
     companion object {
         private val AccentColor = Color.rgb(28, 98, 92)
+        private val AccentSoftColor = Color.rgb(219, 237, 232)
+        private val DestructiveColor = Color.rgb(174, 54, 42)
+        private val DestructiveSoftColor = Color.rgb(251, 230, 226)
         private val PanelBackgroundColor = Color.rgb(248, 250, 248)
         private val ActionBackgroundColor = Color.rgb(232, 240, 238)
         private val PanelTextColor = Color.rgb(31, 42, 38)
         private val PanelMutedTextColor = Color.rgb(92, 106, 101)
         private val PanelHintColor = Color.rgb(125, 139, 134)
         private val StrokeColor = Color.rgb(209, 221, 216)
+
+        const val SECTION_BROWSER = "browser"
+        const val ACTION_BROWSER_BACK = "browser.back"
+        const val ACTION_BROWSER_FORWARD = "browser.forward"
+        const val ACTION_BROWSER_REFRESH = "browser.refresh"
+        const val ACTION_BROWSER_STOP = "browser.stop"
+        const val ACTION_PANEL_CLOSE = "panel.close"
 
         fun attachTo(
             root: FrameLayout,
@@ -686,5 +904,25 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                 )
             }
         }
+    }
+}
+
+private class HeightLimitedScrollView(context: Context) : ScrollView(context) {
+    var maxContentHeight: Int = Int.MAX_VALUE
+        set(value) {
+            field = value
+            requestLayout()
+        }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val heightMode = MeasureSpec.getMode(heightMeasureSpec)
+        val heightSize = MeasureSpec.getSize(heightMeasureSpec)
+        val requestedMaxHeight = maxContentHeight.coerceAtLeast(0)
+        val cappedHeight = when (heightMode) {
+            MeasureSpec.UNSPECIFIED -> requestedMaxHeight
+            else -> min(heightSize, requestedMaxHeight)
+        }
+        val cappedSpec = MeasureSpec.makeMeasureSpec(cappedHeight, MeasureSpec.AT_MOST)
+        super.onMeasure(widthMeasureSpec, cappedSpec)
     }
 }
