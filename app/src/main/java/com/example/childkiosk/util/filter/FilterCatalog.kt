@@ -127,6 +127,8 @@ fbcdn.net/ads${'$'}image,third-party
 ||cdn.cookielaw.org^${'$'}script,third-party
 ||privacy-mgmt.com^${'$'}script,third-party
 ||quantcast.mgr.consensu.org^
+*${'$'}removeparam=utm_source|utm_medium|utm_campaign|utm_content|utm_term|fbclid|gclid|yclid
+##+js(no-window-open-if)
 ##.popup-ad
 ##.modal-ad
 ##.cookie-banner

@@ -17,6 +17,7 @@ data class FilterRule(
     val excludedDomains: Set<String> = emptySet(),
     val important: Boolean = false,
     val badFilter: Boolean = false,
+    val removeParams: Set<String> = emptySet(),
     val unsupportedOptions: Set<String> = emptySet()
 )
 
@@ -30,6 +31,16 @@ data class CosmeticFilterRule(
     val isException: Boolean = false
 )
 
+data class ScriptletFilterRule(
+    val rawText: String,
+    val sourceId: String,
+    val sourceName: String,
+    val name: String,
+    val args: List<String>,
+    val domains: Set<String> = emptySet(),
+    val excludedDomains: Set<String> = emptySet()
+)
+
 enum class FilterMatchType {
     SUBSTRING,
     DOMAIN_ANCHOR,
@@ -41,6 +52,7 @@ enum class FilterMatchType {
 data class FilterParseResult(
     val rules: List<FilterRule>,
     val cosmeticRules: List<CosmeticFilterRule>,
+    val scriptletRules: List<ScriptletFilterRule>,
     val totalLines: Int,
     val enabledRules: Int,
     val unsupportedRules: Int,
@@ -52,6 +64,7 @@ object FilterRuleParser {
     fun parse(text: String, sourceId: String, sourceName: String): FilterParseResult {
         val rules = mutableListOf<FilterRule>()
         val cosmeticRules = mutableListOf<CosmeticFilterRule>()
+        val scriptletRules = mutableListOf<ScriptletFilterRule>()
         val errors = mutableListOf<String>()
         var totalLines = 0
         var unsupportedRules = 0
@@ -62,6 +75,11 @@ object FilterRuleParser {
                 return@forEachIndexed
             }
             totalLines++
+
+            parseScriptletLine(line, sourceId, sourceName)?.let { rule ->
+                scriptletRules += rule
+                return@forEachIndexed
+            }
 
             parseCosmeticLine(line, sourceId, sourceName)?.let { rule ->
                 cosmeticRules += rule
@@ -93,11 +111,71 @@ object FilterRuleParser {
         return FilterParseResult(
             rules = rules,
             cosmeticRules = cosmeticRules,
+            scriptletRules = scriptletRules,
             totalLines = totalLines,
-            enabledRules = enabledRules + cosmeticRules.count { !it.isException },
+            enabledRules = enabledRules + cosmeticRules.count { !it.isException } + scriptletRules.size,
             unsupportedRules = unsupportedRules,
             errors = errors.take(20)
         )
+    }
+
+    private fun parseScriptletLine(line: String, sourceId: String, sourceName: String): ScriptletFilterRule? {
+        val marker = when {
+            "##+js(" in line -> "##+js("
+            "#%#//scriptlet(" in line -> "#%#//scriptlet("
+            else -> return null
+        }
+        val domainPart = line.substringBefore(marker).trim()
+        val body = line.substringAfter(marker).removeSuffix(")").trim()
+        if (body.isBlank()) return null
+        val parts = splitScriptletArgs(body)
+        val name = parts.firstOrNull()?.trim('\'', '"')?.trim().orEmpty()
+        if (name.isBlank()) return null
+        val domains = mutableSetOf<String>()
+        val excludedDomains = mutableSetOf<String>()
+        if (domainPart.isNotBlank()) {
+            domainPart.split(",").map { it.trim() }.filter { it.isNotBlank() }.forEach { domain ->
+                val excluded = domain.startsWith("~")
+                val clean = domain.removePrefix("~").normalizeHost()
+                if (clean.isNotBlank()) {
+                    if (excluded) excludedDomains += clean else domains += clean
+                }
+            }
+        }
+        return ScriptletFilterRule(
+            rawText = line,
+            sourceId = sourceId,
+            sourceName = sourceName,
+            name = name,
+            args = parts.drop(1).map { it.trim('\'', '"').trim() }.filter { it.length <= 180 },
+            domains = domains,
+            excludedDomains = excludedDomains
+        )
+    }
+
+    private fun splitScriptletArgs(body: String): List<String> {
+        val result = mutableListOf<String>()
+        val current = StringBuilder()
+        var quote: Char? = null
+        body.forEach { char ->
+            when {
+                quote != null && char == quote -> {
+                    quote = null
+                    current.append(char)
+                }
+                quote == null && (char == '\'' || char == '"') -> {
+                    quote = char
+                    current.append(char)
+                }
+                quote == null && char == ',' -> {
+                    result += current.toString().trim()
+                    current.clear()
+                }
+                else -> current.append(char)
+            }
+        }
+        if (current.isNotBlank()) result += current.toString().trim()
+        return result
     }
 
     private fun parseCosmeticLine(line: String, sourceId: String, sourceName: String): CosmeticFilterRule? {
@@ -198,6 +276,7 @@ object FilterRuleParser {
             excludedDomains = options.excludedDomains,
             important = options.important,
             badFilter = options.badFilter,
+            removeParams = options.removeParams,
             unsupportedOptions = options.unsupportedOptions
         )
     }
@@ -224,6 +303,7 @@ object FilterRuleParser {
         var thirdParty: Boolean? = null
         var important = false
         var badFilter = false
+        val removeParams = mutableSetOf<String>()
 
         raw.split(",").map { it.trim() }.filter { it.isNotBlank() }.forEach { option ->
             val normalized = option.lowercase(Locale.US)
@@ -235,6 +315,14 @@ object FilterRuleParser {
                 normalized == "important" -> important = true
                 normalized == "badfilter" -> badFilter = true
                 normalized == "popup" -> resourceTypes += FilterResourceType.POPUP
+                normalized == "removeparam" -> removeParams += COMMON_TRACKING_PARAMS
+                normalized.startsWith("removeparam=") -> {
+                    normalized.removePrefix("removeparam=")
+                        .split("|")
+                        .map { it.trim() }
+                        .filter { isSafeRemoveParamToken(it) }
+                        .forEach { removeParams += it }
+                }
                 normalized.startsWith("domain=") -> {
                     normalized.removePrefix("domain=").split("|").forEach { domain ->
                         val excluded = domain.startsWith("~")
@@ -266,8 +354,15 @@ object FilterRuleParser {
             excludedDomains = excludedDomains,
             important = important,
             badFilter = badFilter,
+            removeParams = removeParams,
             unsupportedOptions = unsupported
         )
+    }
+
+    private fun isSafeRemoveParamToken(value: String): Boolean {
+        if (value.isBlank() || value.length > 80) return false
+        if (value.startsWith("/") && value.endsWith("/")) return false
+        return value.all { it.isLetterOrDigit() || it == '_' || it == '-' || it == '*' }
     }
 
     fun isRegexSafe(pattern: String): Boolean {
@@ -285,11 +380,24 @@ object FilterRuleParser {
         val excludedDomains: Set<String> = emptySet(),
         val important: Boolean = false,
         val badFilter: Boolean = false,
+        val removeParams: Set<String> = emptySet(),
         val unsupportedOptions: Set<String> = emptySet()
     )
 
+    private val COMMON_TRACKING_PARAMS = setOf(
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "utm_content",
+        "utm_term",
+        "fbclid",
+        "gclid",
+        "yclid",
+        "mc_cid",
+        "mc_eid"
+    )
+
     private val SUPPORTED_BUT_PHASE_LATER_OPTIONS = setOf(
-        "removeparam",
         "redirect",
         "redirect-rule",
         "csp"

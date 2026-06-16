@@ -1,7 +1,6 @@
 package com.example.childkiosk.util.filter
 
 import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
 import java.util.regex.Pattern
 
 data class FilterBuildReport(
@@ -26,6 +25,7 @@ class FilterEngine private constructor(
     private val exceptionRules: List<CompiledRule>,
     private val importantBlockingRules: List<CompiledRule>,
     private val cosmeticRules: List<CosmeticFilterRule>,
+    private val scriptletRules: List<ScriptletFilterRule>,
     val report: FilterBuildReport
 ) {
     private val decisionCache = object : LinkedHashMap<String, FilterDecision>(256, 0.75f, true) {
@@ -53,6 +53,38 @@ class FilterEngine private constructor(
             .toList()
         if (selectors.isEmpty()) return ""
         return selectors.joinToString(",\n") + " { display: none !important; visibility: hidden !important; }"
+    }
+
+    fun scriptletJsFor(host: String, siteOverride: SiteFilterOverride? = null): String {
+        if (siteOverride?.isTemporarilyAllowed() == true || siteOverride?.scriptletDisabled == true) return ""
+        val normalizedHost = host.normalizeHost()
+        if (normalizedHost.isBlank()) return ""
+        return scriptletRules
+            .asSequence()
+            .filter { it.matchesHost(normalizedHost) }
+            .mapNotNull { scriptletToJs(it) }
+            .take(80)
+            .joinToString("\n")
+    }
+
+    fun cleanUrlForNavigation(url: String, topLevelUrl: String): String? {
+        if (url.isBlank() || !url.startsWith("http")) return null
+        val context = FilterRequestContext(
+            requestUrl = url,
+            topLevelUrl = topLevelUrl.ifBlank { url },
+            resourceType = FilterResourceType.DOCUMENT,
+            isMainFrame = true,
+            method = "GET",
+            hasGesture = false
+        )
+        val paramsToRemove = blockingRules
+            .asSequence()
+            .filter { it.rule.removeParams.isNotEmpty() }
+            .filter { it.matches(context) }
+            .flatMap { it.rule.removeParams.asSequence() }
+            .toSet()
+        if (paramsToRemove.isEmpty()) return null
+        return removeParamsFromUrl(url, paramsToRemove)
     }
 
     @Synchronized
@@ -89,11 +121,12 @@ class FilterEngine private constructor(
     }
 
     companion object {
-        val EMPTY = FilterEngine(emptyList(), emptyList(), emptyList(), emptyList(), FilterBuildReport(0, 0, 0, emptyList(), emptyList()))
+        val EMPTY = FilterEngine(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), FilterBuildReport(0, 0, 0, emptyList(), emptyList()))
 
         fun build(sources: List<FilterRuleSource>): FilterEngine {
             val compiled = mutableListOf<CompiledRule>()
             val cosmetic = mutableListOf<CosmeticFilterRule>()
+            val scriptlets = mutableListOf<ScriptletFilterRule>()
             val reports = mutableListOf<FilterSourceReport>()
             val errors = mutableListOf<String>()
 
@@ -109,6 +142,7 @@ class FilterEngine private constructor(
                 )
                 errors += parseResult.errors
                 cosmetic += parseResult.cosmeticRules
+                scriptlets += parseResult.scriptletRules
                 parseResult.rules.filter { !it.badFilter }.forEach { rule ->
                     CompiledRule.from(rule)?.let { compiledRule ->
                         compiled += compiledRule
@@ -138,6 +172,7 @@ class FilterEngine private constructor(
                 exceptionRules = exceptions.sortedByDescending { it.weight },
                 importantBlockingRules = important.sortedByDescending { it.weight },
                 cosmeticRules = cosmetic,
+                scriptletRules = scriptlets,
                 report = FilterBuildReport(
                     ruleCount = reports.sumOf { it.totalLines },
                     enabledRuleCount = enabledRuleCount,
@@ -153,6 +188,95 @@ class FilterEngine private constructor(
 private fun CosmeticFilterRule.matchesHost(host: String): Boolean {
     if (excludedDomains.any { isSameOrSubdomain(host, it) }) return false
     return domains.isEmpty() || domains.any { isSameOrSubdomain(host, it) }
+}
+
+private fun ScriptletFilterRule.matchesHost(host: String): Boolean {
+    if (excludedDomains.any { isSameOrSubdomain(host, it) }) return false
+    return domains.isEmpty() || domains.any { isSameOrSubdomain(host, it) }
+}
+
+private fun scriptletToJs(rule: ScriptletFilterRule): String? {
+    val normalized = rule.name.removeSuffix(".js").lowercase(Locale.US)
+    return when (normalized) {
+        "no-window-open-if", "nowoif" -> """
+            try {
+                if (!window.__ck_no_window_open_if__) {
+                    window.__ck_no_window_open_if__ = true;
+                    window.open = function() { return null; };
+                }
+            } catch(e) {}
+        """.trimIndent()
+        "abort-on-property-read", "aopr" -> {
+            val property = rule.args.firstOrNull()?.takeIf { isSafePropertyPath(it) } ?: return null
+            val propertyJson = org.json.JSONObject.quote(property)
+            """
+                try {
+                    var path = $propertyJson.split('.');
+                    var owner = window;
+                    for (var i = 0; i < path.length - 1; i++) {
+                        owner = owner[path[i]] = owner[path[i]] || {};
+                    }
+                    Object.defineProperty(owner, path[path.length - 1], {
+                        get: function() { throw new ReferenceError('blocked'); },
+                        configurable: true
+                    });
+                } catch(e) {}
+            """.trimIndent()
+        }
+        "set-constant", "set" -> {
+            val property = rule.args.getOrNull(0)?.takeIf { isSafePropertyPath(it) } ?: return null
+            val value = when (rule.args.getOrNull(1)?.lowercase(Locale.US)) {
+                "true" -> "true"
+                "false" -> "false"
+                "undefined" -> "undefined"
+                "null" -> "null"
+                "0" -> "0"
+                "1" -> "1"
+                else -> "undefined"
+            }
+            val propertyJson = org.json.JSONObject.quote(property)
+            """
+                try {
+                    var path = $propertyJson.split('.');
+                    var owner = window;
+                    for (var i = 0; i < path.length - 1; i++) {
+                        owner = owner[path[i]] = owner[path[i]] || {};
+                    }
+                    Object.defineProperty(owner, path[path.length - 1], {
+                        value: $value,
+                        writable: false,
+                        configurable: true
+                    });
+                } catch(e) {}
+            """.trimIndent()
+        }
+        else -> null
+    }
+}
+
+private fun isSafePropertyPath(value: String): Boolean {
+    if (value.isBlank() || value.length > 120) return false
+    return value.split('.').all { part ->
+        part.isNotBlank() && part.all { it.isLetterOrDigit() || it == '_' || it == '$' }
+    }
+}
+
+private fun removeParamsFromUrl(url: String, params: Set<String>): String? {
+    val uri = android.net.Uri.parse(url)
+    val names = uri.queryParameterNames
+    val toRemove = names.filter { name ->
+        params.any { param ->
+            if (param.endsWith("*")) name.startsWith(param.removeSuffix("*")) else name == param
+        }
+    }.toSet()
+    if (toRemove.isEmpty()) return null
+    val builder = uri.buildUpon().clearQuery()
+    names.filterNot { it in toRemove }.forEach { name ->
+        uri.getQueryParameters(name).forEach { value ->
+            builder.appendQueryParameter(name, value)
+        }
+    }
+    return builder.build().toString()
 }
 
 private fun isSafeCssSelector(selector: String): Boolean {

@@ -2787,7 +2787,7 @@ private fun FilterPresetOption(
     val description = when (preset) {
         FilterPreset.LIGHT -> "仅轻量本地高置信规则，优先兼容性和低性能设备。"
         FilterPreset.STANDARD_CHILD -> "儿童模式默认，启用 EasyList、EasyPrivacy、中文和移动广告规则。"
-        FilterPreset.STRONG -> "叠加弹窗/干扰规则，误伤概率更高，适合家长手动开启。"
+        FilterPreset.STRONG -> "叠加弹窗、scriptlet 和 URL 参数清理规则，误伤概率更高，适合家长手动开启。"
         FilterPreset.CUSTOM -> "保留当前订阅、自定义规则和例外设置。"
     }
     Row(

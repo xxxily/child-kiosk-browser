@@ -1207,6 +1207,16 @@ private fun createSecureWebView(
                     return true
                 }
 
+                if (runtimeConfig.limitAdBlock && request?.isForMainFrame == true) {
+                    val cleanedUrl = FilterRepository.getEngine(ctx, runtimeConfig.filterSnapshot)
+                        .cleanUrlForNavigation(urlStr, view?.url ?: targetUrl)
+                    if (!cleanedUrl.isNullOrBlank() && cleanedUrl != urlStr) {
+                        Log.d("ChildKioskWebView", "Cleaned tracking params: $urlStr -> $cleanedUrl")
+                        view?.loadUrl(cleanedUrl)
+                        return true
+                    }
+                }
+
                 if (runtimeConfig.limitUrlRedirect) {
                     val host = WebViewRuntime.hostOf(urlStr)
                     if (!WebViewRuntime.isSameHostOrSubdomain(host, originalHost)) {
@@ -1544,6 +1554,7 @@ private fun injectPageScripts(
 ) {
     webView ?: return
     injectCosmeticCssIfNeeded(webView, context, config)
+    injectFilterScriptletsIfNeeded(webView, context, config)
     injectDebugToolIfNeeded(webView, context, config, currentTiming)
     injectCustomScriptIfNeeded(webView, config, currentTiming)
 }
@@ -1573,6 +1584,29 @@ private fun injectCosmeticCssIfNeeded(
                 (document.head || document.documentElement).appendChild(style);
             }
             style.textContent = $cssJson;
+        })();
+    """.trimIndent()
+    webView.evaluateJavascript(js, null)
+}
+
+private fun injectFilterScriptletsIfNeeded(
+    webView: WebView,
+    context: Context,
+    config: WebViewRuntimeConfig
+) {
+    if (!config.limitAdBlock || !config.filterSnapshot.enabled) return
+    val pageUrl = webView.url ?: return
+    val host = WebViewRuntime.hostOf(pageUrl)
+    if (host.isBlank()) return
+    val siteOverride = FilterRepository.siteOverrideFor(config.filterSnapshot, host)
+    val scriptlets = FilterRepository.getEngine(context, config.filterSnapshot)
+        .scriptletJsFor(host, siteOverride)
+    if (scriptlets.isBlank()) return
+    val js = """
+        (function() {
+            if (window.__child_kiosk_filter_scriptlets__) return;
+            window.__child_kiosk_filter_scriptlets__ = true;
+            $scriptlets
         })();
     """.trimIndent()
     webView.evaluateJavascript(js, null)
