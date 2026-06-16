@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-06-16
+
+### Added — 新增
+
+- **WebView 内核环境诊断**：
+  - 配置后台新增“WebView 内核环境”入口，显示当前 WebView provider 包名、版本、versionCode、Chromium 版本、Android 版本、设备型号、进程和渲染路径。
+  - 新增 WebView 运行环境状态分级，区分正常、偏旧、高风险和无法识别，帮助管理员判断老旧系统 WebView 的兼容性风险。
+  - 新增关键 WebView 配置快照展示，包括 Chrome Inspect、手机浏览器 UA、自定义 UA、第三方 Cookie、混合内容、热备、预加载和顶部进度条。
+- **升级与排查入口**：
+  - WebView 内核环境页支持重新检测、复制完整诊断信息、打开 Android System WebView 更新页、打开 Chrome 更新页和打开系统 WebView 设置。
+  - 新增 `ChildKioskWebView` provider diagnostics 日志，便于结合 logcat 排查 WebView provider、Chromium 版本和进程状态。
+
+### Documentation — 文档
+
+- **WebView provider 管理需求**：
+  - 新增 `docs/webview_provider_management_requirements.md`，明确普通 App 不能把私有目录中的 WebView APK/so 强制替换为 `android.webkit.WebView` provider。
+  - 细化轻量 P0 诊断与升级引导、P1 下载/安装辅助和 P2 替代渲染器预研的边界。
+
 ## [0.1.1] - 2026-06-16
 
 ### Added — 新增

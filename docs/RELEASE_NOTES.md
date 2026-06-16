@@ -1,3 +1,35 @@
+## Child Kiosk Browser v0.1.2
+
+本版本新增轻量级 WebView 内核环境诊断。管理员可以在配置后台查看当前设备实际使用的 WebView provider、Chromium 版本和关键兼容性配置，并一键复制诊断信息或跳转到系统认可的 WebView/Chrome 更新入口。
+
+> **说明**：本 APK 使用 debug 签名，仅供调试与家庭内部部署。生产/商用请自行用正式 keystore 重新签名。
+
+### 本版本核心变化
+
+* **WebView 内核环境诊断**：
+  - 配置后台新增“WebView 内核环境”入口。
+  - 展示当前 provider 包名、版本、versionCode、Chromium 版本、Android 版本、设备型号、进程和正式渲染路径。
+  - 根据 Chromium/Android 信息给出正常、偏旧、高风险或无法识别的状态提示。
+* **升级与设置入口**：
+  - 支持重新检测当前 WebView provider。
+  - 支持复制完整诊断信息，便于提交问题和结合 logcat 排查。
+  - 支持打开 Android System WebView 更新页、Chrome 更新页和系统 WebView 设置。
+  - 页面明确提示：新 WebView 是否生效由 Android 系统决定，本应用不能单独替换系统 WebView provider。
+* **诊断日志增强**：
+  - 新增 `ChildKioskWebView` provider diagnostics 日志，记录 provider、版本、Chromium 主版本、状态、进程、Android 和设备信息。
+
+### 建议验证
+
+重点测试：
+
+1. 进入配置后台，打开“WebView 内核环境”，确认 provider、版本、Chromium 和设备信息显示正常。
+2. 点击“重新检测”，确认页面信息刷新且无崩溃。
+3. 点击“复制诊断信息”，确认剪贴板包含 provider、Chromium、进程和关键 WebView 配置。
+4. 点击 WebView/Chrome 更新入口，确认设备上能打开应用商店或网页兜底。
+5. 点击“打开系统 WebView 设置”，确认可进入系统 WebView 设置、开发者设置或系统设置兜底。
+
+---
+
 ## Child Kiosk Browser v0.1.1
 
 本版本重点增强“网页广告与弹窗过滤”能力，让应用接入主流 Adblock 规则生态，而不是维护一套孤立的私有规则。管理员可以使用内置订阅目录、自定义 HTTPS 订阅和自定义 Adblock 规则来增强儿童浏览场景下的抗干扰、去污染能力，同时通过站点例外和过滤事件排查降低误伤风险。
