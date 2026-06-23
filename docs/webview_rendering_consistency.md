@@ -3,7 +3,7 @@
 > 文档版本：1.4
 > 创建日期：2026-06-14  
 > 状态：已按实机 AB 结果固化原生 `FrameLayout + WebView` 承载；浏览器沙箱限制默认兼容优先；高 DPR 样式注入和全屏 Loading overlay 已移除
-> 关联代码：[`WebViewRuntime.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewRuntime.kt)、[`WebViewActivity.kt`](../app/src/main/java/com/example/childkiosk/WebViewActivity.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/com/example/childkiosk/ui/AdminConsoleScreen.kt)  
+> 关联代码：[`WebViewRuntime.kt`](../app/src/main/java/site/anzz/childkiosk/util/WebViewRuntime.kt)、[`WebViewActivity.kt`](../app/src/main/java/site/anzz/childkiosk/WebViewActivity.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/site/anzz/childkiosk/ui/AdminConsoleScreen.kt)  
 > 相关文档：[`webview_white_screen_optimization.md`](./webview_white_screen_optimization.md)、[`webview_debugging_runbook.md`](./webview_debugging_runbook.md)、[`webview_development_guidelines.md`](./webview_development_guidelines.md)
 
 ---
@@ -32,7 +32,7 @@
 
 ### 2.1 WebView 被配置成了非手机浏览器式视口
 
-修复前 [`WebViewRuntime.applySettings()`](../app/src/main/java/com/example/childkiosk/util/WebViewRuntime.kt) 中启用了：
+修复前 [`WebViewRuntime.applySettings()`](../app/src/main/java/site/anzz/childkiosk/util/WebViewRuntime.kt) 中启用了：
 
 ```kotlin
 useWideViewPort = true
@@ -175,7 +175,7 @@ WebView 创建成本较高，复用可以改善性能，但复用真实加载过
 
 ### 5.1 修正默认视口策略
 
-文件：[`WebViewRuntime.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewRuntime.kt)
+文件：[`WebViewRuntime.kt`](../app/src/main/java/site/anzz/childkiosk/util/WebViewRuntime.kt)
 
 修复后：
 
@@ -196,7 +196,7 @@ textZoom = 100
 
 ### 5.2 UA 解析集中化，防止复用残留
 
-文件：[`WebViewRuntime.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewRuntime.kt)
+文件：[`WebViewRuntime.kt`](../app/src/main/java/site/anzz/childkiosk/util/WebViewRuntime.kt)
 
 修复后新增统一入口：
 
@@ -218,7 +218,7 @@ fun resolveUserAgent(context: Context, defaultUserAgent: String): String {
 
 ### 5.3 页面事件补发验证结论
 
-文件：[`WebViewActivity.kt`](../app/src/main/java/com/example/childkiosk/WebViewActivity.kt)
+文件：[`WebViewActivity.kt`](../app/src/main/java/site/anzz/childkiosk/WebViewActivity.kt)
 
 曾经为了验证懒加载、`IntersectionObserver`、`visualViewport` 或首屏状态不同步问题，在 `onPageFinished()` 和 `onProgressChanged >= 100` 后补发 `focus/pageshow/resize/scroll/visibilitychange` 等事件。
 
@@ -232,7 +232,7 @@ fun resolveUserAgent(context: Context, defaultUserAgent: String): String {
 
 ### 5.4 UA 可见、可编辑
 
-文件：[`AdminConsoleScreen.kt`](../app/src/main/java/com/example/childkiosk/ui/AdminConsoleScreen.kt)
+文件：[`AdminConsoleScreen.kt`](../app/src/main/java/site/anzz/childkiosk/ui/AdminConsoleScreen.kt)
 
 管理后台“安全沙箱与限制”现在显示：
 
@@ -245,7 +245,7 @@ fun resolveUserAgent(context: Context, defaultUserAgent: String): String {
 
 ### 5.5 降低 WebView tile 内存压力
 
-文件：[`WebViewRuntime.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewRuntime.kt)、[`KioskPrefs.kt`](../app/src/main/java/com/example/childkiosk/util/KioskPrefs.kt)、[`WebViewPool.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewPool.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/com/example/childkiosk/ui/AdminConsoleScreen.kt)
+文件：[`WebViewRuntime.kt`](../app/src/main/java/site/anzz/childkiosk/util/WebViewRuntime.kt)、[`KioskPrefs.kt`](../app/src/main/java/site/anzz/childkiosk/util/KioskPrefs.kt)、[`WebViewPool.kt`](../app/src/main/java/site/anzz/childkiosk/util/WebViewPool.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/site/anzz/childkiosk/ui/AdminConsoleScreen.kt)
 
 最新修复后：
 
@@ -270,7 +270,7 @@ offscreenPreRaster = KioskPrefs.isWebViewOffscreenPreRasterEnabled(context)
 
 ### 5.6 WebView 渲染模式兜底验证
 
-文件：[`WebViewRuntime.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewRuntime.kt)、[`KioskPrefs.kt`](../app/src/main/java/com/example/childkiosk/util/KioskPrefs.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/com/example/childkiosk/ui/AdminConsoleScreen.kt)
+文件：[`WebViewRuntime.kt`](../app/src/main/java/site/anzz/childkiosk/util/WebViewRuntime.kt)、[`KioskPrefs.kt`](../app/src/main/java/site/anzz/childkiosk/util/KioskPrefs.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/site/anzz/childkiosk/ui/AdminConsoleScreen.kt)
 
 如果关闭 `offscreenPreRaster`、热备和预加载后仍然出现：
 
@@ -310,7 +310,7 @@ WARNING: tile memory limits exceeded, some content may not draw
 
 ### 5.7 高分屏渲染兼容补丁验证结论
 
-文件：[`WebViewActivity.kt`](../app/src/main/java/com/example/childkiosk/WebViewActivity.kt)、[`WebViewRuntime.kt`](../app/src/main/java/com/example/childkiosk/util/WebViewRuntime.kt)、[`KioskPrefs.kt`](../app/src/main/java/com/example/childkiosk/util/KioskPrefs.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/com/example/childkiosk/ui/AdminConsoleScreen.kt)
+文件：[`WebViewActivity.kt`](../app/src/main/java/site/anzz/childkiosk/WebViewActivity.kt)、[`WebViewRuntime.kt`](../app/src/main/java/site/anzz/childkiosk/util/WebViewRuntime.kt)、[`KioskPrefs.kt`](../app/src/main/java/site/anzz/childkiosk/util/KioskPrefs.kt)、[`AdminConsoleScreen.kt`](../app/src/main/java/site/anzz/childkiosk/ui/AdminConsoleScreen.kt)
 
 v0.0.24 曾新增“高分屏渲染兼容模式”，尝试通过 CSS/JS 注入降低动画、阴影、`filter`、`will-change` 和超宽内容的 tile 成本。后续实机验证结论：
 

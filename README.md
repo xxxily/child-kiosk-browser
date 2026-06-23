@@ -47,7 +47,7 @@
 
 ```
 app/
-├── src/main/java/com/example/childkiosk/
+├── src/main/java/site/anzz/childkiosk/
 │   ├── MainActivity.kt               # 主桌面 Activity，承载 Lock Task 启停
 │   ├── WebViewActivity.kt            # 独立进程 WebView 容器
 │   ├── MyDeviceAdminReceiver.kt      # Device Admin 广播接收
@@ -188,13 +188,13 @@ adb install -r -t child-kiosk-browser-x.y.z-release.apk
 将平板通过 USB 连接电脑，确保 ADB 已识别（`adb devices` 能看到设备）：
 
 ```bash
-adb shell dpm set-device-owner com.example.childkiosk/.MyDeviceAdminReceiver
+adb shell dpm set-device-owner site.anzz.childkiosk/.MyDeviceAdminReceiver
 ```
 
 成功提示：
 
 ```
-Success: Device owner set to package ComponentInfo{com.example.childkiosk/com.example.childkiosk.MyDeviceAdminReceiver}
+Success: Device owner set to package ComponentInfo{site.anzz.childkiosk/site.anzz.childkiosk.MyDeviceAdminReceiver}
 Active admin: ComponentInfo{...}
 ```
 
@@ -236,8 +236,8 @@ Active admin: ComponentInfo{...}
 
 ```bash
 # 在电脑上通过 ADB 执行
-adb shell dpm remove-active-admin com.example.childkiosk/.MyDeviceAdminReceiver
-adb uninstall com.example.childkiosk
+adb shell dpm remove-active-admin site.anzz.childkiosk/.MyDeviceAdminReceiver
+adb uninstall site.anzz.childkiosk
 ```
 
 > 一旦移除 Device Owner，本应用将变回普通应用。如需重新激活，必须再次恢复出厂设置。

@@ -226,7 +226,7 @@ Device Owner 方案的边界：
 Chromium：125
 Android：12
 设备：厂商 型号
-进程：com.example.childkiosk:webview
+进程：site.anzz.childkiosk:webview
 状态：正常 / 偏旧 / 无法识别 / 高风险
 ```
 

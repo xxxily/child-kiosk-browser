@@ -25,7 +25,7 @@
 
 ## 二、根因分析
 
-经过对 [`WebViewActivity.kt`](../app/src/main/java/com/example/childkiosk/WebViewActivity.kt) 源码的逐行审查，白屏由以下六个层面的因素叠加造成：
+经过对 [`WebViewActivity.kt`](../app/src/main/java/site/anzz/childkiosk/WebViewActivity.kt) 源码的逐行审查，白屏由以下六个层面的因素叠加造成：
 
 ### 2.1 Activity 窗口背景默认白色
 
@@ -43,13 +43,13 @@
 
 `WebView` 控件初始化后的默认背景色为 `#FFFFFF` 纯白色。在 `loadUrl()` 被调用后、网页首帧（First Paint）渲染出来之前，WebView 内部画布呈现的就是这层白底。
 
-**关键代码位置**：[`createSecureWebView()`](../app/src/main/java/com/example/childkiosk/WebViewActivity.kt) 函数定义于第 500 行，第 508 行 `WebView(ctx).apply { ... }` 中未调用 `setBackgroundColor()`。
+**关键代码位置**：[`createSecureWebView()`](../app/src/main/java/site/anzz/childkiosk/WebViewActivity.kt) 函数定义于第 500 行，第 508 行 `WebView(ctx).apply { ... }` 中未调用 `setBackgroundColor()`。
 
 ### 2.4 Compose `AndroidView` 的测量与布局时差 + `loadUrl()` 调用时机
 
-WebView 通过 `AndroidView` 的 `factory` 回调同步创建并加载 URL（[第 256-274 行](../app/src/main/java/com/example/childkiosk/WebViewActivity.kt)）。从 `AndroidView` 首次加入 Compose 视图树、进行测量（measure）和布局（layout），到底层 WebView 接收到网络数据并绘制出网页内容，存在一个原生渲染管线的物理耗时。
+WebView 通过 `AndroidView` 的 `factory` 回调同步创建并加载 URL（[第 256-274 行](../app/src/main/java/site/anzz/childkiosk/WebViewActivity.kt)）。从 `AndroidView` 首次加入 Compose 视图树、进行测量（measure）和布局（layout），到底层 WebView 接收到网络数据并绘制出网页内容，存在一个原生渲染管线的物理耗时。
 
-此外，`loadUrl(targetUrl)` 在 `factory` 回调中被同步调用（[第 270 行](../app/src/main/java/com/example/childkiosk/WebViewActivity.kt)），此时 WebView 尚未完成 `attach` 到窗口，实际网络请求会被延迟到 WebView 完成 layout 之后，进一步增加了白屏持续时间。
+此外，`loadUrl(targetUrl)` 在 `factory` 回调中被同步调用（[第 270 行](../app/src/main/java/site/anzz/childkiosk/WebViewActivity.kt)），此时 WebView 尚未完成 `attach` 到窗口，实际网络请求会被延迟到 WebView 完成 layout 之后，进一步增加了白屏持续时间。
 
 ### 2.5 渲染阻塞资源与网络延迟
 
@@ -547,10 +547,10 @@ class ChildKioskApp : Application() {
 
 | 文件 | 路径 | 说明 |
 |------|------|------|
-| WebViewActivity.kt | `app/src/main/java/com/example/childkiosk/WebViewActivity.kt` | WebView 创建、加载、安全策略核心文件 |
-| KioskMainScreen.kt | `app/src/main/java/com/example/childkiosk/ui/KioskMainScreen.kt` | 主页网格，预加载触发入口 |
-| KioskPrefs.kt | `app/src/main/java/com/example/childkiosk/util/KioskPrefs.kt` | 偏好配置存储，可扩展缓存/预加载开关 |
-| AdminConsoleScreen.kt | `app/src/main/java/com/example/childkiosk/ui/AdminConsoleScreen.kt` | 管理后台，清缓存、预加载配置入口 |
+| WebViewActivity.kt | `app/src/main/java/site/anzz/childkiosk/WebViewActivity.kt` | WebView 创建、加载、安全策略核心文件 |
+| KioskMainScreen.kt | `app/src/main/java/site/anzz/childkiosk/ui/KioskMainScreen.kt` | 主页网格，预加载触发入口 |
+| KioskPrefs.kt | `app/src/main/java/site/anzz/childkiosk/util/KioskPrefs.kt` | 偏好配置存储，可扩展缓存/预加载开关 |
+| AdminConsoleScreen.kt | `app/src/main/java/site/anzz/childkiosk/ui/AdminConsoleScreen.kt` | 管理后台，清缓存、预加载配置入口 |
 | AndroidManifest.xml | `app/src/main/AndroidManifest.xml` | Activity 主题配置 |
 | themes.xml | `app/src/main/res/values/themes.xml` | 主题定义，新增 WebView 专用主题 |
 | colors.xml | `app/src/main/res/values/colors.xml` | 颜色资源定义 |

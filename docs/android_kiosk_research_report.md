@@ -199,7 +199,7 @@ WebView 作为加载 Web 游戏或教学内容的容器，是发生网络风险�
 3. 进入系统设置，连续点击版本号开启开发者模式，**启用 USB 调试**。
 4. 将平板连接电脑，打开终端运行：
    ```bash
-   adb shell dpm set-device-owner com.example.childkiosk/.MyDeviceAdminReceiver
+   adb shell dpm set-device-owner site.anzz.childkiosk/.MyDeviceAdminReceiver
    ```
 5. 成功后，界面会显示 `Active Admin set`。此时可以安全地连网并添加其他账号。
 

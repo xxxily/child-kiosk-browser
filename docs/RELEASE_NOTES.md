@@ -428,7 +428,7 @@ adb logcat -v time ChildKioskWebView:D ChildKioskApp:D MainActivity:D chromium:I
 * **首绘与诊断优化**：
   - 主进程不再创建 WebView 热备/预加载实例，热备只允许在 `:webview` 进程内生效。
   - 页面加载完成后移除全屏 loading 退出淡出，并将最小遮罩时间降到 120ms，减少首绘阶段额外合成压力。
-  - `Render mode applied` 日志新增进程名、`memoryClass/largeMemoryClass/heapMax/heapTotal/heapFree`，测试时应看到 `process=com.example.childkiosk:webview` 和 `actual=HARDWARE`。
+  - `Render mode applied` 日志新增进程名、`memoryClass/largeMemoryClass/heapMax/heapTotal/heapFree`，测试时应看到 `process=site.anzz.childkiosk:webview` 和 `actual=HARDWARE`。
 
 ---
 
@@ -922,7 +922,7 @@ adb logcat -v time ChildKioskWebView:D ChildKioskApp:D MainActivity:D chromium:I
 3. `adb install child-kiosk-browser-0.0.2-release.apk`；
 4. 激活 Device Owner：
    ```bash
-   adb shell dpm set-device-owner com.example.childkiosk/.MyDeviceAdminReceiver
+   adb shell dpm set-device-owner site.anzz.childkiosk/.MyDeviceAdminReceiver
    ```
    返回 `Active admin set` 即成功；
 5. 家长后台防护等级卡片 →「设为默认主屏幕」选择本应用；

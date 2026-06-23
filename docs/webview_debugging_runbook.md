@@ -43,7 +43,7 @@ adb devices
 确认 App 已安装：
 
 ```bash
-adb shell pm path com.example.childkiosk
+adb shell pm path site.anzz.childkiosk
 ```
 
 ---
@@ -85,7 +85,7 @@ adb logcat -v time ChildKioskWebView:D ChildKioskApp:D MainActivity:D chromium:I
 - `Page finished: progress=..., canGoBack=..., url=...`
 - `Cleared initial blank history for warm WebView: ...`
 - `Render mode applied: requested=..., actual=..., screen=..., density=...`
-- `Process started: com.example.childkiosk:webview, webViewProcess=true`
+- `Process started: site.anzz.childkiosk:webview, webViewProcess=true`
 - `Main frame error: ...`
 - `Main frame HTTP error: HTTP ..., url=...`
 - `Blocked ad request: ...`
@@ -98,7 +98,7 @@ adb logcat -v time ChildKioskWebView:D ChildKioskApp:D MainActivity:D chromium:I
 - 没有 `Initial load after layout`：说明真实页面可能在 WebView attach/layout 前后时序有问题。
 - `Page started` 后没有 `Page finished`：看 Network、SSL、主 frame 错误或页面跳转循环。
 - `Page finished` 后 Loading 仍卡住：重点排查 App 的 meaningful content 判断、页面是否 SPA 空壳、遮罩状态。
-- `Page finished` 前后出现 `tile memory limits exceeded`：优先排查 WebView tile 内存压力。先确认网页进程日志为 `com.example.childkiosk:webview`，`Host mode applied: NATIVE_FRAME_LAYOUT`，`Render mode applied` 为 `actual=HARDWARE`，以及日志里的 `memoryClass/largeMemoryClass/heapMax`。如果宿主 heap 已经正常但 warning 仍来自 chromium renderer 子进程，说明不是 App Java heap 不足，而是 renderer tile cache 预算被页面绘制成本打爆。此时保持默认硬件合成、`offscreenPreRaster=false`，关闭空白 WebView 热备和 URL 后台预加载后再对比。不要再开启高分屏渲染兼容补丁；实测它会改写页面动画和样式。
+- `Page finished` 前后出现 `tile memory limits exceeded`：优先排查 WebView tile 内存压力。先确认网页进程日志为 `site.anzz.childkiosk:webview`，`Host mode applied: NATIVE_FRAME_LAYOUT`，`Render mode applied` 为 `actual=HARDWARE`，以及日志里的 `memoryClass/largeMemoryClass/heapMax`。如果宿主 heap 已经正常但 warning 仍来自 chromium renderer 子进程，说明不是 App Java heap 不足，而是 renderer tile cache 预算被页面绘制成本打爆。此时保持默认硬件合成、`offscreenPreRaster=false`，关闭空白 WebView 热备和 URL 后台预加载后再对比。不要再开启高分屏渲染兼容补丁；实测它会改写页面动画和样式。
 - 手势返回先到空白页：看 `canGoBack=true` 且是否出现 `Cleared initial blank history...`。
 - 出现 `Blocked ad request`、`SSL error blocked`：先确认当前限制开关是否符合预期。
 
@@ -117,7 +117,7 @@ chrome://inspect/#devices
 
 3. 勾选 `Discover USB devices`。
 4. 打开 App 中的目标网页。
-5. 在 `Remote Target` 下找到 `com.example.childkiosk` 或目标 URL。
+5. 在 `Remote Target` 下找到 `site.anzz.childkiosk` 或目标 URL。
 6. 点击 `inspect`。
 
 如果看不到 WebView：
