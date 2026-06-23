@@ -1,13 +1,16 @@
 package com.example.childkiosk
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.http.SslError
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.util.Log
@@ -25,6 +28,7 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.example.childkiosk.data.AppDatabase
 import com.example.childkiosk.data.SystemConfigEntity
@@ -73,6 +77,22 @@ class WebViewActivity : ComponentActivity() {
     private var currentPageProgress = 0
     private var navigationRootHost = ""
     private lateinit var runtimeConfig: WebViewRuntimeConfig
+    private var pendingGeolocationRequest: PendingGeolocationRequest? = null
+    private var geolocationPermissionDialog: AlertDialog? = null
+    private var pendingDownloadRequest: PendingDownloadRequest? = null
+    private var downloadPermissionDialog: AlertDialog? = null
+
+    private data class PendingGeolocationRequest(
+        val origin: String?,
+        val callback: GeolocationPermissions.Callback
+    )
+
+    private data class PendingDownloadRequest(
+        val url: String,
+        val userAgent: String?,
+        val contentDisposition: String?,
+        val mimeType: String?
+    )
 
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -85,6 +105,38 @@ class WebViewActivity : ComponentActivity() {
             null
         }
         callback.onReceiveValue(uris ?: emptyArray())
+    }
+
+    private val locationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val granted = hasLocationPermission() ||
+            permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted) {
+            finishPendingGeolocationRequest(allow = true, retain = true)
+        } else {
+            finishPendingGeolocationRequest(allow = false, retain = false)
+            Toast.makeText(this, "未获得系统定位权限，网页无法获取位置", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private val downloadStoragePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val pending = pendingDownloadRequest ?: return@registerForActivityResult
+        pendingDownloadRequest = null
+        if (granted || !requiresLegacyDownloadStoragePermission()) {
+            enqueueDownload(
+                this,
+                pending.url,
+                pending.userAgent,
+                pending.contentDisposition,
+                pending.mimeType
+            )
+        } else {
+            Toast.makeText(this, "未获得存储权限，无法保存下载文件", Toast.LENGTH_SHORT).show()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -180,6 +232,12 @@ class WebViewActivity : ComponentActivity() {
         exitVerificationDialog = null
         timeoutDialog?.dismiss()
         timeoutDialog = null
+        geolocationPermissionDialog?.dismiss()
+        geolocationPermissionDialog = null
+        finishPendingGeolocationRequest(allow = false, retain = false)
+        downloadPermissionDialog?.dismiss()
+        downloadPermissionDialog = null
+        pendingDownloadRequest = null
         exitFullscreenView()
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
@@ -226,6 +284,153 @@ class WebViewActivity : ComponentActivity() {
             Toast.makeText(this, "无法打开文件选择器", Toast.LENGTH_SHORT).show()
             false
         }
+    }
+
+    fun requestGeolocationPermission(
+        origin: String?,
+        callback: GeolocationPermissions.Callback?
+    ) {
+        if (callback == null) return
+        if (runtimeConfig.limitGeolocation) {
+            callback.invoke(origin, false, false)
+            Toast.makeText(this, "网页定位功能已受限制", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        finishPendingGeolocationRequest(allow = false, retain = false)
+        geolocationPermissionDialog?.dismiss()
+        pendingGeolocationRequest = PendingGeolocationRequest(origin, callback)
+
+        val siteName = displayOrigin(origin)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("允许网站获取位置？")
+            .setMessage("$siteName 请求获取当前设备位置。")
+            .setNegativeButton("拒绝") { _, _ ->
+                finishPendingGeolocationRequest(allow = false, retain = false)
+            }
+            .setPositiveButton("允许") { _, _ ->
+                if (hasLocationPermission()) {
+                    finishPendingGeolocationRequest(allow = true, retain = true)
+                } else {
+                    requestAndroidLocationPermission()
+                }
+            }
+            .setOnCancelListener {
+                finishPendingGeolocationRequest(allow = false, retain = false)
+            }
+            .create()
+        dialog.setOnDismissListener {
+            if (geolocationPermissionDialog === dialog) {
+                geolocationPermissionDialog = null
+            }
+        }
+        geolocationPermissionDialog = dialog
+        dialog.show()
+    }
+
+    fun requestDownload(
+        url: String?,
+        userAgent: String?,
+        contentDisposition: String?,
+        mimeType: String?
+    ) {
+        if (url.isNullOrBlank()) return
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        val scheme = uri?.scheme?.lowercase()
+        if (scheme != "http" && scheme != "https") {
+            Toast.makeText(this, "暂不支持此下载链接", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if (requiresLegacyDownloadStoragePermission() && !hasLegacyDownloadStoragePermission()) {
+            pendingDownloadRequest = PendingDownloadRequest(url, userAgent, contentDisposition, mimeType)
+            showLegacyDownloadPermissionPrompt()
+        } else {
+            enqueueDownload(this, url, userAgent, contentDisposition, mimeType)
+        }
+    }
+
+    private fun hasLocationPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun requestAndroidLocationPermission() {
+        runCatching {
+            locationPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        }.onFailure { e ->
+            Log.w("ChildKioskWebView", "Location permission request failed", e)
+            finishPendingGeolocationRequest(allow = false, retain = false)
+            Toast.makeText(this, "无法请求系统定位权限", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun finishPendingGeolocationRequest(allow: Boolean, retain: Boolean) {
+        val pending = pendingGeolocationRequest ?: return
+        pendingGeolocationRequest = null
+        pending.callback.invoke(pending.origin, allow, retain)
+    }
+
+    private fun displayOrigin(origin: String?): String {
+        if (origin.isNullOrBlank()) return "当前网站"
+        return runCatching {
+            Uri.parse(origin).host?.takeIf { it.isNotBlank() } ?: origin
+        }.getOrDefault(origin)
+    }
+
+    private fun requiresLegacyDownloadStoragePermission(): Boolean {
+        return Build.VERSION.SDK_INT <= Build.VERSION_CODES.P
+    }
+
+    private fun hasLegacyDownloadStoragePermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.WRITE_EXTERNAL_STORAGE
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun showLegacyDownloadPermissionPrompt() {
+        downloadPermissionDialog?.dismiss()
+        val fileName = pendingDownloadRequest?.let {
+            URLUtil.guessFileName(it.url, it.contentDisposition, it.mimeType)
+        } ?: "文件"
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("允许保存下载文件？")
+            .setMessage("需要存储权限才能将 $fileName 保存到下载目录。")
+            .setNegativeButton("取消") { _, _ ->
+                pendingDownloadRequest = null
+            }
+            .setPositiveButton("允许") { _, _ ->
+                runCatching {
+                    downloadStoragePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                }.onFailure { e ->
+                    Log.w("ChildKioskWebView", "Download storage permission request failed", e)
+                    pendingDownloadRequest = null
+                    Toast.makeText(this, "无法请求存储权限", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setOnCancelListener {
+                pendingDownloadRequest = null
+            }
+            .create()
+        dialog.setOnDismissListener {
+            if (downloadPermissionDialog === dialog) {
+                downloadPermissionDialog = null
+            }
+        }
+        downloadPermissionDialog = dialog
+        dialog.show()
     }
 
     fun enterFullscreenView(view: View?, callback: WebChromeClient.CustomViewCallback?) {
@@ -1316,7 +1521,8 @@ private fun createSecureWebView(
                 origin: String?,
                 callback: GeolocationPermissions.Callback?
             ) {
-                callback?.invoke(origin, !runtimeConfig.limitGeolocation, false)
+                (ctx as? WebViewActivity)?.requestGeolocationPermission(origin, callback)
+                    ?: callback?.invoke(origin, false, false)
             }
 
             override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
@@ -1383,7 +1589,8 @@ private fun createSecureWebView(
             if (runtimeConfig.limitDownload) {
                 onDownloadBlocked()
             } else {
-                enqueueDownload(ctx, url, userAgent, contentDisposition, mimeType)
+                (ctx as? WebViewActivity)?.requestDownload(url, userAgent, contentDisposition, mimeType)
+                    ?: enqueueDownload(ctx, url, userAgent, contentDisposition, mimeType)
             }
         }
     }
