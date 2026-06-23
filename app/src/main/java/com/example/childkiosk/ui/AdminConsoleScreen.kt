@@ -3585,7 +3585,7 @@ fun WebAppCard(
                                 uncheckedThumbColor = MaterialTheme.colorScheme.outline,
                                 uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant
                             ),
-                            modifier = Modifier.scale(0.85f)
+                            modifier = Modifier.scale(0.72f).padding(end = 4.dp)
                         )
                         if (canEdit) {
                             IconButton(

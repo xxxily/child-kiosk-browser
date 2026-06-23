@@ -123,7 +123,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     }
 
     private val urlInput = EditText(context).apply {
-        minHeight = dp(40)
+        minHeight = dp(44)
         setSingleLine(true)
         imeOptions = EditorInfo.IME_ACTION_GO
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
@@ -233,7 +233,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                     urlInput,
                     LinearLayout.LayoutParams(
                         0,
-                        dp(40),
+                        dp(44),
                         1f
                     )
                 )
@@ -285,7 +285,8 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         setImageResource(R.drawable.ic_floating_browser_menu_24)
         imageTintList = ColorStateList.valueOf(Color.rgb(117, 117, 117))
         contentDescription = "浏览控制"
-        scaleType = ImageView.ScaleType.CENTER
+        scaleType = ImageView.ScaleType.FIT_CENTER
+        setPadding(dp(12), dp(12), dp(12), dp(12))
         background = bubbleBackground()
         elevation = dp(3).toFloat()
         setOnTouchListener { _, event -> handleBubbleTouch(event) }
@@ -344,7 +345,8 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             ?: "浏览控制"
         if (!urlInput.hasFocus()) {
             urlInput.setText(state.currentUrl)
-            urlInput.setSelection(urlInput.text?.length ?: 0)
+            urlInput.setSelection(0)
+            urlInput.scrollTo(0, 0)
         }
         progressView.progress = state.progress
         progressView.isVisible = state.isLoading || state.progress in 1..99
@@ -840,7 +842,8 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     private fun syncInputFromStateIfNeeded() {
         if (!urlInput.hasFocus() && urlInput.text?.toString() != state.currentUrl) {
             urlInput.setText(state.currentUrl)
-            urlInput.setSelection(urlInput.text?.length ?: 0)
+            urlInput.setSelection(0)
+            urlInput.scrollTo(0, 0)
         }
     }
 
