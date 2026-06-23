@@ -15,17 +15,28 @@ object SystemUiHelper {
     /**
      * 普通应用模式：显示状态栏和导航栏，内容避让系统栏。
      */
-    fun enterNormal(activity: Activity) {
+    fun enterNormal(
+        activity: Activity,
+        showStatusBar: Boolean = true,
+        decorFitsSystemWindows: Boolean = true
+    ) {
         val window = activity.window
-        WindowCompat.setDecorFitsSystemWindows(window, true)
         clearFullscreenFlags(window)
+        WindowCompat.setDecorFitsSystemWindows(window, decorFitsSystemWindows)
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT
         disableSystemBarContrastScrims(window)
         val controller = WindowInsetsControllerCompat(window, window.decorView)
         controller.isAppearanceLightStatusBars = true
         controller.isAppearanceLightNavigationBars = true
-        controller.show(WindowInsetsCompat.Type.systemBars())
+        if (showStatusBar) {
+            controller.show(WindowInsetsCompat.Type.statusBars())
+        } else {
+            controller.hide(WindowInsetsCompat.Type.statusBars())
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+        controller.show(WindowInsetsCompat.Type.navigationBars())
     }
 
     /**

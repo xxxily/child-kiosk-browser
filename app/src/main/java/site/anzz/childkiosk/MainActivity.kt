@@ -64,13 +64,18 @@ class MainActivity : ComponentActivity() {
         // 3. 监听 System UI / Window 边距变化，防止状态栏灰色半透明条卡死，3秒自动收回
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.decorView.setOnApplyWindowInsetsListener { view, insets ->
-                val isVisible = if (shouldShowSecureSystemInfo()) {
-                    insets.isVisible(android.view.WindowInsets.Type.navigationBars())
-                } else {
-                    insets.isVisible(android.view.WindowInsets.Type.statusBars()) ||
+                val shouldReapply = when {
+                    shouldUseNormalSystemBars() -> {
+                        !shouldShowNormalStatusBar() &&
+                            insets.isVisible(android.view.WindowInsets.Type.statusBars())
+                    }
+                    shouldShowSecureSystemInfo() ->
                         insets.isVisible(android.view.WindowInsets.Type.navigationBars())
+                    else ->
+                        insets.isVisible(android.view.WindowInsets.Type.statusBars()) ||
+                            insets.isVisible(android.view.WindowInsets.Type.navigationBars())
                 }
-                if (isVisible && !shouldUseNormalSystemBars()) {
+                if (shouldReapply) {
                     view.postDelayed({
                         if (!isDestroyed && !isFinishing) {
                             applySystemUiMode()
@@ -82,7 +87,7 @@ class MainActivity : ComponentActivity() {
         } else {
             @Suppress("DEPRECATION")
             window.decorView.setOnSystemUiVisibilityChangeListener { visibility ->
-                if (!shouldUseNormalSystemBars() &&
+                if ((!shouldUseNormalSystemBars() || !shouldShowNormalStatusBar()) &&
                     (visibility and android.view.View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
                     window.decorView.postDelayed({
                         if (!isDestroyed && !isFinishing) {
@@ -156,6 +161,11 @@ class MainActivity : ComponentActivity() {
         applySystemUiMode()
         WebViewPool.warmupBlank()
         triggerKioskIfNeeded()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applySystemUiMode()
     }
 
     private fun applyRequestedOrientation() {
@@ -243,7 +253,12 @@ class MainActivity : ComponentActivity() {
 
     private fun applySystemUiMode() {
         when {
-            shouldUseNormalSystemBars() -> SystemUiHelper.enterNormal(this)
+            shouldUseNormalSystemBars() -> {
+                SystemUiHelper.enterNormal(
+                    this,
+                    showStatusBar = shouldShowNormalStatusBar()
+                )
+            }
             shouldShowSecureSystemInfo() -> SystemUiHelper.enterSecureSystemInfo(this)
             else -> SystemUiHelper.enterImmersive(this)
         }
@@ -258,6 +273,10 @@ class MainActivity : ComponentActivity() {
 
     private fun shouldUseNormalSystemBars(): Boolean {
         return isNormalSystemUiMode()
+    }
+
+    private fun shouldShowNormalStatusBar(): Boolean {
+        return resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE
     }
 
     private fun shouldShowSecureSystemInfo(): Boolean {

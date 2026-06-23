@@ -8,6 +8,7 @@ import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.net.Uri
 import android.net.http.SslError
 import android.os.Build
@@ -30,6 +31,8 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import site.anzz.childkiosk.data.AppDatabase
 import site.anzz.childkiosk.data.SystemConfigEntity
@@ -166,9 +169,14 @@ class WebViewActivity : ComponentActivity() {
         // 监听 System UI / Window 边距变化，锁定态下被手势短暂唤起后自动收回。
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             window.decorView.setOnApplyWindowInsetsListener { view, insets ->
-                val isVisible = insets.isVisible(android.view.WindowInsets.Type.statusBars()) || 
-                                insets.isVisible(android.view.WindowInsets.Type.navigationBars())
-                if (isVisible && !shouldUseNormalSystemBars()) {
+                val shouldReapply = if (shouldUseNormalSystemBars()) {
+                    !shouldShowNormalStatusBar() &&
+                        insets.isVisible(android.view.WindowInsets.Type.statusBars())
+                } else {
+                    insets.isVisible(android.view.WindowInsets.Type.statusBars()) ||
+                        insets.isVisible(android.view.WindowInsets.Type.navigationBars())
+                }
+                if (shouldReapply) {
                     view.postDelayed({
                         if (!isDestroyed && !isFinishing) {
                             applySystemUiMode()
@@ -180,7 +188,7 @@ class WebViewActivity : ComponentActivity() {
         } else {
             @Suppress("DEPRECATION")
             window.decorView.setOnSystemUiVisibilityChangeListener { visibility ->
-                if (!shouldUseNormalSystemBars() &&
+                if ((!shouldUseNormalSystemBars() || !shouldShowNormalStatusBar()) &&
                     (visibility and android.view.View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
                     window.decorView.postDelayed({
                         if (!isDestroyed && !isFinishing) {
@@ -203,6 +211,11 @@ class WebViewActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        applySystemUiMode()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
         applySystemUiMode()
     }
 
@@ -355,14 +368,23 @@ class WebViewActivity : ComponentActivity() {
 
     private fun applySystemUiMode() {
         if (shouldUseNormalSystemBars()) {
-            SystemUiHelper.enterNormal(this)
+            SystemUiHelper.enterNormal(
+                this,
+                showStatusBar = shouldShowNormalStatusBar(),
+                decorFitsSystemWindows = false
+            )
         } else {
             SystemUiHelper.enterImmersive(this)
         }
+        webViewRoot?.let { ViewCompat.requestApplyInsets(it) }
     }
 
     private fun shouldUseNormalSystemBars(): Boolean {
         return runtimeConfig.normalSystemBars
+    }
+
+    private fun shouldShowNormalStatusBar(): Boolean {
+        return resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE
     }
 
     private fun hasLocationPermission(): Boolean {
@@ -495,6 +517,8 @@ class WebViewActivity : ComponentActivity() {
         }
         webViewRoot = root
         setContentView(root)
+        installWebViewRootInsets(root)
+        applySystemUiMode()
 
         val showTopProgress = runtimeConfig.webViewTopProgressEnabled
         if (showTopProgress) {
@@ -556,6 +580,30 @@ class WebViewActivity : ComponentActivity() {
             }
             attachNativeWebView(root, webApp)
         }
+    }
+
+    private fun installWebViewRootInsets(root: FrameLayout) {
+        val initialLeft = root.paddingLeft
+        val initialTop = root.paddingTop
+        val initialRight = root.paddingRight
+        val initialBottom = root.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            val navigationBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            val shouldInsetForNormalMode = shouldUseNormalSystemBars()
+            view.setPadding(
+                initialLeft + if (shouldInsetForNormalMode) navigationBars.left else 0,
+                initialTop + if (shouldInsetForNormalMode && shouldShowNormalStatusBar()) {
+                    statusBars.top
+                } else {
+                    0
+                },
+                initialRight + if (shouldInsetForNormalMode) navigationBars.right else 0,
+                initialBottom + if (shouldInsetForNormalMode) navigationBars.bottom else 0
+            )
+            insets
+        }
+        ViewCompat.requestApplyInsets(root)
     }
 
     private fun attachNativeWebView(root: FrameLayout, webApp: WebAppEntity) {
