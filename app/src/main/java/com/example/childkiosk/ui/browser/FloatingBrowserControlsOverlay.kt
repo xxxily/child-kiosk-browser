@@ -83,7 +83,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private val edgeMargin = dp(12)
     private val visibleEdgeWidth = dp(20)
-    private val bubbleSize = dp(54)
+    private val bubbleSize = dp(44)
     private val panelMaxWidth = dp(380)
     private val panelMinWidth = dp(288)
     private val panelMargin = dp(16)
@@ -131,7 +131,8 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         setTextColor(PanelTextColor)
         setHintTextColor(PanelHintColor)
         hint = "输入网址"
-        setPadding(dp(12), 0, dp(12), 0)
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(12), dp(8), dp(12), dp(8))
         background = roundedBackground(Color.WHITE, dp(12), StrokeColor, dp(1))
         setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_GO) {
@@ -232,7 +233,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                     urlInput,
                     LinearLayout.LayoutParams(
                         0,
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        dp(40),
                         1f
                     )
                 )
@@ -274,10 +275,10 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         val circle = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             setColor(Color.WHITE)
-            cornerRadius = dp(22).toFloat()
+            cornerRadius = dp(21).toFloat()
             setStroke(dp(1), Color.rgb(224, 224, 224))
         }
-        return android.graphics.drawable.InsetDrawable(circle, dp(5), dp(5), dp(5), dp(5))
+        return android.graphics.drawable.InsetDrawable(circle, dp(1), dp(1), dp(1), dp(1))
     }
 
     private val bubbleButton = ImageButton(context).apply {
@@ -871,13 +872,13 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         }
     }
 
-    private fun minX(): Float = edgeMargin.toFloat()
+    private fun minX(): Float = 0f
 
-    private fun maxX(): Float = max(edgeMargin, width - edgeMargin - bubbleSize).toFloat()
+    private fun maxX(): Float = max(0, width - bubbleSize).toFloat()
 
-    private fun minY(): Float = edgeMargin.toFloat()
+    private fun minY(): Float = dp(12).toFloat()
 
-    private fun maxY(): Float = max(edgeMargin, height - edgeMargin - bubbleSize).toFloat()
+    private fun maxY(): Float = max(dp(12), height - dp(12) - bubbleSize).toFloat()
 
     private fun dp(value: Int): Int {
         return (value * resources.displayMetrics.density).toInt()

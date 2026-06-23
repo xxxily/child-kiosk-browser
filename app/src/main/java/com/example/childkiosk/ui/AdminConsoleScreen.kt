@@ -21,6 +21,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -3460,64 +3461,86 @@ fun WebAppCard(
     onDelete: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit
 ) {
+    val isSubscribed = app.sourceType == WebAppEntity.SOURCE_SUBSCRIPTION
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .padding(vertical = 12.dp, horizontal = 12.dp),
+            verticalAlignment = Alignment.Top
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
+            // 左边显示图标
+            val iconPath = app.iconPath ?: ""
+            val isNetworkIcon = iconPath.startsWith("http://", ignoreCase = true) || 
+                                iconPath.startsWith("https://", ignoreCase = true)
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
             ) {
-                // 图标
-                val iconPath = app.iconPath ?: ""
-                val isNetworkIcon = iconPath.startsWith("http://", ignoreCase = true) || 
-                                    iconPath.startsWith("https://", ignoreCase = true)
-                Box(
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (isNetworkIcon) {
-                        coil.compose.AsyncImage(
-                            model = iconPath,
-                            contentDescription = app.title,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                            error = androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Default.Star)
-                        )
-                    } else {
-                        val iconVector = getIconVector(iconPath)
-                        Icon(
-                            imageVector = iconVector,
-                            contentDescription = app.title,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
+                if (isNetworkIcon) {
+                    coil.compose.AsyncImage(
+                        model = iconPath,
+                        contentDescription = app.title,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        error = androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Default.Star)
+                    )
+                } else {
+                    val iconVector = getIconVector(iconPath)
+                    Icon(
+                        imageVector = iconVector,
+                        contentDescription = app.title,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
-                Spacer(modifier = Modifier.width(16.dp))
+            }
 
-                Column(modifier = Modifier.weight(1f)) {
-                    val isSubscribed = app.sourceType == WebAppEntity.SOURCE_SUBSCRIPTION
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = app.title,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // 右边上下布局
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // 上面文字和 url
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = app.title,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = app.url,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                }
+
+                // 下面显示操作按钮和分类标签
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    // 左侧标签群：分类与订阅状态
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(4.dp))
@@ -3532,7 +3555,6 @@ fun WebAppCard(
                             )
                         }
                         if (isSubscribed) {
-                            Spacer(modifier = Modifier.width(6.dp))
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(4.dp))
@@ -3548,38 +3570,49 @@ fun WebAppCard(
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = app.url,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1
-                    )
-                }
-            }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Switch(
-                    checked = app.isEnabled,
-                    onCheckedChange = onToggleEnabled,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = MaterialTheme.colorScheme.primary,
-                        checkedTrackColor = MaterialTheme.colorScheme.primaryContainer,
-                        uncheckedThumbColor = MaterialTheme.colorScheme.outline,
-                        uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                )
-                if (canEdit) {
-                    IconButton(onClick = onEdit) {
-                        Icon(imageVector = Icons.Default.Edit, contentDescription = "编辑", tint = MaterialTheme.colorScheme.primary)
-                    }
-                }
-                if (canDelete) {
-                    IconButton(onClick = onDelete) {
-                        Icon(imageVector = Icons.Default.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
+                    // 右侧开关和操作按钮
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Switch(
+                            checked = app.isEnabled,
+                            onCheckedChange = onToggleEnabled,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.primary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primaryContainer,
+                                uncheckedThumbColor = MaterialTheme.colorScheme.outline,
+                                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            modifier = Modifier.scale(0.85f)
+                        )
+                        if (canEdit) {
+                            IconButton(
+                                onClick = onEdit,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "编辑",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                        if (canDelete) {
+                            IconButton(
+                                onClick = onDelete,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "删除",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
