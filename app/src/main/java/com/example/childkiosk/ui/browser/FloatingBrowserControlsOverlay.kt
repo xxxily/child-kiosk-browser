@@ -312,7 +312,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
 
         ViewCompat.setOnApplyWindowInsetsListener(this) { _, insets ->
             doOnLayout {
-                constrainBubbleIntoBounds(animated = false)
+                restoreBubbleAfterBoundsChange(animated = false)
                 positionPanel()
             }
             insets
@@ -322,9 +322,8 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             if (bubbleButton.x == 0f && bubbleButton.y == 0f) {
                 placeInitialBubble()
             } else {
-                constrainBubbleIntoBounds(animated = false)
+                restoreBubbleAfterBoundsChange(animated = false)
             }
-            scheduleEdgeHide()
         }
     }
 
@@ -387,7 +386,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             if (oldw == 0 || oldh == 0) {
                 placeInitialBubble()
             } else {
-                constrainBubbleIntoBounds(animated = false)
+                restoreBubbleAfterBoundsChange(animated = false)
             }
             positionPanel()
         }
@@ -669,6 +668,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         val y = ((height * 0.62f) - (bubbleSize / 2f)).coerceIn(minY(), maxY())
         moveBubbleTo(x, y)
         isAttachedToRightEdge = true
+        hideBubbleAtEdge(animated = false)
     }
 
     private fun moveBubbleTo(targetX: Float, targetY: Float) {
@@ -690,6 +690,14 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         } else {
             bubbleButton.x = x
             bubbleButton.y = y
+        }
+    }
+
+    private fun restoreBubbleAfterBoundsChange(animated: Boolean) {
+        if (isBubbleHiddenAtEdge && !panelExpanded && !isDraggingBubble) {
+            hideBubbleAtEdge(animated = animated)
+        } else {
+            constrainBubbleIntoBounds(animated = animated)
         }
     }
 
@@ -720,11 +728,14 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             -bubbleSize + visibleEdgeWidth.toFloat()
         }
         isBubbleHiddenAtEdge = true
+        val targetY = bubbleButton.y.coerceIn(minY(), maxY())
         if (animated) {
-            animateBubbleTo(targetX, bubbleButton.y.coerceIn(minY(), maxY()), targetAlpha = 0.4f)
+            animateBubbleTo(targetX, targetY, targetAlpha = 0.4f)
         } else {
             bubbleButton.x = targetX
+            bubbleButton.y = targetY
             bubbleButton.alpha = 0.4f
+            positionPanel()
         }
     }
 
