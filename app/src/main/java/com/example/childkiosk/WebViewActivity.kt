@@ -159,18 +159,17 @@ class WebViewActivity : ComponentActivity() {
             window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         }
 
-        // 沉浸式全屏，隐藏状态栏与导航栏
-        SystemUiHelper.enterImmersive(this)
+        applySystemUiMode()
 
-        // 监听 System UI / Window 边距变化，防止状态栏灰色半透明条卡死，3秒自动收回
+        // 监听 System UI / Window 边距变化，锁定态下被手势短暂唤起后自动收回。
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             window.decorView.setOnApplyWindowInsetsListener { view, insets ->
                 val isVisible = insets.isVisible(android.view.WindowInsets.Type.statusBars()) || 
                                 insets.isVisible(android.view.WindowInsets.Type.navigationBars())
-                if (isVisible) {
+                if (isVisible && !shouldUseNormalSystemBars()) {
                     view.postDelayed({
                         if (!isDestroyed && !isFinishing) {
-                            SystemUiHelper.enterImmersive(this@WebViewActivity)
+                            applySystemUiMode()
                         }
                     }, 3000)
                 }
@@ -179,10 +178,11 @@ class WebViewActivity : ComponentActivity() {
         } else {
             @Suppress("DEPRECATION")
             window.decorView.setOnSystemUiVisibilityChangeListener { visibility ->
-                if ((visibility and android.view.View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
+                if (!shouldUseNormalSystemBars() &&
+                    (visibility and android.view.View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
                     window.decorView.postDelayed({
                         if (!isDestroyed && !isFinishing) {
-                            SystemUiHelper.enterImmersive(this@WebViewActivity)
+                            applySystemUiMode()
                         }
                     }, 3000)
                 }
@@ -201,13 +201,12 @@ class WebViewActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // 恢复沉浸式（部分手势可能短暂打破）
-        SystemUiHelper.enterImmersive(this)
+        applySystemUiMode()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) SystemUiHelper.enterImmersive(this)
+        if (hasFocus) applySystemUiMode()
     }
 
 
@@ -350,6 +349,18 @@ class WebViewActivity : ComponentActivity() {
         }
     }
 
+    private fun applySystemUiMode() {
+        if (shouldUseNormalSystemBars()) {
+            SystemUiHelper.enterNormal(this)
+        } else {
+            SystemUiHelper.enterImmersive(this)
+        }
+    }
+
+    private fun shouldUseNormalSystemBars(): Boolean {
+        return runtimeConfig.normalSystemBars
+    }
+
     private fun hasLocationPermission(): Boolean {
         return ContextCompat.checkSelfPermission(
             this,
@@ -470,7 +481,7 @@ class WebViewActivity : ComponentActivity() {
             floatingControlsOverlay?.visibility = View.VISIBLE
             updateFloatingControlsState()
         }
-        SystemUiHelper.enterImmersive(this)
+        applySystemUiMode()
     }
 
     private fun startNativeWebView(webAppId: Int) {
@@ -690,7 +701,7 @@ class WebViewActivity : ComponentActivity() {
                 onRefresh = { refreshFromFloatingControls() },
                 onStopLoading = { stopLoadingFromFloatingControls() },
                 onPanelExpandedChanged = {
-                    SystemUiHelper.enterImmersive(this)
+                    applySystemUiMode()
                 },
                 onActionSelected = { actionId ->
                     Log.d("ChildKioskWebView", "Floating browser action: $actionId")
