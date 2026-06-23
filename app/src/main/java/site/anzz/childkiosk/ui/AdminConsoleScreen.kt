@@ -1906,7 +1906,7 @@ fun AdminConsoleScreen(
                                             },
                                             modifier = Modifier.fillMaxWidth(),
                                             singleLine = true,
-                                            placeholder = { Text("https://example.com/custom.js", fontSize = 12.sp) },
+                                            placeholder = { Text("https://assets.anzz.site/custom.js", fontSize = 12.sp) },
                                             textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                                         )
                                     }
@@ -2913,7 +2913,7 @@ private fun WebFilteringSettingsScreen(
                         .fillMaxWidth()
                         .heightIn(min = 140.dp, max = 240.dp),
                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = FontFamily.Monospace),
-                    placeholder = { Text("||example-ad.com^\n@@||example.com/allowed.js${'$'}script") }
+                    placeholder = { Text("||ads.demo.invalid^\n@@||demo.invalid/allowed.js${'$'}script") }
                 )
                 Text(
                     "校验：启用 ${customRuleReport.enabledRuleCount}/${customRuleReport.ruleCount}，不支持 ${customRuleReport.unsupportedRuleCount}",
@@ -2970,7 +2970,7 @@ private fun WebFilteringSettingsScreen(
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         label = { Text("域名") },
-                        placeholder = { Text("example.com") }
+                        placeholder = { Text("demo.invalid") }
                     )
                     Button(
                         onClick = {
@@ -3888,8 +3888,8 @@ fun AddEditWebAppDialog(
                                     if (customIconUrl.trim().isNotEmpty()) {
                                         selectedIcon = customIconUrl.trim()
                                     } else {
-                                        selectedIcon = "https://example.com/favicon.ico"
-                                        customIconUrl = "https://example.com/favicon.ico"
+                                        selectedIcon = "https://assets.anzz.site/favicon.ico"
+                                        customIconUrl = "https://assets.anzz.site/favicon.ico"
                                     }
                                 }
                         ) {
@@ -3899,8 +3899,8 @@ fun AddEditWebAppDialog(
                                     if (customIconUrl.trim().isNotEmpty()) {
                                         selectedIcon = customIconUrl.trim()
                                     } else {
-                                        selectedIcon = "https://example.com/favicon.ico"
-                                        customIconUrl = "https://example.com/favicon.ico"
+                                        selectedIcon = "https://assets.anzz.site/favicon.ico"
+                                        customIconUrl = "https://assets.anzz.site/favicon.ico"
                                     }
                                 }
                             )
@@ -3949,7 +3949,7 @@ fun AddEditWebAppDialog(
                                     customIconUrl = it
                                     selectedIcon = it.trim()
                                 },
-                                placeholder = { Text("图标网址，例如 example.com/logo.png") },
+                                placeholder = { Text("图标网址，如 assets.anzz.site/logo.png") },
                                 shape = RoundedCornerShape(10.dp),
                                 singleLine = true,
                                 modifier = Modifier.weight(1f),
