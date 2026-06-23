@@ -48,6 +48,7 @@ data class FloatingBrowserControlsCallbacks(
     val onBack: () -> Unit = {},
     val onForward: () -> Unit = {},
     val onRefresh: () -> Unit = {},
+    val onForceRefresh: () -> Unit = {},
     val onStopLoading: () -> Unit = {},
     val onPanelExpandedChanged: (Boolean) -> Unit = {},
     val onActionSelected: (String) -> Unit = {}
@@ -514,6 +515,12 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                     title = refreshTitle,
                     iconRes = refreshIcon,
                     highlighted = state.isLoading
+                ),
+                FloatingControlAction(
+                    id = ACTION_BROWSER_FORCE_REFRESH,
+                    title = "强刷",
+                    iconRes = R.drawable.ic_browser_refresh_24,
+                    style = FloatingControlActionStyle.PRIMARY
                 )
             )
         )
@@ -627,6 +634,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             ACTION_BROWSER_BACK -> callbacks.onBack()
             ACTION_BROWSER_FORWARD -> callbacks.onForward()
             ACTION_BROWSER_REFRESH -> callbacks.onRefresh()
+            ACTION_BROWSER_FORCE_REFRESH -> callbacks.onForceRefresh()
             ACTION_BROWSER_STOP -> callbacks.onStopLoading()
             ACTION_PANEL_CLOSE -> setPanelExpanded(expanded = false, animated = true)
             else -> Unit
@@ -914,6 +922,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         const val ACTION_BROWSER_BACK = "browser.back"
         const val ACTION_BROWSER_FORWARD = "browser.forward"
         const val ACTION_BROWSER_REFRESH = "browser.refresh"
+        const val ACTION_BROWSER_FORCE_REFRESH = "browser.force_refresh"
         const val ACTION_BROWSER_STOP = "browser.stop"
         const val ACTION_PANEL_CLOSE = "panel.close"
 

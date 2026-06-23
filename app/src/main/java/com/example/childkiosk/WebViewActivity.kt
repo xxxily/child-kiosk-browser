@@ -19,6 +19,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.*
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -71,6 +72,7 @@ class WebViewActivity : ComponentActivity() {
     private var floatingControlsOverlay: FloatingBrowserControlsOverlay? = null
     private var exitVerificationDialog: AlertDialog? = null
     private var timeoutDialog: AlertDialog? = null
+    private var forceRefreshDialog: AlertDialog? = null
     private var timeLimitJob: Job? = null
     private var sessionStartTimeMs: Long = 0L
     private var currentPageLoading = false
@@ -231,6 +233,8 @@ class WebViewActivity : ComponentActivity() {
         exitVerificationDialog = null
         timeoutDialog?.dismiss()
         timeoutDialog = null
+        forceRefreshDialog?.dismiss()
+        forceRefreshDialog = null
         geolocationPermissionDialog?.dismiss()
         geolocationPermissionDialog = null
         finishPendingGeolocationRequest(allow = false, retain = false)
@@ -699,6 +703,7 @@ class WebViewActivity : ComponentActivity() {
                 onBack = { goBackFromFloatingControls() },
                 onForward = { goForwardFromFloatingControls() },
                 onRefresh = { refreshFromFloatingControls() },
+                onForceRefresh = { showForceRefreshDialog() },
                 onStopLoading = { stopLoadingFromFloatingControls() },
                 onPanelExpandedChanged = {
                     applySystemUiMode()
@@ -751,6 +756,153 @@ class WebViewActivity : ComponentActivity() {
         currentPageLoading = true
         current.reload()
         updateFloatingControlsState()
+    }
+
+    private fun showForceRefreshDialog() {
+        val current = rootWebView ?: return
+        val currentUrl = current.url.orEmpty()
+        if (!WebViewRuntime.isWebUrl(currentUrl)) {
+            Toast.makeText(this, "当前页面不支持强制刷新", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (forceRefreshDialog?.isShowing == true) return
+
+        val density = resources.displayMetrics.density
+        fun dp(value: Int): Int = (value * density).toInt()
+        val clearSiteDataCheckBox = CheckBox(this).apply {
+            text = "同时清理当前网站 Cookie、本地存储、会话存储等登录/本地数据"
+            textSize = 14f
+            setPadding(0, dp(8), 0, 0)
+        }
+        val content = ScrollView(this).apply {
+            addView(
+                LinearLayout(this@WebViewActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(20), dp(4), dp(20), dp(4))
+                    addView(
+                        TextView(this@WebViewActivity).apply {
+                            text = "默认只清理网页缓存并绕过缓存重新加载，不会删除登录信息、Cookie、localStorage 或 sessionStorage。"
+                            textSize = 14f
+                        }
+                    )
+                    addView(clearSiteDataCheckBox)
+                }
+            )
+        }
+
+        forceRefreshDialog = AlertDialog.Builder(this)
+            .setTitle("强制刷新")
+            .setView(content)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("强制刷新") { _, _ ->
+                forceRefreshCurrentPage(clearSiteData = clearSiteDataCheckBox.isChecked)
+            }
+            .create()
+        forceRefreshDialog?.setOnDismissListener {
+            forceRefreshDialog = null
+        }
+        forceRefreshDialog?.show()
+    }
+
+    private fun forceRefreshCurrentPage(clearSiteData: Boolean) {
+        val current = rootWebView ?: return
+        val currentUrl = current.url.orEmpty()
+        if (!WebViewRuntime.isWebUrl(currentUrl)) {
+            Toast.makeText(this, "当前页面不支持强制刷新", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        current.stopLoading()
+        current.clearCache(true)
+        if (clearSiteData) {
+            clearCurrentSiteData(current, currentUrl) {
+                reloadBypassingCache(current, currentUrl)
+            }
+        } else {
+            reloadBypassingCache(current, currentUrl)
+        }
+    }
+
+    private fun reloadBypassingCache(webView: WebView, url: String) {
+        currentPageLoading = true
+        currentPageProgress = 0
+        webView.loadUrl(
+            url,
+            mapOf(
+                "Cache-Control" to "no-cache, no-store, must-revalidate",
+                "Pragma" to "no-cache"
+            )
+        )
+        updateFloatingControlsState()
+        Toast.makeText(this, "已强制刷新当前页面", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun clearCurrentSiteData(webView: WebView, url: String, onDone: () -> Unit) {
+        clearCookiesForUrl(url)
+        originForWebStorage(url)?.let { origin ->
+            WebStorage.getInstance().deleteOrigin(origin)
+        }
+        val clearScript = """
+            (function() {
+              try { localStorage.clear(); } catch (e) {}
+              try { sessionStorage.clear(); } catch (e) {}
+              try {
+                if (window.caches) {
+                  caches.keys().then(function(keys) {
+                    keys.forEach(function(key) { caches.delete(key); });
+                  });
+                }
+              } catch (e) {}
+              try {
+                if (window.indexedDB && indexedDB.databases) {
+                  indexedDB.databases().then(function(databases) {
+                    databases.forEach(function(database) {
+                      if (database && database.name) indexedDB.deleteDatabase(database.name);
+                    });
+                  });
+                }
+              } catch (e) {}
+              try {
+                if (navigator.serviceWorker) {
+                  navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                    registrations.forEach(function(registration) { registration.unregister(); });
+                  });
+                }
+              } catch (e) {}
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(clearScript) {
+            webView.postDelayed(onDone, 250)
+        }
+    }
+
+    private fun clearCookiesForUrl(url: String) {
+        val cookieManager = CookieManager.getInstance()
+        val cookies = cookieManager.getCookie(url).orEmpty()
+        cookies.split(';')
+            .mapNotNull { cookie ->
+                cookie.substringBefore("=", missingDelimiterValue = "")
+                    .trim()
+                    .takeIf { it.isNotBlank() }
+            }
+            .forEach { name ->
+                cookieManager.setCookie(
+                    url,
+                    "$name=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Path=/"
+                )
+            }
+        cookieManager.flush()
+    }
+
+    private fun originForWebStorage(url: String): String? {
+        return runCatching {
+            val uri = Uri.parse(url)
+            val scheme = uri.scheme?.lowercase() ?: return@runCatching null
+            val host = uri.host ?: return@runCatching null
+            if (scheme != "http" && scheme != "https") return@runCatching null
+            val port = if (uri.port >= 0) ":${uri.port}" else ""
+            "$scheme://$host$port"
+        }.getOrNull()
     }
 
     private fun stopLoadingFromFloatingControls() {
