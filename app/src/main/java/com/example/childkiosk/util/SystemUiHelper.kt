@@ -9,6 +9,20 @@ import androidx.core.view.WindowInsetsControllerCompat
 object SystemUiHelper {
 
     /**
+     * 普通应用模式：显示状态栏和导航栏，内容避让系统栏。
+     */
+    fun enterNormal(activity: Activity) {
+        val window = activity.window
+        window.statusBarColor = Color.WHITE
+        window.navigationBarColor = Color.WHITE
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.isAppearanceLightStatusBars = true
+        controller.isAppearanceLightNavigationBars = true
+        controller.show(WindowInsetsCompat.Type.systemBars())
+    }
+
+    /**
      * 全屏沉浸：隐藏状态栏与导航栏，并允许通过短暂边缘滑动唤起后再自动隐藏。
      */
     fun enterImmersive(activity: Activity) {

@@ -76,6 +76,7 @@ fun KioskMainScreen(
     config: SystemConfigEntity?,
     iconSizeMode: String,
     wallpaperPreset: String,
+    normalSystemBars: Boolean,
     onEnterAdmin: () -> Unit,
     onExitKiosk: () -> Unit
 ) {
@@ -307,7 +308,7 @@ fun KioskMainScreen(
                                                 WebViewActivity.EXTRA_ORIENTATION_MODE,
                                                 KioskPrefs.getOrientationMode(context)
                                             )
-                                            KioskPrefs.putWebViewRuntimeConfig(this, context)
+                                            KioskPrefs.putWebViewRuntimeConfig(this, context, normalSystemBars)
                                         }
                                         context.startActivity(intent)
                                     }

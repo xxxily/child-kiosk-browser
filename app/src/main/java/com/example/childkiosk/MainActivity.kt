@@ -58,7 +58,7 @@ class MainActivity : ComponentActivity() {
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
         }
-        // 2. 系统栏策略：Device Owner 锁定态保留时间/电量信息，普通模式保持沉浸式防误下拉。
+        // 2. 系统栏策略：正常模式像普通应用一样显示系统栏；锁定态保持沉浸或受控系统信息。
         applySystemUiMode()
 
         // 3. 监听 System UI / Window 边距变化，防止状态栏灰色半透明条卡死，3秒自动收回
@@ -70,7 +70,7 @@ class MainActivity : ComponentActivity() {
                     insets.isVisible(android.view.WindowInsets.Type.statusBars()) ||
                         insets.isVisible(android.view.WindowInsets.Type.navigationBars())
                 }
-                if (isVisible) {
+                if (isVisible && !shouldUseNormalSystemBars()) {
                     view.postDelayed({
                         if (!isDestroyed && !isFinishing) {
                             applySystemUiMode()
@@ -82,7 +82,8 @@ class MainActivity : ComponentActivity() {
         } else {
             @Suppress("DEPRECATION")
             window.decorView.setOnSystemUiVisibilityChangeListener { visibility ->
-                if ((visibility and android.view.View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
+                if (!shouldUseNormalSystemBars() &&
+                    (visibility and android.view.View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
                     window.decorView.postDelayed({
                         if (!isDestroyed && !isFinishing) {
                             applySystemUiMode()
@@ -117,6 +118,7 @@ class MainActivity : ComponentActivity() {
                             config = systemConfig,
                             iconSizeMode = iconSizeMode,
                             wallpaperPreset = wallpaperPreset,
+                            normalSystemBars = isNormalSystemUiMode(),
                             onEnterAdmin = { currentScreen = "ADMIN" },
                             onExitKiosk = { stopLockTaskMode() }
                         )
@@ -170,8 +172,8 @@ class MainActivity : ComponentActivity() {
                     startSoftLock()
                 }
             }
-            // Tier 3：纯沉浸式，无系统级锁定
-            else -> { /* 仅依赖沉浸式全屏 + 自定义 Launcher + 认证退出 */ }
+            // Tier 3：正常系统栏，无系统级锁定
+            else -> { /* 仅依赖自定义 Launcher + 认证退出 */ }
         }
     }
 
@@ -240,11 +242,22 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun applySystemUiMode() {
-        if (shouldShowSecureSystemInfo()) {
-            SystemUiHelper.enterSecureSystemInfo(this)
-        } else {
-            SystemUiHelper.enterImmersive(this)
+        when {
+            shouldUseNormalSystemBars() -> SystemUiHelper.enterNormal(this)
+            shouldShowSecureSystemInfo() -> SystemUiHelper.enterSecureSystemInfo(this)
+            else -> SystemUiHelper.enterImmersive(this)
         }
+    }
+
+    private fun isNormalSystemUiMode(): Boolean {
+        return ::dpm.isInitialized &&
+            !dpm.isDeviceOwnerApp(packageName) &&
+            KioskPrefs.getProtectionMode(this) == KioskPrefs.MODE_NONE &&
+            !KioskPrefs.isLimitStatusBarEnabled(this)
+    }
+
+    private fun shouldUseNormalSystemBars(): Boolean {
+        return isNormalSystemUiMode()
     }
 
     private fun shouldShowSecureSystemInfo(): Boolean {

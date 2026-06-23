@@ -872,13 +872,13 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         }
     }
 
-    private fun minX(): Float = 0f
+    private fun minX(): Float = edgeMargin.toFloat()
 
-    private fun maxX(): Float = max(0, width - bubbleSize).toFloat()
+    private fun maxX(): Float = max(edgeMargin, width - edgeMargin - bubbleSize).toFloat()
 
-    private fun minY(): Float = dp(12).toFloat()
+    private fun minY(): Float = edgeMargin.toFloat()
 
-    private fun maxY(): Float = max(dp(12), height - dp(12) - bubbleSize).toFloat()
+    private fun maxY(): Float = max(edgeMargin, height - edgeMargin - bubbleSize).toFloat()
 
     private fun dp(value: Int): Int {
         return (value * resources.displayMetrics.density).toInt()

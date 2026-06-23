@@ -14,6 +14,7 @@ data class WebViewRuntimeConfig(
     val verifyAdminActions: Boolean,
     val limitFlagSecure: Boolean,
     val limitVolumeKeys: Boolean,
+    val normalSystemBars: Boolean,
     val floatingBrowserControlsEnabled: Boolean,
     val webViewTopProgressEnabled: Boolean,
     val webViewWarmPoolEnabled: Boolean,
@@ -49,6 +50,7 @@ data class WebViewRuntimeConfig(
             .put("verifyAdminActions", verifyAdminActions)
             .put("limitFlagSecure", limitFlagSecure)
             .put("limitVolumeKeys", limitVolumeKeys)
+            .put("normalSystemBars", normalSystemBars)
             .put("floatingBrowserControlsEnabled", floatingBrowserControlsEnabled)
             .put("webViewTopProgressEnabled", webViewTopProgressEnabled)
             .put("webViewWarmPoolEnabled", webViewWarmPoolEnabled)
@@ -86,6 +88,7 @@ data class WebViewRuntimeConfig(
                 verifyAdminActions = json.optBoolean("verifyAdminActions", fallback.verifyAdminActions),
                 limitFlagSecure = json.optBoolean("limitFlagSecure", fallback.limitFlagSecure),
                 limitVolumeKeys = json.optBoolean("limitVolumeKeys", fallback.limitVolumeKeys),
+                normalSystemBars = json.optBoolean("normalSystemBars", fallback.normalSystemBars),
                 floatingBrowserControlsEnabled = json.optBoolean(
                     "floatingBrowserControlsEnabled",
                     fallback.floatingBrowserControlsEnabled
@@ -457,12 +460,17 @@ object KioskPrefs {
             .apply()
     }
 
+    fun isNormalSystemBarsEnabled(context: Context): Boolean {
+        return getProtectionMode(context) == MODE_NONE && !isLimitStatusBarEnabled(context)
+    }
+
     fun getWebViewRuntimeConfig(context: Context): WebViewRuntimeConfig {
         return WebViewRuntimeConfig(
             verifyOnWebExit = getVerifyOnWebExit(context),
             verifyAdminActions = getVerifyAdminActions(context),
             limitFlagSecure = isLimitFlagSecureEnabled(context),
             limitVolumeKeys = isLimitVolumeKeysEnabled(context),
+            normalSystemBars = isNormalSystemBarsEnabled(context),
             floatingBrowserControlsEnabled = isFloatingBrowserControlsEnabled(context),
             webViewTopProgressEnabled = isWebViewTopProgressEnabled(context),
             webViewWarmPoolEnabled = getWebViewWarmPoolEnabled(context),
@@ -498,6 +506,16 @@ object KioskPrefs {
 
     fun putWebViewRuntimeConfig(intent: Intent, context: Context) {
         intent.putExtra(EXTRA_WEBVIEW_RUNTIME_CONFIG, getWebViewRuntimeConfig(context).toJson().toString())
+    }
+
+    fun putWebViewRuntimeConfig(intent: Intent, context: Context, normalSystemBars: Boolean) {
+        intent.putExtra(
+            EXTRA_WEBVIEW_RUNTIME_CONFIG,
+            getWebViewRuntimeConfig(context)
+                .copy(normalSystemBars = normalSystemBars)
+                .toJson()
+                .toString()
+        )
     }
 
     fun getWebViewRuntimeConfig(intent: Intent?, context: Context): WebViewRuntimeConfig {
