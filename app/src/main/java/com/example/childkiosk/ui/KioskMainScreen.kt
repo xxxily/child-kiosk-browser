@@ -48,11 +48,34 @@ import com.example.childkiosk.data.SystemConfigEntity
 import com.example.childkiosk.data.WebAppEntity
 import com.example.childkiosk.util.KioskPrefs
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.border
+
+data class WallpaperModel(
+    val id: String,
+    val label: String,
+    val isDark: Boolean,
+    val brush: Brush?,
+    val color: Color?
+)
+
+val WallpaperPresets = listOf(
+    WallpaperModel("YELLOW", "温暖明黄 (渐变)", false, Brush.verticalGradient(listOf(Color(0xFFFFEE58), Color(0xFFFDD835))), null),
+    WallpaperModel("MORANDI_BLUE", "莫兰迪蓝 (渐变)", false, Brush.verticalGradient(listOf(Color(0xFFECEFF1), Color(0xFFCFD8DC))), null),
+    WallpaperModel("FOREST_GREEN", "森林绿意 (渐变)", false, Brush.verticalGradient(listOf(Color(0xFFE8F5E9), Color(0xFFC8E6C9))), null),
+    WallpaperModel("LAVENDER_PURPLE", "薰衣草紫 (渐变)", false, Brush.verticalGradient(listOf(Color(0xFFF3E5F5), Color(0xFFE1BEE7))), null),
+    WallpaperModel("SUNSET_ORANGE", "落日橘红 (渐变)", false, Brush.verticalGradient(listOf(Color(0xFFFFF3E0), Color(0xFFFFE0B2))), null),
+    WallpaperModel("PURE_BLACK", "极简纯黑 (纯色)", true, null, Color(0xFF000000)),
+    WallpaperModel("PURE_WHITE", "极简白 (纯色)", false, null, Color(0xFFF5F5F5)),
+    WallpaperModel("PURE_BLUE", "深邃蓝 (纯色)", true, null, Color(0xFF102A43)),
+    WallpaperModel("PURE_GREEN", "翡翠绿 (纯色)", true, null, Color(0xFF0A2E24)),
+    WallpaperModel("PURE_RED", "朱砂红 (纯色)", true, null, Color(0xFF8B0000))
+)
 
 @Composable
 fun KioskMainScreen(
     config: SystemConfigEntity?,
     iconSizeMode: String,
+    wallpaperPreset: String,
     onEnterAdmin: () -> Unit,
     onExitKiosk: () -> Unit
 ) {
@@ -139,13 +162,26 @@ fun KioskMainScreen(
         com.example.childkiosk.util.KioskPrefs.getAdminIconAlpha(context)
     }
 
+    val currentWallpaper = remember(wallpaperPreset) {
+        WallpaperPresets.firstOrNull { it.id == wallpaperPreset } ?: WallpaperPresets[0]
+    }
+    val isDarkWallpaper = currentWallpaper.isDark
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(Color(0xFFFFEE58), Color(0xFFFDD835)) // 儿童友好明黄色彩
-                )
+            .then(
+                if (currentWallpaper.brush != null) {
+                    Modifier.background(currentWallpaper.brush)
+                } else if (currentWallpaper.color != null) {
+                    Modifier.background(currentWallpaper.color)
+                } else {
+                    Modifier.background(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(Color(0xFFFFEE58), Color(0xFFFDD835))
+                        )
+                    )
+                }
             )
     ) {
         // 无论是否为 Device Owner，主网格始终可用。
@@ -204,7 +240,7 @@ fun KioskMainScreen(
                                 text = "🌟 $mainTitleText 🌟",
                                 fontSize = 32.sp,
                                 fontWeight = FontWeight.Black,
-                                color = Color(0xFF4E342E),
+                                color = if (isDarkWallpaper) Color.White else Color(0xFF4E342E),
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.padding(top = titlePaddingTop, bottom = titlePaddingBottom)
                             )
@@ -218,6 +254,7 @@ fun KioskMainScreen(
                     CategoryStickyTabs(
                         categories = categories,
                         selectedCategory = selectedCategory,
+                        isDarkWallpaper = isDarkWallpaper,
                         onCategorySelected = { selectedCategory = it },
                         tabPaddingVertical = tabPaddingVertical
                     )
@@ -239,7 +276,7 @@ fun KioskMainScreen(
                                 text = if (webApps.isEmpty()) "这里空空如也，请在配置后台添加应用！"
                                        else "此分类下还没有应用哦，去看看其他分类吧！",
                                 fontSize = 18.sp,
-                                color = Color(0xFF8D6E63),
+                                color = if (isDarkWallpaper) Color.White.copy(alpha = 0.7f) else Color(0xFF8D6E63),
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.padding(horizontal = 24.dp)
                             )
@@ -261,6 +298,7 @@ fun KioskMainScreen(
                                 AppGridItem(
                                     app = app,
                                     iconSizeMode = iconSizeMode,
+                                    isDarkWallpaper = isDarkWallpaper,
                                     modifier = Modifier.weight(1f),
                                     onClick = {
                                         val intent = Intent(context, WebViewActivity::class.java).apply {
@@ -326,7 +364,7 @@ fun KioskMainScreen(
                 Card(
                     shape = RoundedCornerShape(12.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = Color.White.copy(alpha = 0.8f)
+                        containerColor = if (isDarkWallpaper) Color.Black.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.8f)
                     ),
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
                     modifier = Modifier.size(48.dp).alpha(adminIconAlpha)
@@ -338,7 +376,7 @@ fun KioskMainScreen(
                         Icon(
                             imageVector = Icons.Default.Lock,
                             contentDescription = "配置入口",
-                            tint = Color(0xFF4E342E),
+                            tint = if (isDarkWallpaper) Color.White else Color(0xFF4E342E),
                             modifier = Modifier.size(24.dp)
                         )
                     }
@@ -385,6 +423,7 @@ fun KioskMainScreen(
 private fun CategoryStickyTabs(
     categories: List<Pair<String, String>>,
     selectedCategory: String,
+    isDarkWallpaper: Boolean,
     onCategorySelected: (String) -> Unit,
     tabPaddingVertical: androidx.compose.ui.unit.Dp
 ) {
@@ -407,8 +446,16 @@ private fun CategoryStickyTabs(
                     onClick = { onCategorySelected(catKey) },
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (isSelected) Color(0xFF4E342E) else Color.White.copy(alpha = 0.9f),
-                        contentColor = if (isSelected) Color.White else Color(0xFF4E342E)
+                        containerColor = if (isSelected) {
+                            if (isDarkWallpaper) Color.White else Color(0xFF4E342E)
+                        } else {
+                            if (isDarkWallpaper) Color.White.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.9f)
+                        },
+                        contentColor = if (isSelected) {
+                            if (isDarkWallpaper) Color(0xFF1E1E1E) else Color.White
+                        } else {
+                            if (isDarkWallpaper) Color.White.copy(alpha = 0.8f) else Color(0xFF4E342E)
+                        }
                     ),
                     elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 6.dp else 2.dp),
                     modifier = Modifier.padding(vertical = 4.dp)
@@ -429,117 +476,117 @@ private fun CategoryStickyTabs(
 fun AppGridItem(
     app: WebAppEntity,
     iconSizeMode: String,
+    isDarkWallpaper: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (isPressed) 0.9f else 1.0f, label = "scale")
+    val scale by animateFloatAsState(if (isPressed) 0.92f else 1.0f, label = "scale")
     val haptic = LocalHapticFeedback.current
     
     val iconVector = getIconVector(app.iconPath)
 
     // 动态计算不同尺寸模式下的 UI 样式参数
-    val cardMinSize = when (iconSizeMode) {
-        "SMALL" -> 80.dp
-        "LARGE" -> 140.dp
-        else -> 100.dp
-    }
     val iconBoxSize = when (iconSizeMode) {
-        "SMALL" -> 36.dp
-        "LARGE" -> 64.dp
-        else -> 48.dp
+        "SMALL" -> 48.dp
+        "LARGE" -> 80.dp
+        else -> 60.dp
     }
     val iconSize = when (iconSizeMode) {
-        "SMALL" -> 20.dp
-        "LARGE" -> 36.dp
-        else -> 28.dp
-    }
-    val cardPadding = when (iconSizeMode) {
-        "SMALL" -> 8.dp
-        "LARGE" -> 16.dp
-        else -> 12.dp
-    }
-    val innerSpacing = when (iconSizeMode) {
-        "SMALL" -> 4.dp
-        "LARGE" -> 12.dp
-        else -> 8.dp
+        "SMALL" -> 24.dp
+        "LARGE" -> 44.dp
+        else -> 32.dp
     }
     val fontSize = when (iconSizeMode) {
-        "SMALL" -> 12.sp
-        "LARGE" -> 18.sp
-        else -> 14.sp
-    }
-    val cornerRadius = when (iconSizeMode) {
-        "SMALL" -> 12.dp
-        "LARGE" -> 24.dp
-        else -> 18.dp
+        "SMALL" -> 11.sp
+        "LARGE" -> 16.sp
+        else -> 13.sp
     }
     val iconBoxCornerRadius = when (iconSizeMode) {
-        "SMALL" -> 8.dp
-        "LARGE" -> 16.dp
-        else -> 12.dp
+        "SMALL" -> 12.dp
+        "LARGE" -> 20.dp
+        else -> 16.dp
+    }
+    
+    val textColor = if (isDarkWallpaper) Color.White else Color(0xFF263238)
+
+    // 动态渐变底色
+    val gradientBrush = remember(app.id) {
+        val index = (app.id ?: 0L).toInt().coerceAtLeast(0) % 5
+        when (index) {
+            0 -> Brush.linearGradient(listOf(Color(0xFF80DEEA), Color(0xFFB39DDB)))
+            1 -> Brush.linearGradient(listOf(Color(0xFFFFAB91), Color(0xFFFFCC80)))
+            2 -> Brush.linearGradient(listOf(Color(0xFFA5D6A7), Color(0xFFE6EE9C)))
+            3 -> Brush.linearGradient(listOf(Color(0xFFF48FB1), Color(0xFFFFCC80)))
+            else -> Brush.linearGradient(listOf(Color(0xFF81D4FA), Color(0xFF80CBC4)))
+        }
     }
 
-    Card(
-        onClick = {
-            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            onClick()
-        },
-        interactionSource = interactionSource,
+    Column(
         modifier = modifier
             .scale(scale)
-            .sizeIn(minWidth = cardMinSize, minHeight = cardMinSize)
-            .aspectRatio(1f),
-        shape = RoundedCornerShape(cornerRadius),
-        colors = CardDefaults.cardColors(
-            containerColor = Color.White,
-            contentColor = Color(0xFF4E342E)
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(cardPadding),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            val iconPath = app.iconPath ?: ""
-            val isNetworkIcon = iconPath.startsWith("http://", ignoreCase = true) || 
-                                iconPath.startsWith("https://", ignoreCase = true)
-            Box(
-                modifier = Modifier
-                    .size(iconBoxSize)
-                    .clip(RoundedCornerShape(iconBoxCornerRadius))
-                    .background(Color(0xFFFFF9C4)),
-                contentAlignment = Alignment.Center
-            ) {
-                if (isNetworkIcon) {
-                    coil.compose.AsyncImage(
-                        model = iconPath,
-                        contentDescription = app.title,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                        error = androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Default.Star)
-                    )
-                } else {
-                    Icon(
-                        imageVector = iconVector,
-                        contentDescription = app.title,
-                        tint = Color(0xFFFBC02D),
-                        modifier = Modifier.size(iconSize)
-                    )
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(
+                interactionSource = interactionSource,
+                indication = androidx.compose.material.ripple.rememberRipple(bounded = true, color = textColor.copy(alpha = 0.15f)),
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onClick()
                 }
-            }
-            Spacer(modifier = Modifier.height(innerSpacing))
-            Text(
-                text = app.title,
-                fontSize = fontSize,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center
             )
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        val iconPath = app.iconPath ?: ""
+        val isNetworkIcon = iconPath.startsWith("http://", ignoreCase = true) || 
+                            iconPath.startsWith("https://", ignoreCase = true)
+        
+        Box(
+            modifier = Modifier
+                .size(iconBoxSize)
+                .clip(RoundedCornerShape(iconBoxCornerRadius))
+                .background(if (isNetworkIcon) Color.Transparent else Color.White)
+                .run {
+                    if (!isNetworkIcon) {
+                        this.background(gradientBrush)
+                    } else this
+                }
+                .run {
+                    val borderColor = if (isDarkWallpaper) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.08f)
+                    this.border(width = 1.dp, color = borderColor, shape = RoundedCornerShape(iconBoxCornerRadius))
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            if (isNetworkIcon) {
+                coil.compose.AsyncImage(
+                    model = iconPath,
+                    contentDescription = app.title,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    error = androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Default.Star)
+                )
+            } else {
+                Icon(
+                    imageVector = iconVector,
+                    contentDescription = app.title,
+                    tint = Color.White,
+                    modifier = Modifier.size(iconSize)
+                )
+            }
         }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = app.title,
+            fontSize = fontSize,
+            fontWeight = FontWeight.Medium,
+            color = textColor,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
     }
 }
 

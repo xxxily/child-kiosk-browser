@@ -270,14 +270,28 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         )
     }
 
+    private fun bubbleBackground(): android.graphics.drawable.Drawable {
+        val gradient = GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(
+                Color.rgb(43, 138, 130),
+                Color.rgb(20, 80, 75)
+            )
+        ).apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(26).toFloat()
+            setStroke(dp(1), Color.argb(40, 255, 255, 255))
+        }
+        return android.graphics.drawable.InsetDrawable(gradient, dp(10), dp(10), dp(10), dp(10))
+    }
+
     private val bubbleButton = ImageButton(context).apply {
         setImageResource(R.drawable.ic_floating_browser_menu_24)
         imageTintList = ColorStateList.valueOf(Color.WHITE)
         contentDescription = "浏览控制"
         scaleType = ImageView.ScaleType.CENTER
-        setPadding(dp(20), dp(20), dp(20), dp(20))
-        background = roundedBackground(AccentColor, bubbleSize / 2)
-        elevation = dp(10).toFloat()
+        background = bubbleBackground()
+        elevation = dp(4).toFloat()
         setOnTouchListener { _, event -> handleBubbleTouch(event) }
     }
 
@@ -395,6 +409,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
                 bubbleButton.animate().cancel()
+                bubbleButton.alpha = 1.0f
                 removeCallbacks(hideRunnable)
                 revealBubble(animated = true)
                 isDraggingBubble = false
@@ -416,6 +431,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                 }
                 if (isDraggingBubble) {
                     moveBubbleTo(startBubbleX + dx, startBubbleY + dy)
+                    bubbleButton.alpha = 1.0f
                 }
                 return true
             }
@@ -709,9 +725,10 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         }
         isBubbleHiddenAtEdge = true
         if (animated) {
-            animateBubbleTo(targetX, bubbleButton.y.coerceIn(minY(), maxY()))
+            animateBubbleTo(targetX, bubbleButton.y.coerceIn(minY(), maxY()), targetAlpha = 0.4f)
         } else {
             bubbleButton.x = targetX
+            bubbleButton.alpha = 0.4f
         }
     }
 
@@ -720,11 +737,12 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         isBubbleHiddenAtEdge = false
         val targetX = if (isAttachedToRightEdge) maxX() else minX()
         if (animated) {
-            animateBubbleTo(targetX, bubbleButton.y.coerceIn(minY(), maxY())) {
+            animateBubbleTo(targetX, bubbleButton.y.coerceIn(minY(), maxY()), targetAlpha = 1.0f) {
                 positionPanel()
             }
         } else {
             bubbleButton.x = targetX
+            bubbleButton.alpha = 1.0f
             positionPanel()
         }
     }
@@ -732,11 +750,13 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     private fun animateBubbleTo(
         targetX: Float,
         targetY: Float,
+        targetAlpha: Float = 1.0f,
         endAction: (() -> Unit)? = null
     ) {
         bubbleButton.animate()
             .x(targetX)
             .y(targetY)
+            .alpha(targetAlpha)
             .setDuration(animationDurationMs)
             .withEndAction { endAction?.invoke() }
             .start()

@@ -439,6 +439,14 @@ object KioskPrefs {
         prefs(context).edit().putBoolean(KEY_HIDE_MAIN_TITLE, hide).apply()
     }
 
+    fun getWallpaperPreset(context: Context): String {
+        return prefs(context).getString("wallpaper_preset", "YELLOW") ?: "YELLOW"
+    }
+
+    fun setWallpaperPreset(context: Context, preset: String) {
+        prefs(context).edit().putString("wallpaper_preset", preset).apply()
+    }
+
     fun isFloatingBrowserControlsEnabled(context: Context): Boolean {
         return prefs(context).getBoolean(KEY_FLOATING_BROWSER_CONTROLS_ENABLED, true)
     }

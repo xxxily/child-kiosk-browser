@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.border
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
@@ -183,6 +185,7 @@ fun AdminConsoleScreen(
             TopAppBar(
                 title = {
                     val titleText = when (currentSubPage) {
+                        "QUICK_MODE" -> "快速切换模式"
                         "PROTECTION" -> "安全防护等级"
                         "TIME_LIMIT" -> "健康时间限制"
                          "VERIFICATION" -> "认证设置"
@@ -241,27 +244,18 @@ fun AdminConsoleScreen(
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         item {
-                            QuickModeCard(
-                                quickMode = quickMode,
-                                onModeSelected = { mode ->
-                                    KioskPrefs.applyQuickMode(context, mode)
-                                    quickMode = KioskPrefs.getQuickMode(context)
-                                    protectionMode = KioskPrefs.getProtectionMode(context)
-                                    WebViewPool.clear()
-                                    onProtectionModeChanged(protectionMode)
-                                    onSandboxLimitsChanged()
-                                    val label = quickModeLabel(quickMode)
-                                    Toast.makeText(context, "已切换为$label", Toast.LENGTH_SHORT).show()
-                                }
-                            )
-                        }
-
-                        item {
                             Card(
                                 shape = RoundedCornerShape(16.dp),
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                             ) {
                                 Column {
+                                    AdminMenuItem(
+                                        icon = Icons.Default.AutoFixHigh,
+                                        title = "快速切换模式",
+                                        summary = "当前：${quickModeLabel(quickMode)}",
+                                        onClick = { currentSubPage = "QUICK_MODE" }
+                                    )
+                                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
                                         icon = Icons.Default.Lock,
                                         title = "安全防护与锁定",
@@ -383,6 +377,29 @@ fun AdminConsoleScreen(
                                 Text("返回系统桌面", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                             }
                         }
+                    }
+                }
+                "QUICK_MODE" -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        QuickModeCard(
+                            quickMode = quickMode,
+                            onModeSelected = { mode ->
+                                KioskPrefs.applyQuickMode(context, mode)
+                                quickMode = KioskPrefs.getQuickMode(context)
+                                protectionMode = KioskPrefs.getProtectionMode(context)
+                                WebViewPool.clear()
+                                onProtectionModeChanged(protectionMode)
+                                onSandboxLimitsChanged()
+                                val label = quickModeLabel(quickMode)
+                                Toast.makeText(context, "已切换为$label", Toast.LENGTH_SHORT).show()
+                            }
+                        )
                     }
                 }
                 "PROTECTION" -> {
@@ -707,6 +724,83 @@ fun AdminConsoleScreen(
                                             }
                                         )
                                         Text("大")
+                                    }
+                                }
+                            }
+                        }
+
+                        // 首屏壁纸与配色配置
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(bottom = 12.dp)
+                                ) {
+                                    Icon(imageVector = Icons.Default.Palette, contentDescription = "壁纸", tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("首屏壁纸与配色配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                var currentPreset by remember { mutableStateOf(KioskPrefs.getWallpaperPreset(context)) }
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState())
+                                        .padding(vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    WallpaperPresets.forEach { preset ->
+                                        val isSelected = currentPreset == preset.id
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            modifier = Modifier
+                                                .clickable {
+                                                    currentPreset = preset.id
+                                                    KioskPrefs.setWallpaperPreset(context, preset.id)
+                                                }
+                                                .padding(4.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(48.dp)
+                                                    .clip(CircleShape)
+                                                    .then(
+                                                        if (preset.brush != null) {
+                                                            Modifier.background(preset.brush)
+                                                        } else if (preset.color != null) {
+                                                            Modifier.background(preset.color)
+                                                        } else {
+                                                            Modifier.background(Color.Gray)
+                                                        }
+                                                    )
+                                                    .border(
+                                                        width = if (isSelected) 3.dp else 1.dp,
+                                                        color = if (isSelected) MaterialTheme.colorScheme.primary else Color.LightGray.copy(alpha = 0.5f),
+                                                        shape = CircleShape
+                                                    ),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                if (isSelected) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Check,
+                                                        contentDescription = "selected",
+                                                        tint = if (preset.isDark) Color.White else Color.Black,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = preset.label.split(" ").firstOrNull() ?: "",
+                                                fontSize = 11.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
                                 }
                             }

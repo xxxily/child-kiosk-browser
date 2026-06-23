@@ -108,11 +108,15 @@ class MainActivity : ComponentActivity() {
                     val iconSizeMode = remember(currentScreen) {
                         KioskPrefs.getIconSizeMode(this@MainActivity)
                     }
+                    val wallpaperPreset = remember(currentScreen) {
+                        KioskPrefs.getWallpaperPreset(this@MainActivity)
+                    }
 
                     when (currentScreen) {
                         "MAIN" -> KioskMainScreen(
                             config = systemConfig,
                             iconSizeMode = iconSizeMode,
+                            wallpaperPreset = wallpaperPreset,
                             onEnterAdmin = { currentScreen = "ADMIN" },
                             onExitKiosk = { stopLockTaskMode() }
                         )
