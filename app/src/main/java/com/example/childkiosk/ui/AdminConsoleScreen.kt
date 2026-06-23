@@ -43,6 +43,7 @@ import com.example.childkiosk.util.WebViewProviderDiagnostics
 import com.example.childkiosk.util.WebViewProviderSnapshot
 import com.example.childkiosk.util.WebViewRuntime
 import com.example.childkiosk.util.WebViewPool
+import com.example.childkiosk.util.WhitelistSubscriptionRepository
 import com.example.childkiosk.util.filter.FilterPreset
 import com.example.childkiosk.util.filter.FilterRepository
 import com.example.childkiosk.util.filter.SiteFilterOverride
@@ -55,6 +56,9 @@ import java.net.URL
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,6 +79,18 @@ fun AdminConsoleScreen(
     var webApps by remember { mutableStateOf<List<WebAppEntity>>(emptyList()) }
     var showAddDialog by remember { mutableStateOf(false) }
     var editingWebApp by remember { mutableStateOf<WebAppEntity?>(null) }
+    var whitelistSubscriptionUrl by remember { mutableStateOf(KioskPrefs.getWhitelistSubscriptionUrl(context)) }
+    var whitelistAutoRefresh by remember {
+        mutableStateOf(KioskPrefs.isWhitelistSubscriptionAutoRefreshEnabled(context))
+    }
+    var whitelistRefreshIntervalText by remember {
+        mutableStateOf(KioskPrefs.getWhitelistSubscriptionRefreshIntervalHours(context).toString())
+    }
+    var whitelistSubscriptionTitle by remember { mutableStateOf(KioskPrefs.getWhitelistSubscriptionTitle(context)) }
+    var whitelistLastSuccessAt by remember { mutableStateOf(KioskPrefs.getWhitelistSubscriptionLastSuccessAt(context)) }
+    var whitelistImportedCount by remember { mutableStateOf(KioskPrefs.getWhitelistSubscriptionImportedCount(context)) }
+    var whitelistLastError by remember { mutableStateOf(KioskPrefs.getWhitelistSubscriptionLastError(context)) }
+    var isRefreshingWhitelistSubscription by remember { mutableStateOf(false) }
 
     // 配置状态
     var timeLimit by remember { mutableStateOf(config?.timeLimitMinutes ?: 0) }
@@ -155,6 +171,34 @@ fun AdminConsoleScreen(
         }
     }
 
+    fun reloadWhitelistSubscriptionState() {
+        whitelistSubscriptionUrl = KioskPrefs.getWhitelistSubscriptionUrl(context)
+        whitelistAutoRefresh = KioskPrefs.isWhitelistSubscriptionAutoRefreshEnabled(context)
+        whitelistRefreshIntervalText = KioskPrefs.getWhitelistSubscriptionRefreshIntervalHours(context).toString()
+        whitelistSubscriptionTitle = KioskPrefs.getWhitelistSubscriptionTitle(context)
+        whitelistLastSuccessAt = KioskPrefs.getWhitelistSubscriptionLastSuccessAt(context)
+        whitelistImportedCount = KioskPrefs.getWhitelistSubscriptionImportedCount(context)
+        whitelistLastError = KioskPrefs.getWhitelistSubscriptionLastError(context)
+    }
+
+    fun saveWhitelistSubscriptionSettings(): Boolean {
+        val url = whitelistSubscriptionUrl.trim()
+        if (url.isNotBlank() && !url.startsWith("https://", ignoreCase = true)) {
+            Toast.makeText(context, "白名单订阅地址必须使用 HTTPS", Toast.LENGTH_SHORT).show()
+            return false
+        }
+        val intervalHours = whitelistRefreshIntervalText.toIntOrNull()?.coerceIn(1, 168)
+        if (intervalHours == null) {
+            Toast.makeText(context, "刷新间隔需为 1-168 小时", Toast.LENGTH_SHORT).show()
+            return false
+        }
+        KioskPrefs.setWhitelistSubscriptionUrl(context, url)
+        KioskPrefs.setWhitelistSubscriptionAutoRefreshEnabled(context, whitelistAutoRefresh)
+        KioskPrefs.setWhitelistSubscriptionRefreshIntervalHours(context, intervalHours)
+        whitelistRefreshIntervalText = intervalHours.toString()
+        return true
+    }
+
     val protectionLevel = remember(isDeviceOwner) {
         if (isDeviceOwner) "企业级完全锁定 (Device Owner)" else "普通锁定"
     }
@@ -178,6 +222,9 @@ fun AdminConsoleScreen(
     LaunchedEffect(currentSubPage) {
         quickMode = KioskPrefs.getQuickMode(context)
         protectionMode = KioskPrefs.getProtectionMode(context)
+        if (currentSubPage == "WHITELIST") {
+            reloadWhitelistSubscriptionState()
+        }
     }
 
     Scaffold(
@@ -2344,10 +2391,59 @@ fun AdminConsoleScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        // 分类过滤行 (Tab 形式)
+                        WhitelistSubscriptionCard(
+                            url = whitelistSubscriptionUrl,
+                            onUrlChange = { whitelistSubscriptionUrl = it },
+                            autoRefresh = whitelistAutoRefresh,
+                            onAutoRefreshChange = { whitelistAutoRefresh = it },
+                            intervalHours = whitelistRefreshIntervalText,
+                            onIntervalHoursChange = { input ->
+                                whitelistRefreshIntervalText = input.filter { it.isDigit() }.take(3)
+                            },
+                            title = whitelistSubscriptionTitle,
+                            lastSuccessAt = whitelistLastSuccessAt,
+                            importedCount = whitelistImportedCount,
+                            subscribedRowCount = webApps.count { it.sourceType == WebAppEntity.SOURCE_SUBSCRIPTION },
+                            lastError = whitelistLastError,
+                            isRefreshing = isRefreshingWhitelistSubscription,
+                            onSave = {
+                                if (saveWhitelistSubscriptionSettings()) {
+                                    Toast.makeText(context, "白名单订阅设置已保存", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            onRefresh = {
+                                if (saveWhitelistSubscriptionSettings()) {
+                                    isRefreshingWhitelistSubscription = true
+                                    scope.launch {
+                                        val result = runCatching {
+                                            withContext(Dispatchers.IO) {
+                                                WhitelistSubscriptionRepository.refreshNow(context)
+                                            }
+                                        }
+                                        isRefreshingWhitelistSubscription = false
+                                        reloadWhitelistSubscriptionState()
+                                        result.onSuccess {
+                                            Toast.makeText(
+                                                context,
+                                                "订阅已刷新：导入 ${it.importedCount} 个，跳过 ${it.skippedCount} 个",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }.onFailure {
+                                            Toast.makeText(
+                                                context,
+                                                it.message ?: "白名单订阅刷新失败",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                        }
+                                    }
+                                }
+                            }
+                        )
+
                         ScrollableTabRow(
                             selectedTabIndex = categories.indexOfFirst { it.first == selectedSubCategory }.coerceAtLeast(0),
                             edgePadding = 0.dp,
@@ -2366,34 +2462,41 @@ fun AdminConsoleScreen(
                         if (filteredApps.isEmpty()) {
                             Box(
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxWidth(),
+                                    .fillMaxWidth()
+                                    .heightIn(min = 160.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text("此分类下暂无应用，点击右下角按钮添加！", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         } else {
-                            LazyColumn(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                items(filteredApps) { app ->
-                                    WebAppCard(
-                                        app = app,
-                                        onEdit = { editingWebApp = app },
-                                        onDelete = {
+                            filteredApps.forEach { app ->
+                                WebAppCard(
+                                    app = app,
+                                    canEdit = app.sourceType != WebAppEntity.SOURCE_SUBSCRIPTION,
+                                    canDelete = app.sourceType != WebAppEntity.SOURCE_SUBSCRIPTION,
+                                    onEdit = {
+                                        if (app.sourceType == WebAppEntity.SOURCE_SUBSCRIPTION) {
+                                            Toast.makeText(context, "订阅网站请在订阅源中编辑", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            editingWebApp = app
+                                        }
+                                    },
+                                    onDelete = {
+                                        if (app.sourceType == WebAppEntity.SOURCE_SUBSCRIPTION) {
+                                            Toast.makeText(context, "订阅网站请在订阅源中移除", Toast.LENGTH_SHORT).show()
+                                        } else {
                                             scope.launch(Dispatchers.IO) {
                                                 db.webAppDao().deleteWebApp(app)
                                             }
                                             Toast.makeText(context, "已删除应用", Toast.LENGTH_SHORT).show()
-                                        },
-                                        onToggleEnabled = { enabled ->
-                                            scope.launch(Dispatchers.IO) {
-                                                db.webAppDao().updateWebApp(app.copy(isEnabled = enabled))
-                                            }
                                         }
-                                    )
-                                }
+                                    },
+                                    onToggleEnabled = { enabled ->
+                                        scope.launch(Dispatchers.IO) {
+                                            db.webAppDao().updateWebApp(app.copy(isEnabled = enabled))
+                                        }
+                                    }
+                                )
                             }
                         }
                     }
@@ -3222,8 +3325,137 @@ private fun ProtectionOption(
 }
 
 @Composable
+fun WhitelistSubscriptionCard(
+    url: String,
+    onUrlChange: (String) -> Unit,
+    autoRefresh: Boolean,
+    onAutoRefreshChange: (Boolean) -> Unit,
+    intervalHours: String,
+    onIntervalHoursChange: (String) -> Unit,
+    title: String,
+    lastSuccessAt: Long,
+    importedCount: Int,
+    subscribedRowCount: Int,
+    lastError: String,
+    isRefreshing: Boolean,
+    onSave: () -> Unit,
+    onRefresh: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CloudSync,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("订阅白名单", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+
+            OutlinedTextField(
+                value = url,
+                onValueChange = onUrlChange,
+                label = { Text("HTTPS 订阅地址") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Switch(
+                        checked = autoRefresh,
+                        onCheckedChange = onAutoRefreshChange
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("自动刷新", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                }
+                OutlinedTextField(
+                    value = intervalHours,
+                    onValueChange = onIntervalHoursChange,
+                    label = { Text("间隔(小时)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 180.dp),
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
+
+            Text(
+                text = buildString {
+                    if (title.isNotBlank()) append("$title | ")
+                    append("已导入 $importedCount 个")
+                    append(" | 当前订阅项 $subscribedRowCount 个")
+                    append(" | 最近成功：${formatTimestamp(lastSuccessAt)}")
+                },
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (lastError.isNotBlank()) {
+                Text(
+                    text = "最近错误：$lastError",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onSave,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    enabled = !isRefreshing
+                ) {
+                    Text("保存设置")
+                }
+                Button(
+                    onClick = onRefresh,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    enabled = !isRefreshing && url.isNotBlank()
+                ) {
+                    Text(if (isRefreshing) "刷新中" else "立即刷新")
+                }
+            }
+        }
+    }
+}
+
+private fun formatTimestamp(timestamp: Long): String {
+    if (timestamp <= 0L) return "从未"
+    return runCatching {
+        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(Date(timestamp))
+    }.getOrDefault(timestamp.toString())
+}
+
+@Composable
 fun WebAppCard(
     app: WebAppEntity,
+    canEdit: Boolean = true,
+    canDelete: Boolean = true,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit
@@ -3275,13 +3507,15 @@ fun WebAppCard(
                 }
                 Spacer(modifier = Modifier.width(16.dp))
 
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
+                    val isSubscribed = app.sourceType == WebAppEntity.SOURCE_SUBSCRIPTION
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = app.title,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Box(
@@ -3296,6 +3530,22 @@ fun WebAppCard(
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
+                        }
+                        if (isSubscribed) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.8f))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "订阅",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
                         }
                     }
                     Spacer(modifier = Modifier.height(2.dp))
@@ -3322,11 +3572,15 @@ fun WebAppCard(
                         uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 )
-                IconButton(onClick = onEdit) {
-                    Icon(imageVector = Icons.Default.Edit, contentDescription = "编辑", tint = MaterialTheme.colorScheme.primary)
+                if (canEdit) {
+                    IconButton(onClick = onEdit) {
+                        Icon(imageVector = Icons.Default.Edit, contentDescription = "编辑", tint = MaterialTheme.colorScheme.primary)
+                    }
                 }
-                IconButton(onClick = onDelete) {
-                    Icon(imageVector = Icons.Default.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
+                if (canDelete) {
+                    IconButton(onClick = onDelete) {
+                        Icon(imageVector = Icons.Default.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
         }

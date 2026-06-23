@@ -708,6 +708,56 @@ object KioskPrefs {
     fun getCustomJsInjectCode(context: Context): String = prefs(context).getString("custom_js_inject_code", "") ?: ""
     fun setCustomJsInjectCode(context: Context, code: String) = prefs(context).edit().putString("custom_js_inject_code", code).apply()
 
+    fun getWhitelistSubscriptionUrl(context: Context): String =
+        prefs(context).getString("whitelist_subscription_url", "") ?: ""
+
+    fun setWhitelistSubscriptionUrl(context: Context, url: String) =
+        prefs(context).edit().putString("whitelist_subscription_url", url.trim()).apply()
+
+    fun isWhitelistSubscriptionAutoRefreshEnabled(context: Context): Boolean =
+        prefs(context).getBoolean("whitelist_subscription_auto_refresh", false)
+
+    fun setWhitelistSubscriptionAutoRefreshEnabled(context: Context, enabled: Boolean) =
+        prefs(context).edit().putBoolean("whitelist_subscription_auto_refresh", enabled).apply()
+
+    fun getWhitelistSubscriptionRefreshIntervalHours(context: Context): Int =
+        prefs(context).getInt("whitelist_subscription_refresh_interval_hours", 24).coerceIn(1, 168)
+
+    fun setWhitelistSubscriptionRefreshIntervalHours(context: Context, hours: Int) =
+        prefs(context).edit()
+            .putInt("whitelist_subscription_refresh_interval_hours", hours.coerceIn(1, 168))
+            .apply()
+
+    fun getWhitelistSubscriptionTitle(context: Context): String =
+        prefs(context).getString("whitelist_subscription_title", "") ?: ""
+
+    fun setWhitelistSubscriptionTitle(context: Context, title: String) =
+        prefs(context).edit().putString("whitelist_subscription_title", title).apply()
+
+    fun getWhitelistSubscriptionLastAttemptAt(context: Context): Long =
+        prefs(context).getLong("whitelist_subscription_last_attempt_at", 0L)
+
+    fun setWhitelistSubscriptionLastAttemptAt(context: Context, timestamp: Long) =
+        prefs(context).edit().putLong("whitelist_subscription_last_attempt_at", timestamp).apply()
+
+    fun getWhitelistSubscriptionLastSuccessAt(context: Context): Long =
+        prefs(context).getLong("whitelist_subscription_last_success_at", 0L)
+
+    fun setWhitelistSubscriptionLastSuccessAt(context: Context, timestamp: Long) =
+        prefs(context).edit().putLong("whitelist_subscription_last_success_at", timestamp).apply()
+
+    fun getWhitelistSubscriptionImportedCount(context: Context): Int =
+        prefs(context).getInt("whitelist_subscription_imported_count", 0)
+
+    fun setWhitelistSubscriptionImportedCount(context: Context, count: Int) =
+        prefs(context).edit().putInt("whitelist_subscription_imported_count", count.coerceAtLeast(0)).apply()
+
+    fun getWhitelistSubscriptionLastError(context: Context): String =
+        prefs(context).getString("whitelist_subscription_last_error", "") ?: ""
+
+    fun setWhitelistSubscriptionLastError(context: Context, error: String) =
+        prefs(context).edit().putString("whitelist_subscription_last_error", error).apply()
+
     private fun customEditor(context: Context): SharedPreferences.Editor =
         prefs(context).edit().putString(KEY_QUICK_MODE, QUICK_MODE_CUSTOM)
 

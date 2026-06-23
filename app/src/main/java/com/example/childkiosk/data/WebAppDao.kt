@@ -19,6 +19,9 @@ interface WebAppDao {
     @Query("SELECT * FROM web_apps WHERE id = :id")
     suspend fun getWebAppById(id: Int): WebAppEntity?
 
+    @Query("SELECT * FROM web_apps WHERE source_type = :sourceType")
+    suspend fun getWebAppsBySourceType(sourceType: String): List<WebAppEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertWebApp(webApp: WebAppEntity): Long
 
@@ -30,4 +33,7 @@ interface WebAppDao {
 
     @Delete
     suspend fun deleteWebApp(webApp: WebAppEntity)
+
+    @Query("DELETE FROM web_apps WHERE source_type = :sourceType")
+    suspend fun deleteWebAppsBySourceType(sourceType: String)
 }

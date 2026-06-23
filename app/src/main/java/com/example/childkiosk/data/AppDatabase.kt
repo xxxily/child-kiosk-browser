@@ -4,12 +4,13 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-@Database(entities = [WebAppEntity::class, SystemConfigEntity::class], version = 3, exportSchema = false)
+@Database(entities = [WebAppEntity::class, SystemConfigEntity::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun webAppDao(): WebAppDao
@@ -27,6 +28,7 @@ abstract class AppDatabase : RoomDatabase() {
                     "child_kiosk_database"
                 )
                 .enableMultiInstanceInvalidation()
+                .addMigrations(MIGRATION_3_4)
                 .fallbackToDestructiveMigration()
                 .addCallback(DatabaseCallback(context.applicationContext))
                 .build()
@@ -150,7 +152,9 @@ abstract class AppDatabase : RoomDatabase() {
                             category = WebAppEntity.CATEGORY_STUDY
                         )
                     )
-                    database.webAppDao().insertAll(presetApps)
+                    database.webAppDao().insertAll(
+                        presetApps.map { it.copy(sourceType = WebAppEntity.SOURCE_PRESET) }
+                    )
 
                     // 2. 初始化默认系统配置
                     val defaultConfig = SystemConfigEntity(
@@ -164,6 +168,15 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                     database.systemConfigDao().insertOrUpdateConfig(defaultConfig)
                 }
+            }
+        }
+
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE web_apps ADD COLUMN source_type TEXT NOT NULL DEFAULT 'LOCAL'")
+                db.execSQL("ALTER TABLE web_apps ADD COLUMN source_id TEXT")
+                db.execSQL("ALTER TABLE web_apps ADD COLUMN source_item_id TEXT")
+                db.execSQL("UPDATE web_apps SET source_type = 'PRESET' WHERE is_preset = 1")
             }
         }
     }

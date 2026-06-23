@@ -13,7 +13,10 @@ data class WebAppEntity(
     @ColumnInfo(name = "is_preset") val isPreset: Boolean = false,
     @ColumnInfo(name = "is_enabled") val isEnabled: Boolean = true,
     @ColumnInfo(name = "category", defaultValue = "OTHER") val category: String = CATEGORY_OTHER,
-    @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis()
+    @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "source_type", defaultValue = "LOCAL") val sourceType: String = SOURCE_LOCAL,
+    @ColumnInfo(name = "source_id") val sourceId: String? = null,
+    @ColumnInfo(name = "source_item_id") val sourceItemId: String? = null
 ) {
     companion object {
         const val CATEGORY_GAME = "GAME"
@@ -21,6 +24,10 @@ data class WebAppEntity(
         const val CATEGORY_BOOK = "BOOK"
         const val CATEGORY_STUDY = "STUDY"
         const val CATEGORY_OTHER = "OTHER"
+
+        const val SOURCE_LOCAL = "LOCAL"
+        const val SOURCE_PRESET = "PRESET"
+        const val SOURCE_SUBSCRIPTION = "SUBSCRIPTION"
 
         fun getCategoryDisplayName(category: String): String {
             return when (category) {

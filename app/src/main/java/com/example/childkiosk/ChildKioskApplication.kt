@@ -10,8 +10,16 @@ import com.example.childkiosk.util.KioskPrefs
 import com.example.childkiosk.util.ProcessUtils
 import com.example.childkiosk.util.WebDataManager
 import com.example.childkiosk.util.WebViewPool
+import com.example.childkiosk.util.WhitelistSubscriptionRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class ChildKioskApplication : Application(), ComponentCallbacks2 {
+
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() {
         super.onCreate()
@@ -42,6 +50,19 @@ class ChildKioskApplication : Application(), ComponentCallbacks2 {
             }
         } else {
             Log.d("ChildKioskApp", "WebView warm pool skipped: process=$processName.")
+        }
+
+        if (!isWebViewProcess) {
+            applicationScope.launch {
+                while (true) {
+                    runCatching {
+                        WhitelistSubscriptionRepository.refreshIfDue(this@ChildKioskApplication)
+                    }.onFailure { e ->
+                        Log.w("ChildKioskApp", "Whitelist subscription auto refresh failed", e)
+                    }
+                    delay(15 * 60 * 1000L)
+                }
+            }
         }
 
         // 3. 检查 7 天自动网页缓存清理
