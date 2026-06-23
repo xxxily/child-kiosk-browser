@@ -2378,6 +2378,7 @@ fun AdminConsoleScreen(
                         WebAppEntity.CATEGORY_VIDEO to "视频",
                         WebAppEntity.CATEGORY_BOOK to "绘本",
                         WebAppEntity.CATEGORY_STUDY to "学习",
+                        WebAppEntity.CATEGORY_TOOL to "工具",
                         WebAppEntity.CATEGORY_OTHER to "其他"
                     )
 
@@ -3655,6 +3656,138 @@ private fun formatUrl(url: String): String {
     }
 }
 
+private fun defaultFaviconPngUrl(url: String): String? {
+    return runCatching {
+        val base = URL(formatUrl(url))
+        if (base.host.isNullOrBlank()) return@runCatching null
+        URL(base.protocol, base.host, base.port, "/favicon.png").toString()
+    }.getOrNull()
+}
+
+private suspend fun discoverBestFaviconUrl(siteUrl: String): String? = withContext(Dispatchers.IO) {
+    runCatching {
+        val base = URL(formatUrl(siteUrl))
+        val faviconPng = URL(base.protocol, base.host, base.port, "/favicon.png").toString()
+        if (isReachableIconUrl(faviconPng)) return@withContext faviconPng
+
+        discoverDeclaredIconUrls(base)
+            .firstOrNull { isReachableIconUrl(it) }
+            ?.let { return@withContext it }
+
+        val appleTouchIcon = URL(base.protocol, base.host, base.port, "/apple-touch-icon.png").toString()
+        if (isReachableIconUrl(appleTouchIcon)) return@withContext appleTouchIcon
+
+        val faviconIco = URL(base.protocol, base.host, base.port, "/favicon.ico").toString()
+        if (isReachableIconUrl(faviconIco)) return@withContext faviconIco
+
+        faviconIco
+    }.getOrNull()
+}
+
+private fun discoverDeclaredIconUrls(base: URL): List<String> {
+    val html = runCatching {
+        val conn = (base.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            instanceFollowRedirects = true
+            connectTimeout = 3500
+            readTimeout = 3500
+            setRequestProperty("User-Agent", "ChildKioskBrowser/1.0")
+            setRequestProperty("Accept", "text/html,application/xhtml+xml")
+        }
+        try {
+            conn.inputStream.bufferedReader().use { reader ->
+                val buffer = CharArray(96 * 1024)
+                val read = reader.read(buffer)
+                if (read <= 0) "" else String(buffer, 0, read)
+            }
+        } finally {
+            conn.disconnect()
+        }
+    }.getOrDefault("")
+    if (html.isBlank()) return emptyList()
+
+    val linkTagRegex = Regex("<link\\b[^>]*>", RegexOption.IGNORE_CASE)
+    val attrRegex = Regex("""([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>`]+))""")
+    return linkTagRegex.findAll(html)
+        .mapNotNull { match ->
+            val attrs = attrRegex.findAll(match.value)
+                .associate { attr ->
+                    val key = attr.groupValues[1].lowercase(Locale.US)
+                    val value = attr.groupValues.drop(2).firstOrNull { it.isNotEmpty() }.orEmpty()
+                    key to value
+                }
+            val rel = attrs["rel"]?.lowercase(Locale.US).orEmpty()
+            val href = attrs["href"].orEmpty()
+            if (!rel.contains("icon") || href.isBlank()) return@mapNotNull null
+            val iconUrl = runCatching { URL(base, href).toString() }.getOrNull() ?: return@mapNotNull null
+            if (!iconUrl.startsWith("https://", ignoreCase = true) &&
+                !iconUrl.startsWith("http://", ignoreCase = true)
+            ) {
+                return@mapNotNull null
+            }
+            iconCandidateScore(iconUrl, attrs) to iconUrl
+        }
+        .sortedByDescending { it.first }
+        .map { it.second }
+        .distinct()
+        .toList()
+}
+
+private fun iconCandidateScore(url: String, attrs: Map<String, String>): Int {
+    val rel = attrs["rel"]?.lowercase(Locale.US).orEmpty()
+    val type = attrs["type"]?.lowercase(Locale.US).orEmpty()
+    val sizes = attrs["sizes"].orEmpty()
+    var score = 0
+    if ("apple-touch-icon" in rel) score += 60
+    if ("icon" in rel) score += 40
+    if ("shortcut" in rel) score += 5
+    if (url.endsWith(".png", ignoreCase = true) || type.contains("png")) score += 35
+    if (url.endsWith(".webp", ignoreCase = true) || type.contains("webp")) score += 30
+    if (url.endsWith(".svg", ignoreCase = true) || type.contains("svg")) score += 25
+    if (url.endsWith(".ico", ignoreCase = true) || type.contains("icon")) score += 10
+    if (sizes.equals("any", ignoreCase = true)) score += 20
+    val largestSize = Regex("""(\d+)x(\d+)""").findAll(sizes)
+        .mapNotNull { match ->
+            val width = match.groupValues[1].toIntOrNull() ?: return@mapNotNull null
+            val height = match.groupValues[2].toIntOrNull() ?: return@mapNotNull null
+            width * height
+        }
+        .maxOrNull()
+    if (largestSize != null) {
+        score += (largestSize / 1024).coerceAtMost(80)
+    }
+    return score
+}
+
+private fun isReachableIconUrl(url: String): Boolean {
+    return runCatching {
+        val head = openIconConnection(url, "HEAD")
+        val headCode = head.responseCode
+        head.disconnect()
+        when {
+            headCode in 200..399 -> true
+            headCode == HttpURLConnection.HTTP_BAD_METHOD || headCode == HttpURLConnection.HTTP_FORBIDDEN -> {
+                val get = openIconConnection(url, "GET")
+                val getCode = get.responseCode
+                get.disconnect()
+                getCode in 200..399
+            }
+            else -> false
+        }
+    }.getOrDefault(false)
+}
+
+private fun openIconConnection(url: String, method: String): HttpURLConnection {
+    return (URL(url).openConnection() as HttpURLConnection).apply {
+        requestMethod = method
+        instanceFollowRedirects = true
+        connectTimeout = 2500
+        readTimeout = 2500
+        setRequestProperty("User-Agent", "ChildKioskBrowser/1.0")
+        setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddEditWebAppDialog(
@@ -3671,6 +3804,7 @@ fun AddEditWebAppDialog(
         mutableStateOf(if (app?.iconPath?.startsWith("http", ignoreCase = true) == true) app.iconPath else "") 
     }
     var selectedIcon by remember { mutableStateOf(app?.iconPath ?: "icon_gamepad") }
+    var lastAutoIconUrl by remember { mutableStateOf("") }
     
     var isCheckingUrl by remember { mutableStateOf(false) }
     var urlError by remember { mutableStateOf<String?>(null) }
@@ -3678,29 +3812,23 @@ fun AddEditWebAppDialog(
 
     val scope = rememberCoroutineScope()
 
-    // 自动推导网站默认的 favicon.ico
+    // 自动发现网站图标：先尝试 /favicon.png，再解析页面声明图标，最后回退 /favicon.ico。
     LaunchedEffect(urlInput) {
         val trimmed = urlInput.trim()
         if (trimmed.isNotEmpty() && isValidUrl(trimmed)) {
             val formatted = formatUrl(trimmed)
-            try {
-                val uri = java.net.URI(formatted)
-                val host = uri.host
-                val scheme = uri.scheme ?: "https"
-                val port = if (uri.port != -1) ":${uri.port}" else ""
-                if (host != null && host.isNotEmpty()) {
-                    val inferredFavicon = "$scheme://$host$port/favicon.ico"
-                    // 只有在 customIconUrl 为空时才进行初始化自动填充
-                    if (customIconUrl.isEmpty()) {
-                        customIconUrl = inferredFavicon
-                        // 如果是新应用，且没有改过内置图标，默认直接勾选这个推导出的 Favicon
-                        if (app == null && selectedIcon == "icon_gamepad") {
-                            selectedIcon = inferredFavicon
-                        }
+            if (customIconUrl.isBlank() || customIconUrl == lastAutoIconUrl) {
+                val previousAutoIconUrl = lastAutoIconUrl
+                val discoveredIcon = discoverBestFaviconUrl(formatted) ?: defaultFaviconPngUrl(formatted)
+                if (!discoveredIcon.isNullOrBlank() &&
+                    (customIconUrl.isBlank() || customIconUrl == previousAutoIconUrl)
+                ) {
+                    lastAutoIconUrl = discoveredIcon
+                    customIconUrl = discoveredIcon
+                    if (selectedIcon == "icon_gamepad" || selectedIcon == previousAutoIconUrl) {
+                        selectedIcon = discoveredIcon
                     }
                 }
-            } catch (e: Exception) {
-                // 忽略解析异常
             }
         }
     }
@@ -3787,6 +3915,7 @@ fun AddEditWebAppDialog(
                         WebAppEntity.CATEGORY_VIDEO to "视频",
                         WebAppEntity.CATEGORY_BOOK to "绘本",
                         WebAppEntity.CATEGORY_STUDY to "学习",
+                        WebAppEntity.CATEGORY_TOOL to "工具",
                         WebAppEntity.CATEGORY_OTHER to "其他"
                     )
                     categories.forEach { (catKey, catName) ->
@@ -3888,8 +4017,10 @@ fun AddEditWebAppDialog(
                                     if (customIconUrl.trim().isNotEmpty()) {
                                         selectedIcon = customIconUrl.trim()
                                     } else {
-                                        selectedIcon = "https://assets.anzz.site/favicon.ico"
-                                        customIconUrl = "https://assets.anzz.site/favicon.ico"
+                                        val fallbackIcon = defaultFaviconPngUrl(urlInput)
+                                            ?: "https://assets.anzz.site/favicon.png"
+                                        selectedIcon = fallbackIcon
+                                        customIconUrl = fallbackIcon
                                     }
                                 }
                         ) {
@@ -3899,8 +4030,10 @@ fun AddEditWebAppDialog(
                                     if (customIconUrl.trim().isNotEmpty()) {
                                         selectedIcon = customIconUrl.trim()
                                     } else {
-                                        selectedIcon = "https://assets.anzz.site/favicon.ico"
-                                        customIconUrl = "https://assets.anzz.site/favicon.ico"
+                                        val fallbackIcon = defaultFaviconPngUrl(urlInput)
+                                            ?: "https://assets.anzz.site/favicon.png"
+                                        selectedIcon = fallbackIcon
+                                        customIconUrl = fallbackIcon
                                     }
                                 }
                             )

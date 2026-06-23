@@ -45,7 +45,7 @@ The subscription file is UTF-8 JSON:
       "title": "Scratch",
       "url": "https://scratch.mit.edu/",
       "category": "GAME",
-      "icon": "https://scratch.mit.edu/favicon.ico",
+      "icon": "https://scratch.mit.edu/favicon.png",
       "enabled": true
     }
   ]
@@ -64,7 +64,7 @@ Optional fields:
 - `title`: human-readable subscription name.
 - `updatedAt`: server-side update time for display/debugging.
 - `apps[].id`: stable item ID. If absent, the client uses the normalized URL as the stable key.
-- `apps[].category`: one of `GAME`, `VIDEO`, `BOOK`, `STUDY`, `OTHER`; invalid or missing values become `OTHER`.
+- `apps[].category`: one of `GAME`, `VIDEO`, `BOOK`, `STUDY`, `TOOL`, `OTHER`; invalid or missing values become `OTHER`.
 - `apps[].icon`: built-in icon key or HTTP/HTTPS icon URL. Missing values fall back to a built-in icon.
 - `apps[].enabled`: initial enabled state. Default is `true`.
 

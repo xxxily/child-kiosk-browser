@@ -10,7 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-@Database(entities = [WebAppEntity::class, SystemConfigEntity::class], version = 4, exportSchema = false)
+@Database(entities = [WebAppEntity::class, SystemConfigEntity::class], version = 5, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun webAppDao(): WebAppDao
@@ -28,7 +28,7 @@ abstract class AppDatabase : RoomDatabase() {
                     "child_kiosk_database"
                 )
                 .enableMultiInstanceInvalidation()
-                .addMigrations(MIGRATION_3_4)
+                .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
                 .fallbackToDestructiveMigration()
                 .addCallback(DatabaseCallback(context.applicationContext))
                 .build()
@@ -151,7 +151,7 @@ abstract class AppDatabase : RoomDatabase() {
                             isEnabled = true,
                             category = WebAppEntity.CATEGORY_STUDY
                         )
-                    )
+                    ) + ADDITIONAL_DEFAULT_PRESET_APPS.map { it.toEntity() }
                     database.webAppDao().insertAll(
                         presetApps.map { it.copy(sourceType = WebAppEntity.SOURCE_PRESET) }
                     )
@@ -178,6 +178,155 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE web_apps ADD COLUMN source_item_id TEXT")
                 db.execSQL("UPDATE web_apps SET source_type = 'PRESET' WHERE is_preset = 1")
             }
+        }
+
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val baseCreatedAt = System.currentTimeMillis()
+                ADDITIONAL_DEFAULT_PRESET_APPS.forEachIndexed { index, seed ->
+                    insertPresetAppIfMissing(db, seed, baseCreatedAt + index)
+                }
+            }
+        }
+
+        private data class PresetAppSeed(
+            val title: String,
+            val url: String,
+            val iconPath: String,
+            val category: String
+        ) {
+            fun toEntity(): WebAppEntity {
+                return WebAppEntity(
+                    title = title,
+                    url = url,
+                    iconPath = iconPath,
+                    isPreset = true,
+                    isEnabled = false,
+                    category = category,
+                    sourceType = WebAppEntity.SOURCE_PRESET
+                )
+            }
+        }
+
+        private val ADDITIONAL_DEFAULT_PRESET_APPS = listOf(
+            PresetAppSeed(
+                title = "Abeto Messenger",
+                url = "https://messenger.abeto.co",
+                iconPath = "icon_gamepad",
+                category = WebAppEntity.CATEGORY_GAME
+            ),
+            PresetAppSeed(
+                title = "Astrocade",
+                url = "https://www.astrocade.com",
+                iconPath = "icon_gamepad",
+                category = WebAppEntity.CATEGORY_GAME
+            ),
+            PresetAppSeed(
+                title = "Y8 Games",
+                url = "https://zh.y8.com",
+                iconPath = "icon_gamepad",
+                category = WebAppEntity.CATEGORY_GAME
+            ),
+            PresetAppSeed(
+                title = "Poki",
+                url = "https://poki.com",
+                iconPath = "icon_gamepad",
+                category = WebAppEntity.CATEGORY_GAME
+            ),
+            PresetAppSeed(
+                title = "在线小霸王",
+                url = "https://www.yikm.net",
+                iconPath = "icon_gamepad",
+                category = WebAppEntity.CATEGORY_GAME
+            ),
+            PresetAppSeed(
+                title = "WGame80",
+                url = "https://wgame80.com",
+                iconPath = "icon_gamepad",
+                category = WebAppEntity.CATEGORY_GAME
+            ),
+            PresetAppSeed(
+                title = "Neal.fun",
+                url = "https://neal.fun",
+                iconPath = "icon_toy",
+                category = WebAppEntity.CATEGORY_GAME
+            ),
+            PresetAppSeed(
+                title = "CrazyGames",
+                url = "https://www.crazygames.com",
+                iconPath = "icon_gamepad",
+                category = WebAppEntity.CATEGORY_GAME
+            ),
+            PresetAppSeed(
+                title = "Sandspiel",
+                url = "https://sandspiel.club",
+                iconPath = "icon_toy",
+                category = WebAppEntity.CATEGORY_GAME
+            ),
+            PresetAppSeed(
+                title = "ANZZ Map",
+                url = "https://map.anzz.site",
+                iconPath = "icon_home",
+                category = WebAppEntity.CATEGORY_TOOL
+            ),
+            PresetAppSeed(
+                title = "Drawnix",
+                url = "https://drawnix.com",
+                iconPath = "icon_paint",
+                category = WebAppEntity.CATEGORY_TOOL
+            ),
+            PresetAppSeed(
+                title = "Excalidraw",
+                url = "https://excalidraw.com",
+                iconPath = "icon_paint",
+                category = WebAppEntity.CATEGORY_TOOL
+            ),
+            PresetAppSeed(
+                title = "tldraw",
+                url = "https://www.tldraw.com",
+                iconPath = "icon_paint",
+                category = WebAppEntity.CATEGORY_TOOL
+            ),
+            PresetAppSeed(
+                title = "Draw.Chat",
+                url = "https://draw.chat/zh/index.html",
+                iconPath = "icon_paint",
+                category = WebAppEntity.CATEGORY_TOOL
+            ),
+            PresetAppSeed(
+                title = "HTwins",
+                url = "https://htwins.net",
+                iconPath = "icon_lightbulb",
+                category = WebAppEntity.CATEGORY_TOOL
+            )
+        )
+
+        private fun insertPresetAppIfMissing(
+            db: SupportSQLiteDatabase,
+            seed: PresetAppSeed,
+            createdAt: Long
+        ) {
+            db.execSQL(
+                """
+                INSERT INTO web_apps (
+                    title, url, icon_path, is_preset, is_enabled, category,
+                    created_at, source_type, source_id, source_item_id
+                )
+                SELECT ?, ?, ?, 1, 0, ?, ?, ?, NULL, NULL
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM web_apps WHERE url = ?
+                )
+                """.trimIndent(),
+                arrayOf<Any?>(
+                    seed.title,
+                    seed.url,
+                    seed.iconPath,
+                    seed.category,
+                    createdAt,
+                    WebAppEntity.SOURCE_PRESET,
+                    seed.url
+                )
+            )
         }
     }
 }

@@ -199,6 +199,7 @@ fun KioskMainScreen(
                 WebAppEntity.CATEGORY_VIDEO to "📺 视频",
                 WebAppEntity.CATEGORY_BOOK to "📚 绘本",
                 WebAppEntity.CATEGORY_STUDY to "✍️ 学习",
+                WebAppEntity.CATEGORY_TOOL to "🧰 工具",
                 WebAppEntity.CATEGORY_OTHER to "⚙️ 其他"
             )
             val minGridSize = when (iconSizeMode) {

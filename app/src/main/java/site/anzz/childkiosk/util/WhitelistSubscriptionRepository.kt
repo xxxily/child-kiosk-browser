@@ -198,6 +198,7 @@ object WhitelistSubscriptionRepository {
             WebAppEntity.CATEGORY_VIDEO -> WebAppEntity.CATEGORY_VIDEO
             WebAppEntity.CATEGORY_BOOK -> WebAppEntity.CATEGORY_BOOK
             WebAppEntity.CATEGORY_STUDY -> WebAppEntity.CATEGORY_STUDY
+            WebAppEntity.CATEGORY_TOOL -> WebAppEntity.CATEGORY_TOOL
             else -> WebAppEntity.CATEGORY_OTHER
         }
     }
@@ -227,6 +228,7 @@ object WhitelistSubscriptionRepository {
             WebAppEntity.CATEGORY_VIDEO -> "icon_rocket"
             WebAppEntity.CATEGORY_BOOK -> "icon_book"
             WebAppEntity.CATEGORY_STUDY -> "icon_school"
+            WebAppEntity.CATEGORY_TOOL -> "icon_paint"
             else -> "icon_home"
         }
     }

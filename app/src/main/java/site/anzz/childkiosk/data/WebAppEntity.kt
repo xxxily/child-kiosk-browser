@@ -23,6 +23,7 @@ data class WebAppEntity(
         const val CATEGORY_VIDEO = "VIDEO"
         const val CATEGORY_BOOK = "BOOK"
         const val CATEGORY_STUDY = "STUDY"
+        const val CATEGORY_TOOL = "TOOL"
         const val CATEGORY_OTHER = "OTHER"
 
         const val SOURCE_LOCAL = "LOCAL"
@@ -35,6 +36,7 @@ data class WebAppEntity(
                 CATEGORY_VIDEO -> "视频"
                 CATEGORY_BOOK -> "绘本"
                 CATEGORY_STUDY -> "学习"
+                CATEGORY_TOOL -> "工具"
                 else -> "其他"
             }
         }
@@ -45,6 +47,7 @@ data class WebAppEntity(
                 CATEGORY_VIDEO -> "📺"
                 CATEGORY_BOOK -> "📚"
                 CATEGORY_STUDY -> "✍️"
+                CATEGORY_TOOL -> "🧰"
                 else -> "⚙️"
             }
         }
