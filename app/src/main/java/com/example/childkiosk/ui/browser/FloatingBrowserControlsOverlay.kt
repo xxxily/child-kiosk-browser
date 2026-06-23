@@ -83,7 +83,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private val edgeMargin = dp(12)
     private val visibleEdgeWidth = dp(20)
-    private val bubbleSize = dp(72)
+    private val bubbleSize = dp(54)
     private val panelMaxWidth = dp(380)
     private val panelMinWidth = dp(288)
     private val panelMargin = dp(16)
@@ -123,16 +123,16 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     }
 
     private val urlInput = EditText(context).apply {
-        minHeight = dp(56)
+        minHeight = dp(40)
         setSingleLine(true)
         imeOptions = EditorInfo.IME_ACTION_GO
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-        textSize = 15f
+        textSize = 14f
         setTextColor(PanelTextColor)
         setHintTextColor(PanelHintColor)
         hint = "输入网址"
-        setPadding(dp(14), 0, dp(14), 0)
-        background = roundedBackground(Color.WHITE, dp(16), StrokeColor, dp(1))
+        setPadding(dp(12), 0, dp(12), 0)
+        background = roundedBackground(Color.WHITE, dp(12), StrokeColor, dp(1))
         setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_GO) {
                 submitUrl()
@@ -211,7 +211,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                 )
                 addView(
                     panelCloseButton,
-                    LinearLayout.LayoutParams(dp(56), dp(56)).apply {
+                    LinearLayout.LayoutParams(dp(40), dp(40)).apply {
                         leftMargin = dp(8)
                     }
                 )
@@ -238,7 +238,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                 )
                 addView(
                     goButton,
-                    LinearLayout.LayoutParams(dp(56), dp(56)).apply {
+                    LinearLayout.LayoutParams(dp(40), dp(40)).apply {
                         leftMargin = dp(8)
                     }
                 )
@@ -271,27 +271,22 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     }
 
     private fun bubbleBackground(): android.graphics.drawable.Drawable {
-        val gradient = GradientDrawable(
-            GradientDrawable.Orientation.TL_BR,
-            intArrayOf(
-                Color.rgb(43, 138, 130),
-                Color.rgb(20, 80, 75)
-            )
-        ).apply {
+        val circle = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(26).toFloat()
-            setStroke(dp(1), Color.argb(40, 255, 255, 255))
+            setColor(Color.WHITE)
+            cornerRadius = dp(22).toFloat()
+            setStroke(dp(1), Color.rgb(224, 224, 224))
         }
-        return android.graphics.drawable.InsetDrawable(gradient, dp(10), dp(10), dp(10), dp(10))
+        return android.graphics.drawable.InsetDrawable(circle, dp(5), dp(5), dp(5), dp(5))
     }
 
     private val bubbleButton = ImageButton(context).apply {
         setImageResource(R.drawable.ic_floating_browser_menu_24)
-        imageTintList = ColorStateList.valueOf(Color.WHITE)
+        imageTintList = ColorStateList.valueOf(Color.rgb(117, 117, 117))
         contentDescription = "浏览控制"
         scaleType = ImageView.ScaleType.CENTER
         background = bubbleBackground()
-        elevation = dp(4).toFloat()
+        elevation = dp(3).toFloat()
         setOnTouchListener { _, event -> handleBubbleTouch(event) }
     }
 
@@ -588,10 +583,10 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             gravity = Gravity.CENTER
             isEnabled = action.enabled
             alpha = if (action.enabled) 1f else 0.36f
-            background = roundedBackground(actionBackgroundColor(action), dp(16))
-            minimumWidth = dp(64)
-            minimumHeight = dp(68)
-            setPadding(dp(6), dp(6), dp(6), dp(6))
+            background = roundedBackground(actionBackgroundColor(action), dp(12))
+            minimumWidth = dp(50)
+            minimumHeight = dp(56)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
             contentDescription = action.title
             setOnClickListener {
                 if (action.enabled) {
@@ -604,14 +599,14 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                     imageTintList = ColorStateList.valueOf(actionTintColor(action))
                     scaleType = ImageView.ScaleType.CENTER
                 },
-                LinearLayout.LayoutParams(dp(28), dp(28)).apply {
-                    bottomMargin = dp(4)
+                LinearLayout.LayoutParams(dp(20), dp(20)).apply {
+                    bottomMargin = dp(2)
                 }
             )
             addView(
                 TextView(context).apply {
                     text = action.title
-                    textSize = 11f
+                    textSize = 10f
                     setTextColor(actionTintColor(action))
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
@@ -641,8 +636,8 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     }
 
     private fun actionItemLayoutParams(): LinearLayout.LayoutParams {
-        return LinearLayout.LayoutParams(dp(68), dp(72)).apply {
-            rightMargin = dp(8)
+        return LinearLayout.LayoutParams(dp(50), dp(56)).apply {
+            rightMargin = dp(6)
         }
     }
 
@@ -852,10 +847,10 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             imageTintList = ColorStateList.valueOf(PanelTextColor)
             this.contentDescription = contentDescription
             scaleType = ImageView.ScaleType.CENTER
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-            background = roundedBackground(ActionBackgroundColor, dp(16))
-            minimumWidth = dp(56)
-            minimumHeight = dp(56)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = roundedBackground(ActionBackgroundColor, dp(12))
+            minimumWidth = dp(40)
+            minimumHeight = dp(40)
             setOnClickListener { onClick() }
         }
     }

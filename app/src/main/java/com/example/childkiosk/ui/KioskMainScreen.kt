@@ -95,11 +95,11 @@ fun KioskMainScreen(
     val screenVerticalPadding = if (isPortrait) 16.dp else 12.dp
     val gridContentPadding = if (isPortrait) 8.dp else 16.dp
 
-    val titlePaddingTop = if (isPortrait) 8.dp else 6.dp
-    val titlePaddingBottom = if (isPortrait) 12.dp else 8.dp
-    val spacerHeightAfterTitle = if (isPortrait) 8.dp else 6.dp
-    val tabPaddingVertical = if (isPortrait) 4.dp else 4.dp
-    val spacerHeightAfterTabs = if (isPortrait) 8.dp else 8.dp
+    val titlePaddingTop = if (isPortrait) 6.dp else 4.dp
+    val titlePaddingBottom = if (isPortrait) 8.dp else 6.dp
+    val spacerHeightAfterTitle = if (isPortrait) 6.dp else 4.dp
+    val tabPaddingVertical = if (isPortrait) 2.dp else 2.dp
+    val spacerHeightAfterTabs = if (isPortrait) 6.dp else 6.dp
 
     val filteredApps = remember(webApps, selectedCategory) {
         if (selectedCategory == "ALL") {
@@ -201,20 +201,20 @@ fun KioskMainScreen(
                 WebAppEntity.CATEGORY_OTHER to "⚙️ 其他"
             )
             val minGridSize = when (iconSizeMode) {
-                "SMALL" -> 90.dp
-                "LARGE" -> 160.dp
-                else -> 120.dp
+                "SMALL" -> 64.dp
+                "LARGE" -> 130.dp
+                else -> 96.dp
             }
             val gridSpacing = when (iconSizeMode) {
-                "SMALL" -> 12.dp
-                "LARGE" -> 24.dp
-                else -> 16.dp
+                "SMALL" -> 10.dp
+                "LARGE" -> 16.dp
+                else -> 12.dp
             }
             val columnCount = if (isPortrait) {
                 when (iconSizeMode) {
-                    "SMALL" -> 3
-                    "LARGE" -> 1
-                    else -> 2
+                    "SMALL" -> 4
+                    "LARGE" -> 2
+                    else -> 3
                 }
             } else {
                 ((maxWidth.value + gridSpacing.value) / (minGridSize.value + gridSpacing.value))
@@ -238,8 +238,8 @@ fun KioskMainScreen(
                         if (!hideMainTitle) {
                             Text(
                                 text = "🌟 $mainTitleText 🌟",
-                                fontSize = 32.sp,
-                                fontWeight = FontWeight.Black,
+                                fontSize = 22.sp,
+                                fontWeight = FontWeight.Bold,
                                 color = if (isDarkWallpaper) Color.White else Color(0xFF4E342E),
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.padding(top = titlePaddingTop, bottom = titlePaddingBottom)
@@ -437,14 +437,14 @@ private fun CategoryStickyTabs(
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = tabPaddingVertical)
                 .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             categories.forEach { (catKey, catName) ->
                 val isSelected = selectedCategory == catKey
                 Card(
                     onClick = { onCategorySelected(catKey) },
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = if (isSelected) {
                             if (isDarkWallpaper) Color.White else Color(0xFF4E342E)
@@ -457,14 +457,14 @@ private fun CategoryStickyTabs(
                             if (isDarkWallpaper) Color.White.copy(alpha = 0.8f) else Color(0xFF4E342E)
                         }
                     ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 6.dp else 2.dp),
-                    modifier = Modifier.padding(vertical = 4.dp)
+                    elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 4.dp else 1.dp),
+                    modifier = Modifier.padding(vertical = 2.dp)
                 ) {
                     Text(
                         text = catName,
-                        fontSize = 16.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                     )
                 }
             }
