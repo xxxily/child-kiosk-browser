@@ -21,7 +21,10 @@ object AdBlocker {
         snapshot: FilterRuntimeSnapshot
     ): FilterDecision {
         if (!snapshot.enabled || request?.url == null) return FilterDecision.ALLOW
+        val scheme = request.url.scheme?.lowercase(java.util.Locale.US)
+        if (scheme != "http" && scheme != "https") return FilterDecision.ALLOW
         val requestUrl = request.url.toString()
+        if (requestUrl.length > 2048) return FilterDecision.ALLOW
         val requestContext = FilterRequestContext(
             requestUrl = requestUrl,
             topLevelUrl = topLevelUrl,

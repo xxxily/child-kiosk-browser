@@ -349,10 +349,10 @@ private class CompiledRule(
         if (!matchesOptions(context)) return false
         return when (rule.matchType) {
             FilterMatchType.DOMAIN_ANCHOR -> matchesDomainAnchor(context)
-            FilterMatchType.STARTS_WITH -> context.requestUrl.lowercase(Locale.US).startsWith(rule.pattern.lowercase(Locale.US))
-            FilterMatchType.ENDS_WITH -> context.requestUrl.lowercase(Locale.US).endsWith(rule.pattern.lowercase(Locale.US))
+            FilterMatchType.STARTS_WITH -> context.requestUrlLower.startsWith(rule.pattern.lowercase(Locale.US))
+            FilterMatchType.ENDS_WITH -> context.requestUrlLower.endsWith(rule.pattern.lowercase(Locale.US))
             FilterMatchType.REGEX -> regex?.matcher(context.requestUrl)?.find() == true
-            FilterMatchType.SUBSTRING -> matchesWildcard(context.requestUrl, rule.pattern, wildcardRegex)
+            FilterMatchType.SUBSTRING -> matchesWildcard(context.requestUrlLower, rule.pattern, wildcardRegex)
         }
     }
 
@@ -399,8 +399,7 @@ private class CompiledRule(
     }
 }
 
-private fun matchesWildcard(url: String, rawPattern: String, wildcardRegex: Pattern?): Boolean {
-    val lowerUrl = url.lowercase(Locale.US)
+private fun matchesWildcard(lowerUrl: String, rawPattern: String, wildcardRegex: Pattern?): Boolean {
     val pattern = rawPattern
         .trim()
         .removePrefix("|")

@@ -232,6 +232,7 @@ data class FilterRequestContext(
 ) {
     val requestHost: String = requestUrl.hostFromUrl()
     val topLevelHost: String = topLevelUrl.hostFromUrl()
+    val requestUrlLower: String = requestUrl.lowercase(java.util.Locale.US)
     val isThirdParty: Boolean = isThirdPartyHost(requestHost, topLevelHost)
 }
 
