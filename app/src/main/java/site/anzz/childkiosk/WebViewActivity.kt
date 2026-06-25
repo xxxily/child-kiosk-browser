@@ -1706,6 +1706,18 @@ private fun createSecureWebView(
                     handler?.proceed()
                 }
             }
+
+            override fun onRenderProcessGone(
+                view: WebView?,
+                detail: RenderProcessGoneDetail?
+            ): Boolean {
+                Log.e("ChildKioskWebView", "Renderer process gone! Did crash: ${detail?.didCrash()}")
+                view?.let {
+                    destroyWebViewSafely(it)
+                }
+                Toast.makeText(ctx, "网页渲染进程异常退出，正在尝试重构页面", Toast.LENGTH_SHORT).show()
+                return true
+            }
         }
 
         webChromeClient = object : WebChromeClient() {

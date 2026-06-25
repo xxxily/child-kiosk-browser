@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var dpm: DevicePolicyManager
     private lateinit var adminComponent: ComponentName
     private var isSoftLockDeferred = false
+    private var filterEventReceiver: site.anzz.childkiosk.util.filter.FilterEventReceiver? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // 0. 早期屏幕方向设置，避免启动闪烁
@@ -187,6 +188,16 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+
+        // 注册多进程过滤日志广播接收器
+        val receiver = site.anzz.childkiosk.util.filter.FilterEventReceiver()
+        filterEventReceiver = receiver
+        val filter = android.content.IntentFilter("site.anzz.childkiosk.action.RECORD_FILTER_EVENT")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(receiver, filter)
         }
     }
 
@@ -437,6 +448,14 @@ class MainActivity : ComponentActivity() {
     }
 
 
+
+    override fun onDestroy() {
+        filterEventReceiver?.let {
+            unregisterReceiver(it)
+            filterEventReceiver = null
+        }
+        super.onDestroy()
+    }
 
     companion object {
         private const val TAG = "MainActivity"

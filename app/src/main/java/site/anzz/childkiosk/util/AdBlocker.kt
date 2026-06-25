@@ -41,22 +41,32 @@ object AdBlocker {
         val siteOverride = FilterRepository.siteOverrideFor(snapshot, requestContext.topLevelHost)
         val decision = engine.decide(requestContext, siteOverride)
         if (decision.action != FilterAction.ALLOW) {
-            FilterRepository.recordEvent(
-                context,
-                FilterEvent(
-                    timestamp = System.currentTimeMillis(),
-                    action = decision.action.name,
-                    url = requestUrl,
-                    topLevelUrl = topLevelUrl,
-                    resourceType = requestContext.resourceType.optionName,
-                    ruleText = decision.rule?.rawText.orEmpty(),
-                    sourceName = decision.rule?.sourceName.orEmpty(),
-                    reason = decision.reason
-                )
+            val event = FilterEvent(
+                timestamp = System.currentTimeMillis(),
+                action = decision.action.name,
+                url = requestUrl,
+                topLevelUrl = topLevelUrl,
+                resourceType = requestContext.resourceType.optionName,
+                ruleText = decision.rule?.rawText.orEmpty(),
+                sourceName = decision.rule?.sourceName.orEmpty(),
+                reason = decision.reason
             )
+            if (isWebviewProcess(context)) {
+                sendFilterEventBroadcast(context, event)
+            } else {
+                FilterRepository.recordEvent(context, event)
+            }
         }
         return decision
     }
+
+    private val EMPTY_GIF = byteArrayOf(
+        0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00,
+        0x80.toByte(), 0x00, 0x00, 0x00, 0x00, 0x00, 0xff.toByte(),
+        0xff.toByte(), 0xff.toByte(), 0x21, 0xf9.toByte(), 0x04, 0x01,
+        0x00, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01,
+        0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x4c, 0x01, 0x00, 0x3b
+    )
 
     fun emptyResponse(resourceType: FilterResourceType): WebResourceResponse {
         val mimeType = when (resourceType) {
@@ -67,14 +77,41 @@ object AdBlocker {
             FilterResourceType.MEDIA -> "video/mp4"
             else -> "text/plain"
         }
+        val dataStream = if (resourceType == FilterResourceType.IMAGE) {
+            ByteArrayInputStream(EMPTY_GIF)
+        } else {
+            ByteArrayInputStream(ByteArray(0))
+        }
         return WebResourceResponse(
             mimeType,
             "utf-8",
-            204,
-            "No Content",
-            mapOf("Cache-Control" to "no-store"),
-            ByteArrayInputStream(ByteArray(0))
+            200,
+            "OK",
+            mapOf(
+                "Cache-Control" to "no-store",
+                "Access-Control-Allow-Origin" to "*"
+            ),
+            dataStream
         )
+    }
+
+    private fun isWebviewProcess(context: Context): Boolean {
+        val processName = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            android.app.Application.getProcessName()
+        } else {
+            val pid = android.os.Process.myPid()
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+            am?.runningAppProcesses?.firstOrNull { it.pid == pid }?.processName
+        }
+        return processName != null && processName.endsWith(":webview")
+    }
+
+    private fun sendFilterEventBroadcast(context: Context, event: FilterEvent) {
+        val intent = android.content.Intent("site.anzz.childkiosk.action.RECORD_FILTER_EVENT").apply {
+            putExtra("event_json", event.toJson().toString())
+            setPackage(context.packageName)
+        }
+        context.sendBroadcast(intent)
     }
 
     fun isAdRequest(url: String?): Boolean {
