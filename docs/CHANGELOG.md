@@ -6,7 +6,16 @@
 
 ## [Unreleased]
 
-## [0.2.8] - 2026-06-25
+## [0.2.9] - 2026-06-25
+
+### Fixed — 修复
+
+- **地址栏软键盘遮挡优化**：
+  - 在悬浮面板中通过动态监听 WindowInsets IME 软键盘高度变化，重构了自适应高度压扁收缩与 Y 轴定位避让算法，同时给 Activity 增加了 `adjustResize` 配合，彻底解决了用户输入网址时输入法遮挡地址输入框的问题，确保在横屏和竖屏下字迹完全可见。
+- **WebView 跨线程方法调用闪退修复**：
+  - 修复了在 WebView 的后台网络资源加载线程（`shouldInterceptRequest`）中，违规直接物理访问 `view?.url` (即调用非线程安全的 `WebView.getUrl()`) 引发的致命线程检查异常崩溃。
+  - 重构为：在 `WebViewActivity` 内部引入 `AtomicReference` 并在 UI 主线程的 `onPageStarted` 回调中将加载的顶级 URL 安全写入该并发缓存，在后台拦截时读取该缓存共享；在 `WebViewPool` 预加载拦截中，直接闭包引用创建时预先绑定的 `url` 常量，彻底根除了开启网页过滤和儿童模式时的闪退大 Bug。
+
 
 ### Fixed — 修复
 
