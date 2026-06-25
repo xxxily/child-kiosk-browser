@@ -293,6 +293,8 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         setOnTouchListener { _, event -> handleBubbleTouch(event) }
     }
 
+    private var imeHeight = 0
+
     init {
         isClickable = false
         clipChildren = false
@@ -313,9 +315,20 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         renderSections()
 
         ViewCompat.setOnApplyWindowInsetsListener(this) { _, insets ->
-            doOnLayout {
-                restoreBubbleAfterBoundsChange(animated = false)
-                positionPanel()
+            val keyboardHeight = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom
+            if (imeHeight != keyboardHeight) {
+                imeHeight = keyboardHeight
+                updatePanelWidth()
+                sectionsScrollView.maxContentHeight = maxScrollableSectionsHeight()
+                doOnLayout {
+                    restoreBubbleAfterBoundsChange(animated = false)
+                    positionPanel()
+                }
+            } else {
+                doOnLayout {
+                    restoreBubbleAfterBoundsChange(animated = false)
+                    positionPanel()
+                }
             }
             insets
         }
@@ -669,8 +682,9 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     }
 
     private fun maxScrollableSectionsHeight(): Int {
-        if (height <= 0) return dp(260)
-        return (height - panelMargin * 2 - dp(150)).coerceAtLeast(dp(120))
+        val usableHeight = height - imeHeight
+        if (usableHeight <= 0) return dp(120)
+        return (usableHeight - panelMargin * 2 - dp(150)).coerceAtLeast(dp(80))
     }
 
     private fun placeInitialBubble() {
@@ -804,7 +818,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         val desiredY = bubbleButton.y + bubbleSize / 2f - panelHeight / 2f
         val targetY = desiredY.coerceIn(
             panelMargin.toFloat(),
-            max(panelMargin.toFloat(), height - panelMargin - panelHeight.toFloat())
+            max(panelMargin.toFloat(), height - imeHeight - panelMargin - panelHeight.toFloat())
         )
         panelView.x = targetX.toFloat()
         panelView.y = targetY
