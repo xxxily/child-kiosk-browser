@@ -151,7 +151,7 @@ fbcdn.net/ads${'$'}image,third-party
             category = "通用隐私",
             homepageUrl = "https://easylist.to/",
             subscriptionUrl = "https://easylist.to/easylist/easyprivacy.txt",
-            defaultInStandard = true,
+            defaultInStandard = false,
             defaultInStrong = true,
             bundledRules = EASYPRIVACY_SEED_RULES
         ),
@@ -161,7 +161,7 @@ fbcdn.net/ads${'$'}image,third-party
             category = "中文广告",
             homepageUrl = "https://adguard.com/kb/general/ad-filtering/adguard-filters/",
             subscriptionUrl = "https://filters.adtidy.org/extension/chromium/filters/224.txt",
-            defaultInStandard = true,
+            defaultInStandard = false,
             defaultInStrong = true,
             bundledRules = ADGUARD_CHINESE_SEED_RULES
         ),
@@ -171,7 +171,7 @@ fbcdn.net/ads${'$'}image,third-party
             category = "移动广告",
             homepageUrl = "https://adguard.com/kb/general/ad-filtering/adguard-filters/",
             subscriptionUrl = "https://filters.adtidy.org/extension/chromium/filters/11.txt",
-            defaultInStandard = true,
+            defaultInStandard = false,
             defaultInStrong = true,
             bundledRules = ADGUARD_MOBILE_SEED_RULES
         ),
