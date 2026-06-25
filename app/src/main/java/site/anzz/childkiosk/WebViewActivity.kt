@@ -1540,6 +1540,7 @@ private fun createSecureWebView(
 ): WebView {
     val webView = existingWebView ?: WebView(ctx)
     val shouldClearInitialHistory = AtomicBoolean(clearHistoryOnFirstRealPageFinish)
+    val currentTopUrl = java.util.concurrent.atomic.AtomicReference<String>(targetUrl)
 
     return webView.apply {
         WebViewRuntime.applySettings(this, ctx, targetUrl, runtimeConfig)
@@ -1557,6 +1558,9 @@ private fun createSecureWebView(
         webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
+                if (!url.isNullOrBlank()) {
+                    currentTopUrl.set(url)
+                }
                 Log.d("ChildKioskWebView", "Page started: $url")
                 onProgressUpdate(0)
                 view?.setBackgroundColor(android.graphics.Color.parseColor("#FFF8E1"))
@@ -1649,7 +1653,7 @@ private fun createSecureWebView(
 
                 if (runtimeConfig.limitAdBlock && request.isForMainFrame) {
                     val cleanedUrl = FilterRepository.getCachedEngine(runtimeConfig.filterSnapshot)
-                        ?.cleanUrlForNavigation(urlStr, view?.url ?: targetUrl)
+                        ?.cleanUrlForNavigation(urlStr, currentTopUrl.get())
                     if (!cleanedUrl.isNullOrBlank() && cleanedUrl != urlStr) {
                         Log.d("ChildKioskWebView", "Cleaned tracking params: $urlStr -> $cleanedUrl")
                         view?.loadUrl(cleanedUrl)
@@ -1672,7 +1676,7 @@ private fun createSecureWebView(
                 request: WebResourceRequest?
             ): WebResourceResponse? {
                 if (runtimeConfig.limitAdBlock) {
-                    val topLevelUrl = view?.url ?: targetUrl
+                    val topLevelUrl = currentTopUrl.get()
                     val decision = AdBlocker.shouldBlock(ctx, request, topLevelUrl, runtimeConfig.filterSnapshot)
                     if (decision.action == FilterAction.BLOCK) {
                         val requestUrl = request?.url?.toString().orEmpty()

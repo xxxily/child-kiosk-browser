@@ -100,7 +100,7 @@ object WebViewPool {
             ): WebResourceResponse? {
                 if (runtimeConfig.limitAdBlock) {
                     val snapshot = runtimeConfig.filterSnapshot
-                    val topLevelUrl = view?.url ?: url
+                    val topLevelUrl = url
                     val decision = AdBlocker.shouldBlock(ctx, request, topLevelUrl, snapshot)
                     if (decision.action == FilterAction.BLOCK) {
                         val requestUrl = request?.url?.toString().orEmpty()
