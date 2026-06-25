@@ -588,16 +588,11 @@ class WebViewActivity : ComponentActivity() {
         val initialRight = root.paddingRight
         val initialBottom = root.paddingBottom
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
-            val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             val navigationBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
             val shouldInsetForNormalMode = shouldUseNormalSystemBars()
             view.setPadding(
                 initialLeft + if (shouldInsetForNormalMode) navigationBars.left else 0,
-                initialTop + if (shouldInsetForNormalMode && shouldShowNormalStatusBar()) {
-                    statusBars.top
-                } else {
-                    0
-                },
+                initialTop, // 移除对 statusBars.top 的 padding，使 WebView 延伸到状态栏下方以实现透明底状态栏
                 initialRight + if (shouldInsetForNormalMode) navigationBars.right else 0,
                 initialBottom + if (shouldInsetForNormalMode) navigationBars.bottom else 0
             )

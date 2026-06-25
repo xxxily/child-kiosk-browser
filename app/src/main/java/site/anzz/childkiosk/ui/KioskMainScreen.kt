@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.animation.animateContentSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -168,6 +170,12 @@ fun KioskMainScreen(
     }
     val isDarkWallpaper = currentWallpaper.isDark
 
+    val statusBarPadding = if (normalSystemBars) {
+        WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    } else {
+        0.dp
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -191,7 +199,8 @@ fun KioskMainScreen(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = screenHorizontalPadding, vertical = screenVerticalPadding)
+                .padding(horizontal = screenHorizontalPadding)
+                .padding(top = screenVerticalPadding + statusBarPadding, bottom = screenVerticalPadding)
         ) {
             val categories = listOf(
                 "ALL" to "🌟 全部",
@@ -598,39 +607,151 @@ fun ParentMenuDialog(
     onEnterAdmin: () -> Unit,
     onExitKiosk: () -> Unit
 ) {
+    val haptic = LocalHapticFeedback.current
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(20.dp),
-            modifier = Modifier.fillMaxWidth().padding(16.dp)
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface,
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+            modifier = Modifier
+                .widthIn(max = 440.dp)
+                .fillMaxWidth()
+                .padding(16.dp)
         ) {
             Column(
-                modifier = Modifier.padding(24.dp),
+                modifier = Modifier
+                    .padding(24.dp)
+                    .animateContentSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
-                Text(
-                    text = "⚙️ 配置中心",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                )
-
-                QButton(
-                    onClick = onEnterAdmin,
-                    modifier = Modifier.fillMaxWidth()
+                // Header
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("进入配置后台", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primaryContainer),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                    Text(
+                        text = "配置中心",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "进行系统级退出或高级设置",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
                 }
 
-                QButton(
-                    onClick = onExitKiosk,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("返回系统桌面", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                val buttonContent = @Composable {
+                    // 进入配置后台 按钮
+                    val enterInteraction = remember { MutableInteractionSource() }
+                    val enterPressed by enterInteraction.collectIsPressedAsState()
+                    val enterScale by animateFloatAsState(if (enterPressed) 0.96f else 1.0f, label = "enterScale")
+                    
+                    Button(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onEnterAdmin()
+                        },
+                        interactionSource = enterInteraction,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        modifier = Modifier
+                            .run { if (isLandscape) weight(1f) else fillMaxWidth() }
+                            .height(56.dp)
+                            .scale(enterScale)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("进入配置后台", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    // 返回系统桌面 按钮
+                    val exitInteraction = remember { MutableInteractionSource() }
+                    val exitPressed by exitInteraction.collectIsPressedAsState()
+                    val exitScale by animateFloatAsState(if (exitPressed) 0.96f else 1.0f, label = "exitScale")
+
+                    Button(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onExitKiosk()
+                        },
+                        interactionSource = exitInteraction,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        ),
+                        modifier = Modifier
+                            .run { if (isLandscape) weight(1f) else fillMaxWidth() }
+                            .height(56.dp)
+                            .scale(exitScale)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Home,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("返回系统桌面", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
 
-                TextButton(onClick = onDismiss) {
-                    Text("返回空间")
+                if (isLandscape) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        buttonContent()
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        buttonContent()
+                    }
+                }
+
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.height(44.dp)
+                ) {
+                    Text(
+                        text = "返回空间",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium
+                    )
                 }
             }
         }
