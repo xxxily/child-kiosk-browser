@@ -283,11 +283,11 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     }
 
     private val bubbleButton = ImageButton(context).apply {
-        setImageResource(R.drawable.ic_floating_browser_menu_24)
+        setImageResource(R.drawable.ic_floating_browser_explore_24)
         imageTintList = ColorStateList.valueOf(Color.rgb(117, 117, 117))
         contentDescription = "浏览控制"
-        scaleType = ImageView.ScaleType.FIT_CENTER
-        setPadding(dp(12), dp(12), dp(12), dp(12))
+        scaleType = ImageView.ScaleType.CENTER_INSIDE
+        setPadding(dp(10), dp(10), dp(10), dp(10))
         background = bubbleBackground()
         elevation = dp(3).toFloat()
         setOnTouchListener { _, event -> handleBubbleTouch(event) }
@@ -461,6 +461,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         hideKeyboard()
         urlInput.clearFocus()
         callbacks.onNavigateToUrl(targetUrl)
+        setPanelExpanded(expanded = false, animated = true)
         scheduleEdgeHide()
     }
 

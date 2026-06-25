@@ -33,6 +33,13 @@ import site.anzz.childkiosk.ui.theme.ChildKioskTheme
 import site.anzz.childkiosk.util.KioskPrefs
 import site.anzz.childkiosk.util.SystemUiHelper
 import site.anzz.childkiosk.util.WebViewPool
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
+import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsOverlay
+import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsCallbacks
+import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsState
+
 
 class MainActivity : ComponentActivity() {
 
@@ -119,14 +126,42 @@ class MainActivity : ComponentActivity() {
                     }
 
                     when (currentScreen) {
-                        "MAIN" -> KioskMainScreen(
-                            config = systemConfig,
-                            iconSizeMode = iconSizeMode,
-                            wallpaperPreset = wallpaperPreset,
-                            normalSystemBars = isNormalSystemUiMode(),
-                            onEnterAdmin = { currentScreen = "ADMIN" },
-                            onExitKiosk = { stopLockTaskMode() }
-                        )
+                        "MAIN" -> {
+                            val context = LocalContext.current
+                            val floatingEnabled = remember(currentScreen) {
+                                KioskPrefs.isFloatingBrowserControlsEnabled(context)
+                            }
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                KioskMainScreen(
+                                    config = systemConfig,
+                                    iconSizeMode = iconSizeMode,
+                                    wallpaperPreset = wallpaperPreset,
+                                    normalSystemBars = isNormalSystemUiMode(),
+                                    onEnterAdmin = { currentScreen = "ADMIN" },
+                                    onExitKiosk = { stopLockTaskMode() }
+                                )
+                                if (floatingEnabled) {
+                                    AndroidView(
+                                        factory = { ctx ->
+                                            FloatingBrowserControlsOverlay(ctx).apply {
+                                                setCallbacks(FloatingBrowserControlsCallbacks(
+                                                    onNavigateToUrl = { url ->
+                                                        val intent = Intent(ctx, WebViewActivity::class.java).apply {
+                                                            putExtra(WebViewActivity.EXTRA_CUSTOM_URL, url)
+                                                            val orientationMode = KioskPrefs.getOrientationMode(ctx)
+                                                            putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, orientationMode)
+                                                        }
+                                                        ctx.startActivity(intent)
+                                                    }
+                                                ))
+                                                updateState(FloatingBrowserControlsState())
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
+                            }
+                        }
                         "ADMIN" -> AdminConsoleScreen(
                             config = systemConfig,
                             isDeviceOwner = dpm.isDeviceOwnerApp(packageName),

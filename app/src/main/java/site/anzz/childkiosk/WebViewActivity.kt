@@ -561,6 +561,21 @@ class WebViewActivity : ComponentActivity() {
                 db.webAppDao().getWebAppById(webAppId)
             }
             if (webApp == null) {
+                val customUrl = intent.getStringExtra(EXTRA_CUSTOM_URL)
+                if (!customUrl.isNullOrBlank()) {
+                    val tempWebApp = WebAppEntity(
+                        id = -1,
+                        title = "自定义网页",
+                        url = customUrl,
+                        iconPath = null,
+                        isPreset = false,
+                        isEnabled = true
+                    )
+                    withContext(Dispatchers.Main) {
+                        attachNativeWebView(root, tempWebApp)
+                    }
+                    return@launch
+                }
                 Log.w("ChildKioskWebView", "Native WebView abort: web app not found, id=$webAppId")
                 Toast.makeText(this@WebViewActivity, "网页应用不存在", Toast.LENGTH_SHORT).show()
                 finish()
@@ -1501,6 +1516,7 @@ class WebViewActivity : ComponentActivity() {
     companion object {
         const val EXTRA_WEB_APP_ID = "WEB_APP_ID"
         const val EXTRA_ORIENTATION_MODE = "ORIENTATION_MODE"
+        const val EXTRA_CUSTOM_URL = "CUSTOM_URL"
     }
 }
 
