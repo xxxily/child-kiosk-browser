@@ -312,7 +312,7 @@ object KioskPrefs {
             .putBoolean(KEY_VERIFY_ON_WEB_EXIT, false)
             .putBoolean(KEY_HIDE_ADMIN_ICON, false)
             .putBoolean(KEY_ADMIN_QUICK_OPEN, true)
-            .putBoolean(KEY_FLOATING_BROWSER_CONTROLS_ENABLED, false)
+            .putBoolean(KEY_FLOATING_BROWSER_CONTROLS_ENABLED, true)
             .putBoolean("verify_admin_actions", false)
             .putBoolean("limit_adb", false)
             .putBoolean("limit_safe_boot", false)

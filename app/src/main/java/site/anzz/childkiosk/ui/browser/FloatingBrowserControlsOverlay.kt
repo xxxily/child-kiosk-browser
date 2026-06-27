@@ -611,9 +611,25 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             minimumHeight = dp(56)
             setPadding(dp(4), dp(4), dp(4), dp(4))
             contentDescription = action.title
-            setOnClickListener {
-                if (action.enabled) {
-                    handleAction(action.id)
+            if (action.id == ACTION_BROWSER_FORCE_REFRESH) {
+                setOnClickListener {
+                    if (action.enabled) {
+                        android.widget.Toast.makeText(context, "长按“强刷”以执行强制刷新", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+                setOnLongClickListener {
+                    if (action.enabled) {
+                        handleAction(action.id)
+                        true
+                    } else {
+                        false
+                    }
+                }
+            } else {
+                setOnClickListener {
+                    if (action.enabled) {
+                        handleAction(action.id)
+                    }
                 }
             }
             addView(

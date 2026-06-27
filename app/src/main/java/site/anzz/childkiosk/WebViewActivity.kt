@@ -384,7 +384,7 @@ class WebViewActivity : ComponentActivity() {
     }
 
     private fun shouldShowNormalStatusBar(): Boolean {
-        return resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE
+        return false
     }
 
     private fun hasLocationPermission(): Boolean {
