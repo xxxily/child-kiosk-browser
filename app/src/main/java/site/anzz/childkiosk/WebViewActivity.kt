@@ -147,6 +147,11 @@ class WebViewActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         runtimeConfig = KioskPrefs.getWebViewRuntimeConfig(intent, this)
 
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            window.attributes.layoutInDisplayCutoutMode =
+                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+
         // 0. 早期屏幕方向设置，避免启动闪烁
         val orientationMode = intent.getStringExtra(EXTRA_ORIENTATION_MODE)
             ?: KioskPrefs.getOrientationMode(this)
