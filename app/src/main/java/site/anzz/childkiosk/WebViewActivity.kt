@@ -358,7 +358,8 @@ class WebViewActivity : ComponentActivity() {
         if (url.isNullOrBlank()) return
         val uri = runCatching { Uri.parse(url) }.getOrNull()
         val scheme = uri?.scheme?.lowercase()
-        if (scheme != "http" && scheme != "https") {
+        val isNormalMode = KioskPrefs.getProtectionMode(this) == KioskPrefs.MODE_NONE
+        if (!isNormalMode && scheme != "http" && scheme != "https") {
             Toast.makeText(this, "暂不支持此下载链接", Toast.LENGTH_SHORT).show()
             return
         }
@@ -1088,7 +1089,8 @@ class WebViewActivity : ComponentActivity() {
     }
 
     private fun requestCloseWithVerification() {
-        if (!runtimeConfig.verifyOnWebExit || !runtimeConfig.verifyAdminActions) {
+        val isNormalMode = KioskPrefs.getProtectionMode(this) == KioskPrefs.MODE_NONE
+        if (isNormalMode || !runtimeConfig.verifyOnWebExit || !runtimeConfig.verifyAdminActions) {
             finish()
             return
         }
@@ -1652,6 +1654,17 @@ private fun createSecureWebView(
                 }
 
                 if (!WebViewRuntime.isWebUrl(urlStr)) {
+                    val isNormalMode = KioskPrefs.getProtectionMode(ctx) == KioskPrefs.MODE_NONE
+                    if (isNormalMode) {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(urlStr))
+                            ctx.startActivity(intent)
+                            return true
+                        } catch (e: Exception) {
+                            Log.w("ChildKioskWebView", "Normal mode: failed to launch external app for $urlStr", e)
+                            return false
+                        }
+                    }
                     onBlocked(urlStr)
                     return true
                 }
@@ -1847,6 +1860,37 @@ private fun enqueueDownload(
     mimeType: String?
 ) {
     if (url.isNullOrBlank()) return
+    if (url.startsWith("data:", ignoreCase = true)) {
+        runCatching {
+            val base64Index = url.indexOf("base64,")
+            if (base64Index != -1) {
+                val base64Data = url.substring(base64Index + 7)
+                val bytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
+                
+                val mimeTypeClean = url.substring(5, base64Index - 1).split(";")[0]
+                val extension = android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeTypeClean) ?: "bin"
+                val fileName = "download_" + System.currentTimeMillis() + "." + extension
+                
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                if (!downloadsDir.exists()) {
+                    downloadsDir.mkdirs()
+                }
+                val file = java.io.File(downloadsDir, fileName)
+                java.io.FileOutputStream(file).use { fos ->
+                    fos.write(bytes)
+                }
+                
+                android.media.MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), null, null)
+                Toast.makeText(context, "文件已保存至下载目录: $fileName", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(context, "暂不支持此数据格式的下载", Toast.LENGTH_SHORT).show()
+            }
+        }.onFailure { e ->
+            Log.e("ChildKioskWebView", "Data URL save failed", e)
+            Toast.makeText(context, "保存失败: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+        }
+        return
+    }
     runCatching {
         val uri = Uri.parse(url)
         val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
