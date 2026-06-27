@@ -419,7 +419,7 @@ object KioskPrefs {
     }
 
     fun getAdminIconAlpha(context: Context): Float {
-        return prefs(context).getFloat(KEY_ADMIN_ICON_ALPHA, 0.2f)
+        return prefs(context).getFloat(KEY_ADMIN_ICON_ALPHA, 0.1f)
     }
 
     fun setAdminIconAlpha(context: Context, alpha: Float) {
