@@ -824,7 +824,7 @@ class WebViewActivity : ComponentActivity() {
             if (nextTab != null) {
                 switchToTab(nextTab.id)
             } else {
-                finish()
+                requestCloseWithVerification()
             }
         } else {
             updateFloatingControlsState()
@@ -977,6 +977,11 @@ class WebViewActivity : ComponentActivity() {
             rootWebView = webViewStack.lastOrNull()
             rootWebView?.visibility = View.VISIBLE
             updateFloatingControlsState()
+            return
+        }
+
+        activeTabId?.let { tabId ->
+            closeTab(tabId)
             return
         }
 

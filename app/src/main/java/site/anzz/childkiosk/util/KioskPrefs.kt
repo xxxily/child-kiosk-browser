@@ -479,11 +479,16 @@ object KioskPrefs {
             }
             array.put(obj)
         }
-        prefs(context).edit().putString(KEY_TABS_SNAPSHOT, array.toString()).apply()
+        runCatching {
+            val file = java.io.File(context.cacheDir, "tabs_snapshot.json")
+            file.writeText(array.toString())
+        }
     }
 
     fun getTabsSnapshot(context: Context): List<TabStateInfo> {
-        val raw = prefs(context).getString(KEY_TABS_SNAPSHOT, null) ?: return emptyList()
+        val file = java.io.File(context.cacheDir, "tabs_snapshot.json")
+        if (!file.exists()) return emptyList()
+        val raw = runCatching { file.readText() }.getOrNull() ?: return emptyList()
         return runCatching {
             val array = org.json.JSONArray(raw)
             val list = mutableListOf<TabStateInfo>()

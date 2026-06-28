@@ -1058,7 +1058,10 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
 
     private fun handleAction(actionId: String) {
         when (actionId) {
-            ACTION_BROWSER_HOME -> callbacks.onHome()
+            ACTION_BROWSER_HOME -> {
+                setPanelExpanded(expanded = false, animated = false)
+                callbacks.onHome()
+            }
             ACTION_BROWSER_BACK -> callbacks.onBack()
             ACTION_BROWSER_FORWARD -> callbacks.onForward()
             ACTION_BROWSER_REFRESH -> callbacks.onRefresh()
