@@ -8,6 +8,8 @@ import site.anzz.childkiosk.util.filter.FilterPreset
 import site.anzz.childkiosk.util.filter.FilterRepository
 import site.anzz.childkiosk.util.filter.FilterRuntimeSnapshot
 import org.json.JSONObject
+import site.anzz.childkiosk.ui.browser.BrowserTab
+import site.anzz.childkiosk.ui.browser.TabStateInfo
 
 data class WebViewRuntimeConfig(
     val verifyOnWebExit: Boolean,
@@ -462,6 +464,42 @@ object KioskPrefs {
 
     fun isNormalSystemBarsEnabled(context: Context): Boolean {
         return getProtectionMode(context) == MODE_NONE && !isLimitStatusBarEnabled(context)
+    }
+
+    private const val KEY_TABS_SNAPSHOT = "tabs_snapshot"
+
+    fun saveTabsSnapshot(context: Context, tabs: List<BrowserTab>, activeTabId: String?) {
+        val array = org.json.JSONArray()
+        tabs.forEach { tab ->
+            val obj = org.json.JSONObject().apply {
+                put("id", tab.id)
+                put("title", tab.title)
+                put("url", tab.url)
+                put("isActive", tab.id == activeTabId)
+            }
+            array.put(obj)
+        }
+        prefs(context).edit().putString(KEY_TABS_SNAPSHOT, array.toString()).apply()
+    }
+
+    fun getTabsSnapshot(context: Context): List<TabStateInfo> {
+        val raw = prefs(context).getString(KEY_TABS_SNAPSHOT, null) ?: return emptyList()
+        return runCatching {
+            val array = org.json.JSONArray(raw)
+            val list = mutableListOf<TabStateInfo>()
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                list.add(
+                    TabStateInfo(
+                        id = obj.getString("id"),
+                        title = obj.optString("title", "新标签页"),
+                        url = obj.optString("url", "about:blank"),
+                        isActive = obj.optBoolean("isActive", false)
+                    )
+                )
+            }
+            list
+        }.getOrDefault(emptyList())
     }
 
     fun getWebViewRuntimeConfig(context: Context): WebViewRuntimeConfig {

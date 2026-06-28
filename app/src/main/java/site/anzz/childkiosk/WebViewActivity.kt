@@ -250,6 +250,7 @@ class WebViewActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        KioskPrefs.saveTabsSnapshot(this, emptyList(), null)
         timeLimitJob?.cancel()
         timeLimitJob = null
         exitVerificationDialog?.dismiss()
@@ -518,6 +519,49 @@ class WebViewActivity : ComponentActivity() {
         applySystemUiMode()
     }
 
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        if (intent == null) return
+        val webAppId = intent.getIntExtra(EXTRA_WEB_APP_ID, -1)
+        val customUrl = intent.getStringExtra(EXTRA_CUSTOM_URL)
+        val switchTabId = intent.getStringExtra(EXTRA_SWITCH_TAB_ID)
+        val closeTabId = intent.getStringExtra(EXTRA_CLOSE_TAB_ID)
+
+        if (!switchTabId.isNullOrBlank()) {
+            switchToTab(switchTabId)
+            return
+        }
+
+        if (!closeTabId.isNullOrBlank()) {
+            closeTab(closeTabId)
+            return
+        }
+
+        lifecycleScope.launch {
+            val db = AppDatabase.getInstance(this@WebViewActivity)
+            val webApp = if (webAppId != -1) {
+                withContext(Dispatchers.IO) {
+                    db.webAppDao().getWebAppById(webAppId)
+                }
+            } else null
+
+            withContext(Dispatchers.Main) {
+                if (webApp != null) {
+                    createNewTab(webApp.url, focus = true)
+                } else if (!customUrl.isNullOrBlank()) {
+                    createNewTab(customUrl, focus = true)
+                } else if (tabList.isEmpty()) {
+                    createNewTab("about:blank", focus = true)
+                }
+            }
+        }
+    }
+
     private fun startNativeWebView(webAppId: Int) {
         sessionStartTimeMs = System.currentTimeMillis()
         val root = FrameLayout(this).apply {
@@ -564,23 +608,6 @@ class WebViewActivity : ComponentActivity() {
         )
 
         lifecycleScope.launch {
-            val db = AppDatabase.getInstance(this@WebViewActivity)
-            val webApp = withContext(Dispatchers.IO) {
-                db.webAppDao().getWebAppById(webAppId)
-            }
-            if (webApp == null) {
-                val customUrl = intent.getStringExtra(EXTRA_CUSTOM_URL)
-                if (!customUrl.isNullOrBlank()) {
-                    withContext(Dispatchers.Main) {
-                        createNewTab(customUrl, focus = true)
-                    }
-                    return@launch
-                }
-                Log.w("ChildKioskWebView", "Native WebView abort: web app not found, id=$webAppId")
-                Toast.makeText(this@WebViewActivity, "网页应用不存在", Toast.LENGTH_SHORT).show()
-                finish()
-                return@launch
-            }
             withContext(Dispatchers.IO) {
                 if (runtimeConfig.limitAdBlock && runtimeConfig.filterSnapshot.enabled) {
                     runCatching {
@@ -594,7 +621,7 @@ class WebViewActivity : ComponentActivity() {
                 }
             }
             withContext(Dispatchers.Main) {
-                createNewTab(webApp.url, focus = true)
+                handleIntent(intent)
             }
         }
     }
@@ -984,7 +1011,16 @@ class WebViewActivity : ComponentActivity() {
                 },
                 onNewTab = { createNewTab("about:blank", focus = true) },
                 onCloseTab = { id -> closeTab(id) },
-                onSwitchTab = { id -> switchToTab(id) }
+                onSwitchTab = { id -> switchToTab(id) },
+                onHome = {
+                    val intent = Intent(this@WebViewActivity, MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                    }
+                    startActivity(intent)
+                },
+                onOpenWebApp = { webApp ->
+                    createNewTab(webApp.url, focus = true)
+                }
             )
         )
     }
@@ -1190,6 +1226,9 @@ class WebViewActivity : ComponentActivity() {
     ) {
         loading?.let { currentPageLoading = it }
         progress?.let { currentPageProgress = it.coerceIn(0, 100) }
+        
+        KioskPrefs.saveTabsSnapshot(this, tabList, activeTabId)
+        
         floatingControlsOverlay?.updateState(currentFloatingControlsState())
     }
 
@@ -1743,6 +1782,8 @@ class WebViewActivity : ComponentActivity() {
         const val EXTRA_WEB_APP_ID = "WEB_APP_ID"
         const val EXTRA_ORIENTATION_MODE = "ORIENTATION_MODE"
         const val EXTRA_CUSTOM_URL = "CUSTOM_URL"
+        const val EXTRA_SWITCH_TAB_ID = "SWITCH_TAB_ID"
+        const val EXTRA_CLOSE_TAB_ID = "CLOSE_TAB_ID"
     }
 }
 

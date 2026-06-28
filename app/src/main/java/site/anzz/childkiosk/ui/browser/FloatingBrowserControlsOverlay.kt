@@ -30,6 +30,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.doOnLayout
 import androidx.core.view.isVisible
 import site.anzz.childkiosk.R
+import kotlinx.coroutines.*
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -48,7 +49,8 @@ data class FloatingBrowserControlsState(
     val canGoForward: Boolean = false,
     val isLoading: Boolean = false,
     val progress: Int = 0,
-    val tabs: List<TabStateInfo> = emptyList()
+    val tabs: List<TabStateInfo> = emptyList(),
+    val isHomeScreen: Boolean = false
 )
 
 data class FloatingBrowserControlsCallbacks(
@@ -62,7 +64,9 @@ data class FloatingBrowserControlsCallbacks(
     val onActionSelected: (String) -> Unit = {},
     val onNewTab: () -> Unit = {},
     val onCloseTab: (String) -> Unit = {},
-    val onSwitchTab: (String) -> Unit = {}
+    val onSwitchTab: (String) -> Unit = {},
+    val onHome: () -> Unit = {},
+    val onOpenWebApp: (site.anzz.childkiosk.data.WebAppEntity) -> Unit = {}
 )
 
 enum class FloatingControlActionStyle {
@@ -99,7 +103,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     private val panelMaxWidth = dp(380)
     private val panelMinWidth = dp(288)
     private val panelMargin = dp(16)
-    private val idleHideDelayMs = 2800L
+    private val idleHideDelayMs = 2000L
     private val animationDurationMs = 180L
 
     private var callbacks = FloatingBrowserControlsCallbacks()
@@ -385,6 +389,8 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         removeCallbacks(hideRunnable)
 
         if (expanded) {
+            val snapTabs = site.anzz.childkiosk.util.KioskPrefs.getTabsSnapshot(context)
+            updateState(state.copy(tabs = snapTabs))
             revealBubble(animated = animated)
             syncInputFromStateIfNeeded()
             panelView.isVisible = true
@@ -520,33 +526,42 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         } else {
             R.drawable.ic_browser_refresh_24
         }
+        val isHomeScreen = state.isHomeScreen
         return FloatingControlSection(
             id = SECTION_BROWSER,
             title = "浏览",
             actions = listOf(
                 FloatingControlAction(
+                    id = ACTION_BROWSER_HOME,
+                    title = "主页",
+                    iconRes = R.drawable.ic_browser_home_24,
+                    enabled = !isHomeScreen
+                ),
+                FloatingControlAction(
                     id = ACTION_BROWSER_BACK,
                     title = "后退",
                     iconRes = R.drawable.ic_browser_back_24,
-                    enabled = state.canGoBack
+                    enabled = if (isHomeScreen) false else state.canGoBack
                 ),
                 FloatingControlAction(
                     id = ACTION_BROWSER_FORWARD,
                     title = "前进",
                     iconRes = R.drawable.ic_browser_forward_24,
-                    enabled = state.canGoForward
+                    enabled = if (isHomeScreen) false else state.canGoForward
                 ),
                 FloatingControlAction(
                     id = if (state.isLoading) ACTION_BROWSER_STOP else ACTION_BROWSER_REFRESH,
                     title = refreshTitle,
                     iconRes = refreshIcon,
-                    highlighted = state.isLoading
+                    highlighted = if (isHomeScreen) false else state.isLoading,
+                    enabled = !isHomeScreen
                 ),
                 FloatingControlAction(
                     id = ACTION_BROWSER_FORCE_REFRESH,
                     title = "强刷",
                     iconRes = R.drawable.ic_browser_refresh_24,
-                    style = FloatingControlActionStyle.PRIMARY
+                    style = FloatingControlActionStyle.NORMAL,
+                    enabled = !isHomeScreen
                 )
             )
         )
@@ -618,12 +633,12 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                         ImageButton(context).apply {
                             setImageResource(R.drawable.ic_browser_add_24)
                             imageTintList = ColorStateList.valueOf(AccentColor)
-                            contentDescription = "新建标签"
+                            contentDescription = "添加标签或应用"
                             scaleType = ImageView.ScaleType.CENTER_INSIDE
                             setPadding(dp(4), dp(4), dp(4), dp(4))
                             background = roundedBackground(AccentSoftColor, dp(8))
                             setOnClickListener {
-                                callbacks.onNewTab()
+                                showAddTabDialog()
                             }
                         },
                         LinearLayout.LayoutParams(dp(28), dp(28))
@@ -637,76 +652,329 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                 }
             )
             
-            addView(
-                HorizontalScrollView(context).apply {
-                    isHorizontalScrollBarEnabled = false
-                    overScrollMode = OVER_SCROLL_IF_CONTENT_SCROLLS
-                    addView(
-                        LinearLayout(context).apply {
-                            orientation = LinearLayout.HORIZONTAL
-                            gravity = Gravity.CENTER_VERTICAL
-                            state.tabs.forEach { tab ->
-                                val isActive = tab.isActive
-                                val cardBgColor = if (isActive) AccentSoftColor else ActionBackgroundColor
-                                val textColor = if (isActive) AccentColor else PanelTextColor
-                                
-                                val cardView = LinearLayout(context).apply {
-                                    orientation = LinearLayout.HORIZONTAL
-                                    gravity = Gravity.CENTER_VERTICAL
-                                    background = roundedBackground(cardBgColor, dp(10), if (isActive) AccentColor else null, if (isActive) dp(1) else 0)
-                                    setPadding(dp(8), dp(4), dp(4), dp(4))
-                                    setOnClickListener {
-                                        callbacks.onSwitchTab(tab.id)
-                                    }
-                                    
-                                    addView(
-                                        TextView(context).apply {
-                                            text = tab.title.takeIf { it.isNotBlank() } ?: tab.url.takeIf { it.isNotBlank() } ?: "新标签页"
-                                            textSize = 11f
-                                            setTextColor(textColor)
-                                            maxLines = 1
-                                            ellipsize = TextUtils.TruncateAt.END
-                                        },
-                                        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                                            rightMargin = dp(4)
-                                        }
-                                    )
-                                    
-                                    addView(
-                                        ImageButton(context).apply {
-                                            setImageResource(R.drawable.ic_browser_close_24)
-                                            imageTintList = ColorStateList.valueOf(textColor)
-                                            scaleType = ImageView.ScaleType.CENTER_INSIDE
-                                            setPadding(dp(2), dp(2), dp(2), dp(2))
-                                            background = null
-                                            setOnClickListener {
-                                                callbacks.onCloseTab(tab.id)
-                                            }
-                                        },
-                                        LinearLayout.LayoutParams(dp(18), dp(18))
-                                    )
+            val tabsCount = state.tabs.size
+            val tabRowHeight = dp(38)
+            val maxVisibleCount = 4
+            
+            val scrollView = ScrollView(context).apply {
+                isVerticalScrollBarEnabled = true
+                overScrollMode = OVER_SCROLL_IF_CONTENT_SCROLLS
+                
+                addView(
+                    LinearLayout(context).apply {
+                        orientation = LinearLayout.VERTICAL
+                        state.tabs.forEach { tab ->
+                            val isActive = tab.isActive
+                            val cardBgColor = if (isActive) AccentSoftColor else ActionBackgroundColor
+                            val textColor = if (isActive) AccentColor else PanelTextColor
+                            
+                            val cardView = LinearLayout(context).apply {
+                                orientation = LinearLayout.HORIZONTAL
+                                gravity = Gravity.CENTER_VERTICAL
+                                background = roundedBackground(cardBgColor, dp(10), if (isActive) AccentColor else null, if (isActive) dp(1) else 0)
+                                setPadding(dp(10), dp(4), dp(8), dp(4))
+                                setOnClickListener {
+                                    callbacks.onSwitchTab(tab.id)
+                                    setPanelExpanded(expanded = false, animated = true)
                                 }
                                 
                                 addView(
-                                    cardView,
-                                    LinearLayout.LayoutParams(dp(110), dp(36)).apply {
-                                        rightMargin = dp(6)
+                                    TextView(context).apply {
+                                        text = tab.title.takeIf { it.isNotBlank() } ?: tab.url.takeIf { it.isNotBlank() } ?: "新标签页"
+                                        textSize = 11f
+                                        setTextColor(textColor)
+                                        maxLines = 1
+                                        ellipsize = TextUtils.TruncateAt.END
+                                    },
+                                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                                        rightMargin = dp(8)
                                     }
                                 )
+                                
+                                addView(
+                                    ImageButton(context).apply {
+                                        setImageResource(R.drawable.ic_browser_close_24)
+                                        imageTintList = ColorStateList.valueOf(textColor)
+                                        scaleType = ImageView.ScaleType.CENTER_INSIDE
+                                        setPadding(dp(4), dp(4), dp(4), dp(4))
+                                        background = null
+                                        setOnClickListener {
+                                            callbacks.onCloseTab(tab.id)
+                                        }
+                                    },
+                                    LinearLayout.LayoutParams(dp(22), dp(22))
+                                )
                             }
-                        },
-                        ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT
-                        )
+                            
+                            addView(
+                                cardView,
+                                LinearLayout.LayoutParams(
+                                    LinearLayout.LayoutParams.MATCH_PARENT,
+                                    dp(34)
+                                ).apply {
+                                    bottomMargin = dp(4)
+                                }
+                            )
+                        }
+                    },
+                    ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
                     )
-                },
+                )
+            }
+            
+            val containerHeight = if (tabsCount > maxVisibleCount) {
+                (tabRowHeight * 4.5).toInt()
+            } else {
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            }
+            
+            addView(
+                scrollView,
                 LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
+                    containerHeight
                 )
             )
         }
+    }
+
+    private fun createAppIconView(context: Context, app: site.anzz.childkiosk.data.WebAppEntity): View {
+        return FrameLayout(context).apply {
+            val size = dp(24)
+            layoutParams = FrameLayout.LayoutParams(size, size).apply {
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            
+            var loadedBitmap: android.graphics.Bitmap? = null
+            if (!app.iconPath.isNullOrBlank()) {
+                val file = java.io.File(app.iconPath)
+                if (file.exists() && file.isFile) {
+                    loadedBitmap = runCatching {
+                        android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+                    }.getOrNull()
+                }
+            }
+            
+            if (loadedBitmap != null) {
+                addView(
+                    android.widget.ImageView(context).apply {
+                        setImageBitmap(loadedBitmap)
+                        scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                        background = roundedBackground(Color.TRANSPARENT, dp(6))
+                        clipToOutline = true
+                    },
+                    FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+                )
+            } else {
+                val char = app.title.trim().take(1).uppercase()
+                val colors = listOf(
+                    Color.rgb(244, 67, 54),   // 红色
+                    Color.rgb(233, 30, 99),   // 粉红
+                    Color.rgb(156, 39, 176),  // 紫色
+                    Color.rgb(103, 58, 183),  // 深紫
+                    Color.rgb(63, 81, 181),   // 蓝色
+                    Color.rgb(33, 150, 243),  // 浅蓝
+                    Color.rgb(0, 150, 136),   // 蓝绿
+                    Color.rgb(76, 175, 80),   // 绿色
+                    Color.rgb(255, 152, 0),   // 橙色
+                    Color.rgb(121, 85, 72)    // 褐色
+                )
+                val colorIndex = Math.abs(app.title.hashCode()) % colors.size
+                val avatarColor = colors[colorIndex]
+                
+                addView(
+                    TextView(context).apply {
+                        text = char
+                        textSize = 10f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(Color.WHITE)
+                        gravity = Gravity.CENTER
+                        background = roundedBackground(avatarColor, dp(12))
+                    },
+                    FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+                )
+            }
+        }
+    }
+
+    private fun showAddTabDialog() {
+        val ctx = context
+        setPanelExpanded(expanded = false, animated = true)
+        
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val webApps = withContext(Dispatchers.IO) {
+                    val db = site.anzz.childkiosk.data.AppDatabase.getInstance(ctx)
+                    db.webAppDao().getAllWebApps().filter { it.isEnabled }
+                }
+                renderAddTabDialog(ctx, webApps)
+            } catch (e: Exception) {
+                android.util.Log.e("FloatingBrowser", "Failed to load apps for add dialog", e)
+            }
+        }
+    }
+
+    private fun renderAddTabDialog(ctx: Context, webApps: List<site.anzz.childkiosk.data.WebAppEntity>) {
+        var dialogRef: android.app.AlertDialog? = null
+        val builder = android.app.AlertDialog.Builder(ctx)
+        
+        val rootLayout = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            background = roundedBackground(PanelBackgroundColor, dp(16))
+        }
+        
+        val newTabBtn = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            background = roundedBackground(AccentColor, dp(12))
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            
+            addView(
+                android.widget.ImageView(ctx).apply {
+                    setImageResource(R.drawable.ic_browser_add_24)
+                    imageTintList = ColorStateList.valueOf(Color.WHITE)
+                    scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+                },
+                LinearLayout.LayoutParams(dp(22), dp(22)).apply {
+                    rightMargin = dp(8)
+                }
+            )
+            
+            addView(
+                TextView(ctx).apply {
+                    text = "新建空白标签页"
+                    textSize = 14f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.WHITE)
+                }
+            )
+        }
+        
+        rootLayout.addView(newTabBtn, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            bottomMargin = dp(16)
+        })
+        
+        val categories = listOf(
+            site.anzz.childkiosk.data.WebAppEntity.CATEGORY_STUDY,
+            site.anzz.childkiosk.data.WebAppEntity.CATEGORY_BOOK,
+            site.anzz.childkiosk.data.WebAppEntity.CATEGORY_GAME,
+            site.anzz.childkiosk.data.WebAppEntity.CATEGORY_VIDEO,
+            site.anzz.childkiosk.data.WebAppEntity.CATEGORY_TOOL,
+            site.anzz.childkiosk.data.WebAppEntity.CATEGORY_OTHER
+        )
+        
+        val appsByCategory = webApps.groupBy { it.category }
+        
+        val scrollView = ScrollView(ctx).apply {
+            overScrollMode = OVER_SCROLL_IF_CONTENT_SCROLLS
+            isVerticalScrollBarEnabled = false
+            
+            addView(
+                LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                    
+                    categories.forEach { cat ->
+                        val apps = appsByCategory[cat] ?: emptyList()
+                        if (apps.isNotEmpty()) {
+                            addView(
+                                TextView(ctx).apply {
+                                    val emoji = site.anzz.childkiosk.data.WebAppEntity.getCategoryEmoji(cat)
+                                    val name = site.anzz.childkiosk.data.WebAppEntity.getCategoryDisplayName(cat)
+                                    text = "$emoji $name"
+                                    textSize = 13f
+                                    typeface = Typeface.DEFAULT_BOLD
+                                    setTextColor(PanelMutedTextColor)
+                                    setPadding(0, dp(12), 0, dp(6))
+                                },
+                                LinearLayout.LayoutParams(
+                                    LinearLayout.LayoutParams.MATCH_PARENT,
+                                    LinearLayout.LayoutParams.WRAP_CONTENT
+                                )
+                            )
+                            
+                            val chunked = apps.chunked(2)
+                            chunked.forEach { rowApps ->
+                                val rowLayout = LinearLayout(ctx).apply {
+                                    orientation = LinearLayout.HORIZONTAL
+                                    weightSum = 2f
+                                }
+                                
+                                rowApps.forEach { app ->
+                                    val appCard = LinearLayout(ctx).apply {
+                                        orientation = LinearLayout.HORIZONTAL
+                                        gravity = Gravity.CENTER_VERTICAL
+                                        background = roundedBackground(ActionBackgroundColor, dp(10))
+                                        setPadding(dp(8), dp(8), dp(8), dp(8))
+                                        setOnClickListener {
+                                            callbacks.onOpenWebApp(app)
+                                            dialogRef?.dismiss()
+                                        }
+                                        
+                                        addView(createAppIconView(ctx, app))
+                                        
+                                        addView(
+                                            TextView(ctx).apply {
+                                                text = app.title
+                                                textSize = 12f
+                                                setTextColor(PanelTextColor)
+                                                maxLines = 1
+                                                ellipsize = TextUtils.TruncateAt.END
+                                                setPadding(dp(8), 0, 0, 0)
+                                            },
+                                            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                                        )
+                                    }
+                                    
+                                    rowLayout.addView(
+                                        appCard,
+                                        LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                                            rightMargin = dp(4)
+                                        }
+                                    )
+                                }
+                                
+                                repeat(2 - rowApps.size) {
+                                    rowLayout.addView(
+                                        View(ctx),
+                                        LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                                            rightMargin = dp(4)
+                                        }
+                                    )
+                                }
+                                
+                                addView(rowLayout, LinearLayout.LayoutParams(
+                                    LinearLayout.LayoutParams.MATCH_PARENT,
+                                    LinearLayout.LayoutParams.WRAP_CONTENT
+                                ).apply {
+                                    bottomMargin = dp(6)
+                                })
+                            }
+                        }
+                    }
+                }
+            )
+        }
+        
+        rootLayout.addView(scrollView, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            dp(300)
+        ))
+        
+        val dialog = builder.setView(rootLayout).create()
+        dialogRef = dialog
+        
+        newTabBtn.setOnClickListener {
+            callbacks.onNewTab()
+            dialog.dismiss()
+        }
+        
+        dialog.show()
     }
 
     private fun actionStripView(section: FloatingControlSection): HorizontalScrollView {
@@ -790,6 +1058,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
 
     private fun handleAction(actionId: String) {
         when (actionId) {
+            ACTION_BROWSER_HOME -> callbacks.onHome()
             ACTION_BROWSER_BACK -> callbacks.onBack()
             ACTION_BROWSER_FORWARD -> callbacks.onForward()
             ACTION_BROWSER_REFRESH -> callbacks.onRefresh()
@@ -1086,6 +1355,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         const val ACTION_BROWSER_FORCE_REFRESH = "browser.force_refresh"
         const val ACTION_BROWSER_STOP = "browser.stop"
         const val ACTION_PANEL_CLOSE = "panel.close"
+        const val ACTION_BROWSER_HOME = "browser.home"
 
         fun attachTo(
             root: FrameLayout,

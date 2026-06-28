@@ -58,6 +58,7 @@
         <activity
             android:name=".WebViewActivity"
             android:process=":webview"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.ChildKiosk.WebView"
             android:hardwareAccelerated="true"
             android:screenOrientation="unspecified"
