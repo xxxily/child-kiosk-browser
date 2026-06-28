@@ -37,6 +37,8 @@ import androidx.lifecycle.lifecycleScope
 import site.anzz.childkiosk.data.AppDatabase
 import site.anzz.childkiosk.data.SystemConfigEntity
 import site.anzz.childkiosk.data.WebAppEntity
+import site.anzz.childkiosk.ui.browser.BrowserTab
+import site.anzz.childkiosk.ui.browser.TabStateInfo
 import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsCallbacks
 import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsOverlay
 import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsState
@@ -65,6 +67,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class WebViewActivity : ComponentActivity() {
 
+    private val tabList = mutableListOf<BrowserTab>()
+    private var activeTabId: String? = null
+    private val MAX_ACTIVE_WEBVIEWS = 2
     private var rootWebView: WebView? = null
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var fullscreenView: View? = null
@@ -262,14 +267,11 @@ class WebViewActivity : ComponentActivity() {
         exitFullscreenView()
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
-        if (webViewStack.isNotEmpty()) {
-            webViewStack.toList().forEach { destroyWebViewSafely(it) }
-            webViewStack.clear()
-        } else {
-            rootWebView?.let { webView ->
-                destroyWebViewSafely(webView)
-            }
+        tabList.forEach { tab ->
+            tab.webView?.let { destroyWebViewSafely(it) }
         }
+        tabList.clear()
+        webViewStack.clear()
         floatingControlsOverlay = null
         topProgress = null
         webViewRoot = null
@@ -569,16 +571,8 @@ class WebViewActivity : ComponentActivity() {
             if (webApp == null) {
                 val customUrl = intent.getStringExtra(EXTRA_CUSTOM_URL)
                 if (!customUrl.isNullOrBlank()) {
-                    val tempWebApp = WebAppEntity(
-                        id = -1,
-                        title = "自定义网页",
-                        url = customUrl,
-                        iconPath = null,
-                        isPreset = false,
-                        isEnabled = true
-                    )
                     withContext(Dispatchers.Main) {
-                        attachNativeWebView(root, tempWebApp)
+                        createNewTab(customUrl, focus = true)
                     }
                     return@launch
                 }
@@ -599,7 +593,9 @@ class WebViewActivity : ComponentActivity() {
                     }
                 }
             }
-            attachNativeWebView(root, webApp)
+            withContext(Dispatchers.Main) {
+                createNewTab(webApp.url, focus = true)
+            }
         }
     }
 
@@ -622,96 +618,104 @@ class WebViewActivity : ComponentActivity() {
         ViewCompat.requestApplyInsets(root)
     }
 
-    private fun attachNativeWebView(root: FrameLayout, webApp: WebAppEntity) {
-        val targetUrl = webApp.url
-        val originalHost = WebViewRuntime.hostOf(targetUrl)
-        navigationRootHost = originalHost
-        val preloadEntry = if (targetUrl != "about:blank") {
-            WebViewPool.acquire(
-                url = targetUrl,
-                allowUrlPreload = runtimeConfig.webPreloadEnabled,
-                allowWarmPool = runtimeConfig.webViewWarmPoolEnabled,
-                runtimeConfig = runtimeConfig
-            )
-        } else {
-            null
-        }
-        val shouldClearPreloadedHistoryNow = preloadEntry?.let {
-            it.isUrlPreload && (it.isLoaded || it.progress >= 100)
-        } == true
-        val shouldClearHistoryOnFirstFinish = preloadEntry?.webView != null && !shouldClearPreloadedHistoryNow
+    private fun createNewTab(
+        url: String,
+        focus: Boolean = true,
+        existingWebView: WebView? = null
+    ): BrowserTab {
+        val cleanUrl = url.trim()
+        val originalHost = WebViewRuntime.hostOf(cleanUrl)
+        val shouldClearHistoryOnFirstFinish = false
+        
+        var webViewRef: WebView? = null
         val webView = createSecureWebView(
             ctx = this,
-            targetUrl = targetUrl,
+            targetUrl = cleanUrl,
             originalHost = originalHost,
-            onSslError = { url ->
-                Log.w("ChildKioskWebView", "Native WebView SSL error: $url")
-                Toast.makeText(this, "SSL 证书异常：$url", Toast.LENGTH_LONG).show()
-                hideTopProgress()
+            onSslError = { sslUrl ->
+                Log.w("ChildKioskWebView", "Native WebView SSL error: $sslUrl")
+                Toast.makeText(this, "SSL 证书异常：$sslUrl", Toast.LENGTH_LONG).show()
+                if (rootWebView?.url == sslUrl) hideTopProgress()
             },
-            onBlocked = { url ->
-                Log.w("ChildKioskWebView", "Native WebView blocked navigation: $url")
-                Toast.makeText(this, "已拦截跳转：$url", Toast.LENGTH_LONG).show()
-                hideTopProgress()
+            onBlocked = { blockedUrl ->
+                Log.w("ChildKioskWebView", "Native WebView blocked navigation: $blockedUrl")
+                Toast.makeText(this, "已拦截跳转：$blockedUrl", Toast.LENGTH_LONG).show()
+                if (rootWebView?.url == blockedUrl) hideTopProgress()
             },
             onDownloadBlocked = {
                 Toast.makeText(this, "下载功能已受限制，如需下载应用请联系管理员。", Toast.LENGTH_LONG).show()
             },
             onLoadingStateChanged = { loading ->
-                Log.d(
-                    "ChildKioskWebView",
-                    "Native loading state: loading=$loading, progress=${rootWebView?.progress ?: -1}, url=${rootWebView?.url}"
-                )
-                if (loading) showTopProgress() else hideTopProgress()
-                updateFloatingControlsState(loading = loading)
+                val currentTab = tabList.firstOrNull { it.webView === webViewRef }
+                if (currentTab != null) {
+                    currentTab.isLoading = loading
+                    if (!loading) currentTab.progress = 100
+                }
+                if (rootWebView === webViewRef) {
+                    currentPageLoading = loading
+                    if (loading) showTopProgress() else hideTopProgress()
+                    updateFloatingControlsState(loading = loading)
+                }
             },
             onProgressUpdate = { progress ->
                 val safeProgress = progress.coerceIn(0, 100)
-                topProgress?.progress = safeProgress
-                updateFloatingControlsState(progress = safeProgress)
+                val currentTab = tabList.firstOrNull { it.webView === webViewRef }
+                if (currentTab != null) {
+                    currentTab.progress = safeProgress
+                }
+                if (rootWebView === webViewRef) {
+                    currentPageProgress = safeProgress
+                    topProgress?.progress = safeProgress
+                    updateFloatingControlsState(progress = safeProgress)
+                }
             },
             onNavigationStateChanged = {
-                updateFloatingControlsState()
+                val currentTab = tabList.firstOrNull { it.webView === webViewRef }
+                if (currentTab != null) {
+                    currentTab.url = webViewRef?.url.orEmpty()
+                    currentTab.title = webViewRef?.title ?: "新标签页"
+                }
+                if (rootWebView === webViewRef) {
+                    updateFloatingControlsState()
+                }
             },
             onError = { error ->
                 Log.w("ChildKioskWebView", "Native WebView main frame error: $error")
                 Toast.makeText(this, "网页加载异常：$error", Toast.LENGTH_LONG).show()
-                hideTopProgress()
-                updateFloatingControlsState(loading = false)
+                val currentTab = tabList.firstOrNull { it.webView === webViewRef }
+                if (currentTab != null) {
+                    currentTab.isLoading = false
+                }
+                if (rootWebView === webViewRef) {
+                    hideTopProgress()
+                    currentPageLoading = false
+                    updateFloatingControlsState(loading = false)
+                }
             },
-            existingWebView = preloadEntry?.webView,
+            existingWebView = existingWebView,
             runtimeConfig = runtimeConfig,
             clearHistoryOnFirstRealPageFinish = shouldClearHistoryOnFirstFinish,
             onShowFileChooser = { callback, params -> openFileChooser(callback, params) },
             onCreateWindow = { newWebView ->
-                Log.d("ChildKioskWebView", "Native child window created: parent=${rootWebView?.url}")
-                attachNativeChildWebView(root, newWebView)
+                val newTab = createNewTab(
+                    url = "about:blank",
+                    focus = true,
+                    existingWebView = newWebView
+                )
+                Log.d("ChildKioskWebView", "Native child window created via onCreateWindow, newTabId=${newTab.id}")
             }
         )
-
-        attachNativeChildWebView(root, webView)
-        WebViewRuntime.logWebViewDiagnostics(this, "native_webview_attached", targetUrl, runtimeConfig)
-
-        if (shouldClearPreloadedHistoryNow) {
-            webView.post {
-                clearInitialBlankHistory(webView, webView.url ?: targetUrl)
-            }
-        }
-        if (preloadEntry?.isUrlPreload == true) {
-            if (preloadEntry.isLoaded || preloadEntry.progress >= 100) {
-                topProgress?.progress = 100
-                hideTopProgress()
-            } else {
-                showTopProgress()
-            }
-        } else {
-            loadInitialUrlAfterFirstLayout(webView, targetUrl)
-        }
-    }
-
-    private fun attachNativeChildWebView(root: FrameLayout, webView: WebView) {
-        rootWebView?.visibility = View.GONE
-        root.addView(
+        webViewRef = webView
+        
+        val tab = BrowserTab(
+            id = java.util.UUID.randomUUID().toString(),
+            url = cleanUrl,
+            title = webView.title.takeIf { !it.isNullOrBlank() } ?: "新标签页",
+            webView = webView
+        )
+        tabList.add(tab)
+        
+        webViewRoot?.addView(
             webView,
             0,
             FrameLayout.LayoutParams(
@@ -719,12 +723,215 @@ class WebViewActivity : ComponentActivity() {
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
         )
-        rootWebView = webView
-        webViewStack.add(webView)
-        logWebViewSurfaceState(webView, "native_attached")
-        currentPageProgress = webView.progress.coerceIn(0, 100)
-        currentPageLoading = currentPageProgress in 1..99
+        
+        if (focus) {
+            switchToTab(tab.id)
+        } else {
+            webView.visibility = View.GONE
+        }
+        
+        if (existingWebView == null) {
+            if (cleanUrl != "about:blank" && cleanUrl.isNotBlank()) {
+                loadInitialUrlAfterFirstLayout(webView, cleanUrl)
+            } else {
+                webView.loadUrl("about:blank")
+            }
+        }
+        
+        return tab
+    }
+
+    private fun switchToTab(tabId: String) {
+        val targetTab = tabList.firstOrNull { it.id == tabId } ?: return
+        
+        tabList.forEach { tab ->
+            if (tab.id != tabId) {
+                tab.webView?.visibility = View.GONE
+            }
+        }
+        
+        activeTabId = tabId
+        targetTab.lastActiveTimeMs = System.currentTimeMillis()
+        
+        if (targetTab.webView == null) {
+            restoreTab(targetTab)
+        } else {
+            targetTab.webView?.visibility = View.VISIBLE
+        }
+        
+        rootWebView = targetTab.webView
+        webViewStack.clear()
+        targetTab.webView?.let { webViewStack.add(it) }
+        
+        currentPageProgress = targetTab.progress
+        currentPageLoading = targetTab.isLoading
+        
+        if (currentPageLoading) {
+            showTopProgress()
+        } else {
+            hideTopProgress()
+        }
+        topProgress?.progress = currentPageProgress
+        
+        checkAndFreezeTabsIfNeeded()
         updateFloatingControlsState()
+    }
+
+    private fun closeTab(tabId: String) {
+        val targetTab = tabList.firstOrNull { it.id == tabId } ?: return
+        
+        tabList.remove(targetTab)
+        
+        val webView = targetTab.webView
+        if (webView != null) {
+            webViewRoot?.removeView(webView)
+            runCatching {
+                webView.stopLoading()
+                webView.destroy()
+            }
+            targetTab.webView = null
+        }
+        
+        if (activeTabId == tabId) {
+            val nextTab = tabList.maxByOrNull { it.lastActiveTimeMs }
+            if (nextTab != null) {
+                switchToTab(nextTab.id)
+            } else {
+                finish()
+            }
+        } else {
+            updateFloatingControlsState()
+        }
+    }
+
+    private fun freezeTab(tab: BrowserTab) {
+        val webView = tab.webView ?: return
+        Log.d("ChildKioskWebView", "Freezing tab: id=${tab.id}, url=${tab.url}")
+        
+        val stateBundle = Bundle()
+        webView.saveState(stateBundle)
+        tab.savedState = stateBundle
+        
+        webViewRoot?.removeView(webView)
+        runCatching {
+            webView.stopLoading()
+            webView.destroy()
+        }
+        tab.webView = null
+    }
+
+    private fun restoreTab(tab: BrowserTab) {
+        Log.d("ChildKioskWebView", "Restoring frozen tab: id=${tab.id}, url=${tab.url}")
+        val cleanUrl = tab.url
+        val originalHost = WebViewRuntime.hostOf(cleanUrl)
+        val shouldClearHistoryOnFirstFinish = false
+        
+        var webViewRef: WebView? = null
+        val webView = createSecureWebView(
+            ctx = this,
+            targetUrl = cleanUrl,
+            originalHost = originalHost,
+            onSslError = { sslUrl ->
+                Log.w("ChildKioskWebView", "Native WebView SSL error: $sslUrl")
+                Toast.makeText(this, "SSL 证书异常：$sslUrl", Toast.LENGTH_LONG).show()
+                if (rootWebView?.url == sslUrl) hideTopProgress()
+            },
+            onBlocked = { blockedUrl ->
+                Log.w("ChildKioskWebView", "Native WebView blocked navigation: $blockedUrl")
+                Toast.makeText(this, "已拦截跳转：$blockedUrl", Toast.LENGTH_LONG).show()
+                if (rootWebView?.url == blockedUrl) hideTopProgress()
+            },
+            onDownloadBlocked = {
+                Toast.makeText(this, "下载功能已受限制，如需下载应用请联系管理员。", Toast.LENGTH_LONG).show()
+            },
+            onLoadingStateChanged = { loading ->
+                val currentTab = tabList.firstOrNull { it.webView === webViewRef }
+                if (currentTab != null) {
+                    currentTab.isLoading = loading
+                    if (!loading) currentTab.progress = 100
+                }
+                if (rootWebView === webViewRef) {
+                    currentPageLoading = loading
+                    if (loading) showTopProgress() else hideTopProgress()
+                    updateFloatingControlsState(loading = loading)
+                }
+            },
+            onProgressUpdate = { progress ->
+                val safeProgress = progress.coerceIn(0, 100)
+                val currentTab = tabList.firstOrNull { it.webView === webViewRef }
+                if (currentTab != null) {
+                    currentTab.progress = safeProgress
+                }
+                if (rootWebView === webViewRef) {
+                    currentPageProgress = safeProgress
+                    topProgress?.progress = safeProgress
+                    updateFloatingControlsState(progress = safeProgress)
+                }
+            },
+            onNavigationStateChanged = {
+                val currentTab = tabList.firstOrNull { it.webView === webViewRef }
+                if (currentTab != null) {
+                    currentTab.url = webViewRef?.url.orEmpty()
+                    currentTab.title = webViewRef?.title ?: "新标签页"
+                }
+                if (rootWebView === webViewRef) {
+                    updateFloatingControlsState()
+                }
+            },
+            onError = { error ->
+                Log.w("ChildKioskWebView", "Native WebView main frame error: $error")
+                Toast.makeText(this, "网页加载异常：$error", Toast.LENGTH_LONG).show()
+                val currentTab = tabList.firstOrNull { it.webView === webViewRef }
+                if (currentTab != null) {
+                    currentTab.isLoading = false
+                }
+                if (rootWebView === webViewRef) {
+                    hideTopProgress()
+                    currentPageLoading = false
+                    updateFloatingControlsState(loading = false)
+                }
+            },
+            existingWebView = null,
+            runtimeConfig = runtimeConfig,
+            clearHistoryOnFirstRealPageFinish = shouldClearHistoryOnFirstFinish,
+            onShowFileChooser = { callback, params -> openFileChooser(callback, params) },
+            onCreateWindow = { newWebView ->
+                val newTab = createNewTab(
+                    url = "about:blank",
+                    focus = true,
+                    existingWebView = newWebView
+                )
+                Log.d("ChildKioskWebView", "Native child window created via onCreateWindow, newTabId=${newTab.id}")
+            }
+        )
+        webViewRef = webView
+        
+        tab.webView = webView
+        webViewRoot?.addView(
+            webView,
+            0,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        
+        val state = tab.savedState
+        if (state != null) {
+            webView.restoreState(state)
+        } else if (cleanUrl.isNotBlank()) {
+            webView.loadUrl(cleanUrl)
+        }
+    }
+
+    private fun checkAndFreezeTabsIfNeeded() {
+        val activeWebViews = tabList.filter { it.webView != null && it.id != activeTabId }
+        val maxBackgroundWebViews = (MAX_ACTIVE_WEBVIEWS - 1).coerceAtLeast(0)
+        if (activeWebViews.size > maxBackgroundWebViews) {
+            val tabsToFreeze = activeWebViews.sortedBy { it.lastActiveTimeMs }
+                .take(activeWebViews.size - maxBackgroundWebViews)
+            tabsToFreeze.forEach { freezeTab(it) }
+        }
     }
 
     private fun handleNativeBack() {
@@ -774,7 +981,10 @@ class WebViewActivity : ComponentActivity() {
                 },
                 onActionSelected = { actionId ->
                     Log.d("ChildKioskWebView", "Floating browser action: $actionId")
-                }
+                },
+                onNewTab = { createNewTab("about:blank", focus = true) },
+                onCloseTab = { id -> closeTab(id) },
+                onSwitchTab = { id -> switchToTab(id) }
             )
         )
     }
@@ -985,13 +1195,22 @@ class WebViewActivity : ComponentActivity() {
 
     private fun currentFloatingControlsState(): FloatingBrowserControlsState {
         val current = rootWebView
+        val tabStateInfos = tabList.map { tab ->
+            TabStateInfo(
+                id = tab.id,
+                title = tab.title,
+                url = tab.url,
+                isActive = (tab.id == activeTabId)
+            )
+        }
         return FloatingBrowserControlsState(
             currentUrl = current?.url.orEmpty(),
             pageTitle = current?.title.orEmpty(),
             canGoBack = current?.canGoBack() == true,
             canGoForward = current?.canGoForward() == true,
             isLoading = currentPageLoading,
-            progress = currentPageProgress.coerceIn(0, 100)
+            progress = currentPageProgress.coerceIn(0, 100),
+            tabs = tabStateInfos
         )
     }
 

@@ -34,13 +34,21 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
+data class TabStateInfo(
+    val id: String,
+    val title: String,
+    val url: String,
+    val isActive: Boolean
+)
+
 data class FloatingBrowserControlsState(
     val currentUrl: String = "",
     val pageTitle: String = "",
     val canGoBack: Boolean = false,
     val canGoForward: Boolean = false,
     val isLoading: Boolean = false,
-    val progress: Int = 0
+    val progress: Int = 0,
+    val tabs: List<TabStateInfo> = emptyList()
 )
 
 data class FloatingBrowserControlsCallbacks(
@@ -51,7 +59,10 @@ data class FloatingBrowserControlsCallbacks(
     val onForceRefresh: () -> Unit = {},
     val onStopLoading: () -> Unit = {},
     val onPanelExpandedChanged: (Boolean) -> Unit = {},
-    val onActionSelected: (String) -> Unit = {}
+    val onActionSelected: (String) -> Unit = {},
+    val onNewTab: () -> Unit = {},
+    val onCloseTab: (String) -> Unit = {},
+    val onSwitchTab: (String) -> Unit = {}
 )
 
 enum class FloatingControlActionStyle {
@@ -493,6 +504,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         sectionsContainer.removeAllViews()
         val sections = buildList {
             add(defaultBrowserSection())
+            add(FloatingControlSection(id = SECTION_TABS, title = "", actions = emptyList()))
             addAll(extraSections.filter { it.actions.isNotEmpty() })
         }
         sections.forEachIndexed { index, section ->
@@ -541,6 +553,9 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     }
 
     private fun sectionView(section: FloatingControlSection, isLast: Boolean): View {
+        if (section.id == SECTION_TABS) {
+            return customTabsSectionView()
+        }
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             if (!isLast) {
@@ -577,6 +592,120 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                     )
                 )
             }
+        }
+    }
+
+    private fun customTabsSectionView(): View {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, dp(12))
+            
+            addView(
+                LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(
+                        TextView(context).apply {
+                            text = "标签页 (${state.tabs.size})"
+                            textSize = 12f
+                            typeface = Typeface.DEFAULT_BOLD
+                            setTextColor(PanelMutedTextColor)
+                        },
+                        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    )
+                    
+                    addView(
+                        ImageButton(context).apply {
+                            setImageResource(R.drawable.ic_browser_add_24)
+                            imageTintList = ColorStateList.valueOf(AccentColor)
+                            contentDescription = "新建标签"
+                            scaleType = ImageView.ScaleType.CENTER_INSIDE
+                            setPadding(dp(4), dp(4), dp(4), dp(4))
+                            background = roundedBackground(AccentSoftColor, dp(8))
+                            setOnClickListener {
+                                callbacks.onNewTab()
+                            }
+                        },
+                        LinearLayout.LayoutParams(dp(28), dp(28))
+                    )
+                },
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    bottomMargin = dp(6)
+                }
+            )
+            
+            addView(
+                HorizontalScrollView(context).apply {
+                    isHorizontalScrollBarEnabled = false
+                    overScrollMode = OVER_SCROLL_IF_CONTENT_SCROLLS
+                    addView(
+                        LinearLayout(context).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            gravity = Gravity.CENTER_VERTICAL
+                            state.tabs.forEach { tab ->
+                                val isActive = tab.isActive
+                                val cardBgColor = if (isActive) AccentSoftColor else ActionBackgroundColor
+                                val textColor = if (isActive) AccentColor else PanelTextColor
+                                
+                                val cardView = LinearLayout(context).apply {
+                                    orientation = LinearLayout.HORIZONTAL
+                                    gravity = Gravity.CENTER_VERTICAL
+                                    background = roundedBackground(cardBgColor, dp(10), if (isActive) AccentColor else null, if (isActive) dp(1) else 0)
+                                    setPadding(dp(8), dp(4), dp(4), dp(4))
+                                    setOnClickListener {
+                                        callbacks.onSwitchTab(tab.id)
+                                    }
+                                    
+                                    addView(
+                                        TextView(context).apply {
+                                            text = tab.title.takeIf { it.isNotBlank() } ?: tab.url.takeIf { it.isNotBlank() } ?: "新标签页"
+                                            textSize = 11f
+                                            setTextColor(textColor)
+                                            maxLines = 1
+                                            ellipsize = TextUtils.TruncateAt.END
+                                        },
+                                        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                                            rightMargin = dp(4)
+                                        }
+                                    )
+                                    
+                                    addView(
+                                        ImageButton(context).apply {
+                                            setImageResource(R.drawable.ic_browser_close_24)
+                                            imageTintList = ColorStateList.valueOf(textColor)
+                                            scaleType = ImageView.ScaleType.CENTER_INSIDE
+                                            setPadding(dp(2), dp(2), dp(2), dp(2))
+                                            background = null
+                                            setOnClickListener {
+                                                callbacks.onCloseTab(tab.id)
+                                            }
+                                        },
+                                        LinearLayout.LayoutParams(dp(18), dp(18))
+                                    )
+                                }
+                                
+                                addView(
+                                    cardView,
+                                    LinearLayout.LayoutParams(dp(110), dp(36)).apply {
+                                        rightMargin = dp(6)
+                                    }
+                                )
+                            }
+                        },
+                        ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT
+                        )
+                    )
+                },
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
         }
     }
 
@@ -949,6 +1078,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         private val PanelHintColor = Color.rgb(125, 139, 134)
         private val StrokeColor = Color.rgb(209, 221, 216)
 
+        const val SECTION_TABS = "tabs"
         const val SECTION_BROWSER = "browser"
         const val ACTION_BROWSER_BACK = "browser.back"
         const val ACTION_BROWSER_FORWARD = "browser.forward"
