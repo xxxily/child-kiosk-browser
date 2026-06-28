@@ -148,6 +148,7 @@ class MainActivity : ComponentActivity() {
                                                 setCallbacks(FloatingBrowserControlsCallbacks(
                                                     onNavigateToUrl = { url ->
                                                         val intent = Intent(ctx, WebViewActivity::class.java).apply {
+                                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
                                                             putExtra(WebViewActivity.EXTRA_CUSTOM_URL, url)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
                                                             putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, orientationMode)
@@ -156,6 +157,7 @@ class MainActivity : ComponentActivity() {
                                                     },
                                                     onNewTab = {
                                                         val intent = Intent(ctx, WebViewActivity::class.java).apply {
+                                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
                                                             putExtra(WebViewActivity.EXTRA_CUSTOM_URL, "about:blank")
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
                                                             putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, orientationMode)
@@ -164,6 +166,7 @@ class MainActivity : ComponentActivity() {
                                                     },
                                                     onOpenWebApp = { webApp ->
                                                         val intent = Intent(ctx, WebViewActivity::class.java).apply {
+                                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
                                                             putExtra(WebViewActivity.EXTRA_WEB_APP_ID, webApp.id)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
                                                             putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, orientationMode)
@@ -172,6 +175,7 @@ class MainActivity : ComponentActivity() {
                                                     },
                                                     onSwitchTab = { tabId ->
                                                         val intent = Intent(ctx, WebViewActivity::class.java).apply {
+                                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
                                                             putExtra(WebViewActivity.EXTRA_SWITCH_TAB_ID, tabId)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
                                                             putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, orientationMode)
@@ -180,6 +184,7 @@ class MainActivity : ComponentActivity() {
                                                     },
                                                     onCloseTab = { tabId ->
                                                         val intent = Intent(ctx, WebViewActivity::class.java).apply {
+                                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
                                                             putExtra(WebViewActivity.EXTRA_CLOSE_TAB_ID, tabId)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
                                                             putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, orientationMode)

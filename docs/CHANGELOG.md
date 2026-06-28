@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+## [0.2.16] - 2026-06-28
+
+### Fixed — 修复
+
+- **Home 键切回首页清空标签 Bug 修复**：
+  - 彻底将 `WebViewActivity` 从主任务栈隔离，为其配置专有的 `android:taskAffinity` 与 `singleInstance` 单实例启动模式。
+  - 在网页切换回首页、以及首页唤起/切换网页标签时，均显式附加 `FLAG_ACTIVITY_NEW_TASK` 标志，实现纯粹的任务栈前后台置换，彻底解决了原本由于 `singleTask` Clear-Top 机制而导致 `WebViewActivity` 被强制 finish 并清空打开标签页的严重 Bug。
+
 ## [0.2.15] - 2026-06-28
 
 ### Added — 新增

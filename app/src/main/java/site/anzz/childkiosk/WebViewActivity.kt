@@ -1014,7 +1014,7 @@ class WebViewActivity : ComponentActivity() {
                 onSwitchTab = { id -> switchToTab(id) },
                 onHome = {
                     val intent = Intent(this@WebViewActivity, MainActivity::class.java).apply {
-                        flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
                     }
                     startActivity(intent)
                 },
