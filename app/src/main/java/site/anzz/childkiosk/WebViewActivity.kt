@@ -39,6 +39,8 @@ import site.anzz.childkiosk.data.SystemConfigEntity
 import site.anzz.childkiosk.data.WebAppEntity
 import site.anzz.childkiosk.ui.browser.BrowserTab
 import site.anzz.childkiosk.ui.browser.TabStateInfo
+import site.anzz.childkiosk.ui.browser.TabMemoryCache
+import site.anzz.childkiosk.ui.browser.TabCacheItem
 import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsCallbacks
 import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsOverlay
 import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsState
@@ -250,7 +252,6 @@ class WebViewActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        KioskPrefs.saveTabsSnapshot(this, emptyList(), null)
         timeLimitJob?.cancel()
         timeLimitJob = null
         exitVerificationDialog?.dismiss()
@@ -532,6 +533,22 @@ class WebViewActivity : ComponentActivity() {
         val switchTabId = intent.getStringExtra(EXTRA_SWITCH_TAB_ID)
         val closeTabId = intent.getStringExtra(EXTRA_CLOSE_TAB_ID)
 
+        if (TabMemoryCache.tabList.isNotEmpty() && tabList.isEmpty()) {
+            tabList.clear()
+            TabMemoryCache.tabList.forEach { cached ->
+                tabList.add(
+                    BrowserTab(
+                        id = cached.id,
+                        url = cached.url,
+                        title = cached.title,
+                        savedState = cached.savedState,
+                        lastActiveTimeMs = cached.lastActiveTimeMs
+                    )
+                )
+            }
+            activeTabId = TabMemoryCache.activeTabId
+        }
+
         if (!switchTabId.isNullOrBlank()) {
             switchToTab(switchTabId)
             return
@@ -552,11 +569,28 @@ class WebViewActivity : ComponentActivity() {
 
             withContext(Dispatchers.Main) {
                 if (webApp != null) {
-                    createNewTab(webApp.url, focus = true)
+                    val existing = tabList.firstOrNull { it.url == webApp.url }
+                    if (existing != null) {
+                        switchToTab(existing.id)
+                    } else {
+                        createNewTab(webApp.url, focus = true)
+                    }
                 } else if (!customUrl.isNullOrBlank()) {
-                    createNewTab(customUrl, focus = true)
-                } else if (tabList.isEmpty()) {
-                    createNewTab("about:blank", focus = true)
+                    val existing = tabList.firstOrNull { it.url == customUrl }
+                    if (existing != null) {
+                        switchToTab(existing.id)
+                    } else {
+                        createNewTab(customUrl, focus = true)
+                    }
+                } else {
+                    val activeId = activeTabId
+                    if (!activeId.isNullOrBlank() && tabList.any { it.id == activeId }) {
+                        switchToTab(activeId)
+                    } else if (tabList.isNotEmpty()) {
+                        switchToTab(tabList.first().id)
+                    } else {
+                        createNewTab("about:blank", focus = true)
+                    }
                 }
             }
         }
@@ -824,6 +858,8 @@ class WebViewActivity : ComponentActivity() {
             if (nextTab != null) {
                 switchToTab(nextTab.id)
             } else {
+                TabMemoryCache.clear()
+                KioskPrefs.saveTabsSnapshot(this, emptyList(), null)
                 requestCloseWithVerification()
             }
         } else {
@@ -1018,10 +1054,7 @@ class WebViewActivity : ComponentActivity() {
                 onCloseTab = { id -> closeTab(id) },
                 onSwitchTab = { id -> switchToTab(id) },
                 onHome = {
-                    val intent = Intent(this@WebViewActivity, MainActivity::class.java).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    startActivity(intent)
+                    finish()
                 },
                 onOpenWebApp = { webApp ->
                     createNewTab(webApp.url, focus = true)
@@ -1233,6 +1266,22 @@ class WebViewActivity : ComponentActivity() {
         progress?.let { currentPageProgress = it.coerceIn(0, 100) }
         
         KioskPrefs.saveTabsSnapshot(this, tabList, activeTabId)
+        
+        TabMemoryCache.activeTabId = activeTabId
+        TabMemoryCache.tabList.clear()
+        tabList.forEach { tab ->
+            val stateBundle = tab.savedState ?: Bundle()
+            tab.webView?.saveState(stateBundle)
+            TabMemoryCache.tabList.add(
+                TabCacheItem(
+                    id = tab.id,
+                    url = tab.webView?.url ?: tab.url,
+                    title = tab.webView?.title ?: tab.title,
+                    savedState = stateBundle,
+                    lastActiveTimeMs = tab.lastActiveTimeMs
+                )
+            )
+        }
         
         floatingControlsOverlay?.updateState(currentFloatingControlsState())
     }

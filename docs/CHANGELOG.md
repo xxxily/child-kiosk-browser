@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+## [0.2.18] - 2026-06-28
+
+### Added — 新增
+
+- **多标签内存缓存机制 (TabMemoryCache)**：
+  - 引入了 `:webview` 进程内长期存活的静态标签内存缓存 `TabMemoryCache`，存储多 Tab 结构及各个 WebView 的 `savedState` 二进制历史 Bundle 快照。
+  - 回到主页时，直接 finish 销毁 `WebViewActivity`，将所有状态交由内存缓存进行托管，彻底规避了复杂的跨 Task 栈切换。
+
+### Fixed — 修复
+
+- **儿童模式 (Kiosk/Lock Task) 下浏览器显示不出来 Bug 修复**：
+  - 彻底撤销了原本导致创建独立任务栈的 `singleInstance` 和 `taskAffinity` 设置，让 `WebViewActivity` 的 `launchMode` 回归最安全的默认 `standard`。
+  - 移除了启动 Intent 上的 `FLAG_ACTIVITY_NEW_TASK`。这使得浏览器完美运行于主任务栈顶，彻底解决了此前由于独立栈违反 Lock Task 系统限制而在儿童模式下“直接显示不出来”的严重 Bug。
+
 ## [0.2.17] - 2026-06-28
 
 ### Added — 新增
