@@ -2888,7 +2888,7 @@ private fun WebFilteringSettingsScreen(
                     }
                     if (subscription.lastUpdatedAt > 0L || subscription.lastError.isNotBlank()) {
                         Text(
-                            "更新时间：${subscription.lastUpdatedAt}${if (subscription.lastError.isNotBlank()) " | ${subscription.lastError}" else ""}",
+                            "更新时间：${formatTimestamp(subscription.lastUpdatedAt)}${if (subscription.lastError.isNotBlank()) " | ${subscription.lastError}" else ""}",
                             fontSize = 10.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -3084,14 +3084,102 @@ private fun WebFilteringSettingsScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f))
-                                .padding(10.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f))
+                                .border(
+                                    width = 1.dp,
+                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text("${event.action} | ${event.resourceType}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            Text(event.url, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                val actionBgColor = when (event.action) {
+                                    "BLOCK" -> MaterialTheme.colorScheme.errorContainer
+                                    "ALLOW" -> Color(0xFFE8F5E9)
+                                    "EXCEPTION" -> Color(0xFFE3F2FD)
+                                    else -> MaterialTheme.colorScheme.surfaceVariant
+                                }
+                                val actionTextColor = when (event.action) {
+                                    "BLOCK" -> MaterialTheme.colorScheme.onErrorContainer
+                                    "ALLOW" -> Color(0xFF2E7D32)
+                                    "EXCEPTION" -> Color(0xFF1565C0)
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                                val actionLabel = when (event.action) {
+                                    "BLOCK" -> "已拦截"
+                                    "ALLOW" -> "已允许"
+                                    "EXCEPTION" -> "放行例外"
+                                    else -> event.action
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(actionBgColor)
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = actionLabel,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = actionTextColor
+                                    )
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = event.resourceType,
+                                        fontSize = 9.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.weight(1f))
+
+                                Text(
+                                    text = formatEventTime(event.timestamp),
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            if (event.topLevelUrl.isNotBlank()) {
+                                Text(
+                                    text = "网页: ${event.topLevelUrl}",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                            }
+
+                            Text(
+                                text = "请求: ${event.url}",
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+
                             if (event.ruleText.isNotBlank()) {
-                                Text("${event.sourceName}: ${event.ruleText}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    text = "规则: [${event.sourceName}] ${event.ruleText}",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 2,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
                             }
                         }
                     }
@@ -3458,8 +3546,15 @@ fun WhitelistSubscriptionCard(
 private fun formatTimestamp(timestamp: Long): String {
     if (timestamp <= 0L) return "从未"
     return runCatching {
-        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(Date(timestamp))
+        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).format(Date(timestamp))
     }.getOrDefault(timestamp.toString())
+}
+
+private fun formatEventTime(timestamp: Long): String {
+    if (timestamp <= 0L) return ""
+    return runCatching {
+        SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(Date(timestamp))
+    }.getOrDefault("")
 }
 
 @Composable
