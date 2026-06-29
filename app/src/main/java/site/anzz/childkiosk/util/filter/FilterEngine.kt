@@ -2,6 +2,7 @@ package site.anzz.childkiosk.util.filter
 
 import java.util.Locale
 import java.net.URI
+import java.util.concurrent.ConcurrentHashMap
 import java.util.regex.Pattern
 
 data class FilterBuildReport(
@@ -28,17 +29,20 @@ data class FilterSourceReport(
 )
 
 class FilterEngine private constructor(
-    private val blockingRules: List<CompiledRule>,
-    private val exceptionRules: List<CompiledRule>,
-    private val importantBlockingRules: List<CompiledRule>,
+    private val importantIndex: TokenIndex,
+    private val exceptionIndex: TokenIndex,
+    private val blockingIndex: TokenIndex,
     private val cosmeticRules: List<CosmeticFilterRule>,
     private val scriptletRules: List<ScriptletFilterRule>,
     val report: FilterBuildReport
 ) {
-    private val decisionCache = object : LinkedHashMap<String, FilterDecision>(256, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, FilterDecision>?): Boolean {
-            return size > 512
-        }
+    private val decisionCache = ConcurrentHashMap<String, FilterDecision>(2048, 0.75f, 4)
+    private val maxCacheSize = 4096
+
+    private fun cacheDecision(key: String, decision: FilterDecision): FilterDecision {
+        if (decisionCache.size > maxCacheSize) decisionCache.clear()
+        decisionCache[key] = decision
+        return decision
     }
 
     fun cosmeticCssFor(host: String, siteOverride: SiteFilterOverride? = null): String {
@@ -84,8 +88,7 @@ class FilterEngine private constructor(
             method = "GET",
             hasGesture = false
         )
-        val paramsToRemove = blockingRules
-            .asSequence()
+        val paramsToRemove = blockingIndex.candidates(url, context.requestHost)
             .filter { it.rule.removeParams.isNotEmpty() }
             .filter { it.matches(context) }
             .flatMap { it.rule.removeParams.asSequence() }
@@ -94,7 +97,6 @@ class FilterEngine private constructor(
         return removeParamsFromUrl(url, paramsToRemove)
     }
 
-    @Synchronized
     fun decide(context: FilterRequestContext, siteOverride: SiteFilterOverride? = null): FilterDecision {
         if (siteOverride?.isTemporarilyAllowed() == true || siteOverride?.networkDisabled == true) {
             return FilterDecision(FilterAction.EXCEPTION, reason = "site override")
@@ -103,32 +105,39 @@ class FilterEngine private constructor(
         val cacheKey = "${context.requestUrl}|${context.topLevelHost}|${context.resourceType}|${context.isThirdParty}"
         decisionCache[cacheKey]?.let { return it }
 
-        val importantBlock = importantBlockingRules.firstOrNull { it.matches(context) }
+        val url = context.requestUrl
+        val host = context.requestHost
+
+        val importantBlock = importantIndex.candidates(url, host)
+            .firstOrNull { it.matches(context) }
         if (importantBlock != null) {
-            return FilterDecision(FilterAction.BLOCK, importantBlock.rule, "important rule").also {
-                decisionCache[cacheKey] = it
-            }
+            return cacheDecision(cacheKey,
+                FilterDecision(FilterAction.BLOCK, importantBlock.rule, "important rule"))
         }
 
-        val exception = exceptionRules.firstOrNull { it.matches(context) }
+        val exception = exceptionIndex.candidates(url, host)
+            .firstOrNull { it.matches(context) }
         if (exception != null) {
-            return FilterDecision(FilterAction.EXCEPTION, exception.rule, "exception rule").also {
-                decisionCache[cacheKey] = it
-            }
+            return cacheDecision(cacheKey,
+                FilterDecision(FilterAction.EXCEPTION, exception.rule, "exception rule"))
         }
 
-        val block = blockingRules.firstOrNull { it.matches(context) }
+        val block = blockingIndex.candidates(url, host)
+            .firstOrNull { it.matches(context) }
         val decision = if (block != null) {
             FilterDecision(FilterAction.BLOCK, block.rule, "blocking rule")
         } else {
             FilterDecision.ALLOW
         }
-        decisionCache[cacheKey] = decision
-        return decision
+        return cacheDecision(cacheKey, decision)
     }
 
     companion object {
-        val EMPTY = FilterEngine(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), FilterBuildReport(0, 0, 0, 0, 0, 0, emptyList(), emptyList()))
+        val EMPTY = FilterEngine(
+            TokenIndex(emptyList()), TokenIndex(emptyList()), TokenIndex(emptyList()),
+            emptyList(), emptyList(),
+            FilterBuildReport(0, 0, 0, 0, 0, 0, emptyList(), emptyList())
+        )
 
         fun build(sources: List<FilterRuleSource>): FilterEngine {
             val compiled = mutableListOf<CompiledRule>()
@@ -178,9 +187,9 @@ class FilterEngine private constructor(
             val enabledRuleCount = activeCompiled.size
             val unsupportedRuleCount = reports.sumOf { it.unsupportedRules }
             return FilterEngine(
-                blockingRules = blocking.sortedByDescending { it.weight },
-                exceptionRules = exceptions.sortedByDescending { it.weight },
-                importantBlockingRules = important.sortedByDescending { it.weight },
+                importantIndex = TokenIndex(important.sortedByDescending { it.weight }),
+                exceptionIndex = TokenIndex(exceptions.sortedByDescending { it.weight }),
+                blockingIndex = TokenIndex(blocking.sortedByDescending { it.weight }),
                 cosmeticRules = cosmetic,
                 scriptletRules = scriptlets,
                 report = FilterBuildReport(
@@ -332,6 +341,78 @@ data class FilterRuleSource(
     val rulesText: String
 )
 
+/**
+ * Token-based reverse index for fast rule lookup.
+ * Rules are bucketed by their best token; queries extract tokens from the URL
+ * and only check matching buckets + universal (token-less) rules.
+ */
+private class TokenIndex(rules: List<CompiledRule>) {
+    private val tokenMap: HashMap<String, MutableList<CompiledRule>>
+    private val universalRules: List<CompiledRule>
+
+    init {
+        val map = HashMap<String, MutableList<CompiledRule>>(rules.size / 2 + 1)
+        val universal = mutableListOf<CompiledRule>()
+        for (rule in rules) {
+            val token = rule.bestToken
+            if (token.isEmpty()) {
+                universal.add(rule)
+            } else {
+                map.getOrPut(token) { mutableListOf() }.add(rule)
+            }
+        }
+        tokenMap = map
+        universalRules = universal
+    }
+
+    fun candidates(url: String, host: String): Sequence<CompiledRule> = sequence {
+        val seen = HashSet<CompiledRule>()
+
+        // 1. Host token (highest priority)
+        tokenMap[host]?.let { rules ->
+            for (rule in rules) { if (seen.add(rule)) yield(rule) }
+        }
+
+        // 2. Parent domain tokens
+        var dotIdx = host.indexOf('.')
+        while (dotIdx > 0) {
+            val parent = host.substring(dotIdx + 1)
+            tokenMap[parent]?.let { rules ->
+                for (rule in rules) { if (seen.add(rule)) yield(rule) }
+            }
+            dotIdx = host.indexOf('.', dotIdx + 1)
+        }
+
+        // 3. URL path tokens
+        extractUrlTokens(url.lowercase(Locale.US)) { token ->
+            tokenMap[token]?.let { rules ->
+                for (rule in rules) { if (seen.add(rule)) yield(rule) }
+            }
+        }
+
+        // 4. Universal rules (no extractable token)
+        for (rule in universalRules) { yield(rule) }
+    }
+}
+
+private inline fun extractUrlTokens(urlLower: String, onToken: (String) -> Unit) {
+    var start = -1
+    for (i in urlLower.indices) {
+        val c = urlLower[i]
+        if (c.isLetterOrDigit() || c == '.' || c == '-') {
+            if (start < 0) start = i
+        } else {
+            if (start >= 0 && i - start >= 3) {
+                onToken(urlLower.substring(start, i))
+            }
+            start = -1
+        }
+    }
+    if (start >= 0 && urlLower.length - start >= 3) {
+        onToken(urlLower.substring(start))
+    }
+}
+
 private class CompiledRule(
     val rule: FilterRule,
     private val regex: Pattern? = null,
@@ -345,12 +426,32 @@ private class CompiledRule(
         FilterMatchType.SUBSTRING -> 20
     } + if (rule.domains.isNotEmpty()) 20 else 0
 
+    // ---- Precomputed fields (computed once at construction) ----
+    val patternLower: String = rule.pattern.lowercase(Locale.US)
+
+    // DOMAIN_ANCHOR only: precomputed host and path from pattern
+    val anchorHost: String
+    val anchorPath: String
+
+    // Token for reverse index bucketing
+    val bestToken: String
+
+    init {
+        val rawForAnchor = rule.pattern
+            .removePrefix("http://")
+            .removePrefix("https://")
+        anchorHost = rawForAnchor.substringBefore("^").substringBefore("/").normalizeHost()
+        anchorPath = rawForAnchor.substringAfter("/", missingDelimiterValue = "")
+            .substringBefore("^").lowercase(Locale.US)
+        bestToken = extractBestToken(rule)
+    }
+
     fun matches(context: FilterRequestContext): Boolean {
         if (!matchesOptions(context)) return false
         return when (rule.matchType) {
             FilterMatchType.DOMAIN_ANCHOR -> matchesDomainAnchor(context)
-            FilterMatchType.STARTS_WITH -> context.requestUrlLower.startsWith(rule.pattern.lowercase(Locale.US))
-            FilterMatchType.ENDS_WITH -> context.requestUrlLower.endsWith(rule.pattern.lowercase(Locale.US))
+            FilterMatchType.STARTS_WITH -> context.requestUrlLower.startsWith(patternLower)
+            FilterMatchType.ENDS_WITH -> context.requestUrlLower.endsWith(patternLower)
             FilterMatchType.REGEX -> regex?.matcher(context.requestUrl)?.find() == true
             FilterMatchType.SUBSTRING -> matchesWildcard(context.requestUrlLower, rule.pattern, wildcardRegex)
         }
@@ -366,16 +467,10 @@ private class CompiledRule(
     }
 
     private fun matchesDomainAnchor(context: FilterRequestContext): Boolean {
-        val rawPattern = rule.pattern
-            .removePrefix("http://")
-            .removePrefix("https://")
-        val hostPattern = rawPattern.substringBefore("^").substringBefore("/").normalizeHost()
-        val pathPattern = rawPattern.substringAfter("/", missingDelimiterValue = "")
-            .substringBefore("^")
-        if (hostPattern.isBlank()) return false
-        if (!isSameOrSubdomain(context.requestHost, hostPattern)) return false
-        if (pathPattern.isBlank()) return true
-        return context.requestUrl.lowercase(Locale.US).contains(pathPattern.lowercase(Locale.US))
+        if (anchorHost.isBlank()) return false
+        if (!isSameOrSubdomain(context.requestHost, anchorHost)) return false
+        if (anchorPath.isBlank()) return true
+        return context.requestUrlLower.contains(anchorPath)
     }
 
     companion object {
@@ -395,6 +490,27 @@ private class CompiledRule(
                 null
             }
             return CompiledRule(rule, regex, wildcardRegex)
+        }
+
+        private val TOKEN_REGEX = Regex("[a-zA-Z0-9][a-zA-Z0-9.\\-]{2,}")
+
+        private fun extractBestToken(rule: FilterRule): String {
+            // For DOMAIN_ANCHOR, prefer the host part as token
+            if (rule.matchType == FilterMatchType.DOMAIN_ANCHOR) {
+                val host = rule.pattern
+                    .removePrefix("||")
+                    .removePrefix("http://").removePrefix("https://")
+                    .substringBefore("^").substringBefore("/")
+                    .normalizeHost()
+                if (host.length >= 3) return host
+            }
+            // REGEX rules have no reliable literal token
+            if (rule.matchType == FilterMatchType.REGEX) return ""
+            // Extract longest alphanumeric sequence from pattern
+            return TOKEN_REGEX.findAll(rule.pattern)
+                .map { it.value.lowercase(Locale.US) }
+                .maxByOrNull { it.length }
+                ?: ""
         }
     }
 }

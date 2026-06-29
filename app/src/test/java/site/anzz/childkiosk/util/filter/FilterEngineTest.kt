@@ -208,6 +208,80 @@ class FilterEngineTest {
         }
     }
 
+    @Test
+    fun tokenIndexDoesNotMissRulesWithMixedTypes() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    id = "test",
+                    name = "test",
+                    rulesText = """
+                        ||ads.example.com^
+                        ||tracker.test/pixel${'$'}image,third-party
+                        /banner*ad${'$'}script
+                        @@||cdn.example.com^
+                        ||important.ad^${'$'}important
+                    """.trimIndent()
+                )
+            )
+        )
+
+        assertEquals(
+            FilterAction.BLOCK,
+            engine.decide(context("https://ads.example.com/x.js", "https://page.com")).action
+        )
+        assertEquals(
+            FilterAction.EXCEPTION,
+            engine.decide(context("https://cdn.example.com/lib.js", "https://page.com")).action
+        )
+        assertEquals(
+            FilterAction.BLOCK,
+            engine.decide(context("https://important.ad/x", "https://page.com")).action
+        )
+        assertEquals(
+            FilterAction.ALLOW,
+            engine.decide(context("https://safe-site.com/page.html", "https://page.com")).action
+        )
+    }
+
+    @Test
+    fun universalRulesStillMatchWithoutToken() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource("test", "test", "*${'$'}third-party,image")
+            )
+        )
+        val decision = engine.decide(
+            context(
+                url = "https://any-domain.com/photo.png",
+                topLevelUrl = "https://other-site.com/page",
+                type = FilterResourceType.IMAGE
+            )
+        )
+        assertEquals(FilterAction.BLOCK, decision.action)
+    }
+
+    @Test
+    fun subdomainBlockingWorksWithIndex() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource("test", "test", "||example.com^")
+            )
+        )
+        assertEquals(
+            FilterAction.BLOCK,
+            engine.decide(context("https://sub.example.com/path", "https://page.com")).action
+        )
+        assertEquals(
+            FilterAction.BLOCK,
+            engine.decide(context("https://deep.sub.example.com/path", "https://page.com")).action
+        )
+        assertEquals(
+            FilterAction.ALLOW,
+            engine.decide(context("https://notexample.com/path", "https://page.com")).action
+        )
+    }
+
     private fun context(
         url: String,
         topLevelUrl: String,
