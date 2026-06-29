@@ -6,7 +6,15 @@
 
 ## [Unreleased]
 
-## [0.2.18] - 2026-06-28
+## [0.2.19] - 2026-06-29
+
+### Changed — 变更
+
+- **广告拦截匹配引擎性能优化 (Adblock Filter Engine Performance Optimization)**：
+  - **Token 倒排索引查找 (TokenIndex)**：重构了 `FilterEngine` 底层规则匹配算法，使用关键字倒排索引替代了原本每笔请求执行 $O(N)$ 线性扫描的方法，将网络请求决策复杂度降低为 $O(K)$（规则候选集从二十几万条瞬间降至十几条），匹配速度提升数千倍。
+  - **规则字段预计算与常量化**：为 `CompiledRule` 增加了 `patternLower`、`anchorHost`、`anchorPath` 与最佳 `bestToken` 提取等预计算机制，完全消除了高频匹配过程中的临时字符串构造与 lowercase 开销。
+  - **并发加锁优化与缓存扩容**：将限制为 512 条的同步 `decisionCache` 移除，替换为线程安全的 `ConcurrentHashMap`，容量扩大至 4096 条。配合索引去除了 `decide()` 方法上的 `@Synchronized` 全局锁，极大地释放了并发网络拦截的吞吐性能。
+
 
 ### Added — 新增
 
