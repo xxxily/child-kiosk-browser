@@ -57,6 +57,7 @@ import site.anzz.childkiosk.util.filter.FilterPerfSampleStats
 import site.anzz.childkiosk.util.filter.FilterPerfSnapshot
 import site.anzz.childkiosk.util.filter.FilterPreset
 import site.anzz.childkiosk.util.filter.FilterRepository
+import site.anzz.childkiosk.util.filter.FilterSlowShouldBlockSample
 import site.anzz.childkiosk.util.filter.SiteFilterOverride
 import site.anzz.childkiosk.util.filter.normalizeHost
 import kotlinx.coroutines.Dispatchers
@@ -2885,41 +2886,6 @@ private fun WebFilteringSettingsScreen(
             }
         }
 
-        FilterPerformanceDiagnosticsCard(
-            filteringEnabled = settings.enabled,
-            report = report,
-            snapshot = perfSnapshot,
-            persistedSnapshot = webViewPerfSnapshot,
-            sourceLabel = perfSourceLabel,
-            events = events,
-            expanded = diagnosticsExpanded,
-            showPercentiles = showDiagnosticPercentiles,
-            showIndexes = showDiagnosticIndexes,
-            showEvents = showDiagnosticEvents,
-            onExpandedChange = { diagnosticsExpanded = it },
-            onShowPercentilesChange = { showDiagnosticPercentiles = it },
-            onShowIndexesChange = { showDiagnosticIndexes = it },
-            onShowEventsChange = { showDiagnosticEvents = it },
-            onRefresh = { diagnosticsRefreshVersion++ },
-            onReset = {
-                FilterRepository.resetDiagnostics(context)
-                diagnosticsRefreshVersion++
-                Toast.makeText(context, "已清空过滤诊断统计、最近日志和本进程缓存", Toast.LENGTH_SHORT).show()
-            },
-            onCopy = {
-                val text = buildFilterDiagnosticsText(
-                    settingsEnabled = settings.enabled,
-                    report = report,
-                    snapshot = perfSnapshot,
-                    sourceLabel = perfSourceLabel,
-                    persistedSnapshot = webViewPerfSnapshot,
-                    events = events
-                )
-                clipboardManager.setText(AnnotatedString(text))
-                Toast.makeText(context, "过滤性能诊断信息已复制", Toast.LENGTH_SHORT).show()
-            }
-        )
-
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -3199,6 +3165,41 @@ private fun WebFilteringSettingsScreen(
                 }
             }
         }
+
+        FilterPerformanceDiagnosticsCard(
+            filteringEnabled = settings.enabled,
+            report = report,
+            snapshot = perfSnapshot,
+            persistedSnapshot = webViewPerfSnapshot,
+            sourceLabel = perfSourceLabel,
+            events = events,
+            expanded = diagnosticsExpanded,
+            showPercentiles = showDiagnosticPercentiles,
+            showIndexes = showDiagnosticIndexes,
+            showEvents = showDiagnosticEvents,
+            onExpandedChange = { diagnosticsExpanded = it },
+            onShowPercentilesChange = { showDiagnosticPercentiles = it },
+            onShowIndexesChange = { showDiagnosticIndexes = it },
+            onShowEventsChange = { showDiagnosticEvents = it },
+            onRefresh = { diagnosticsRefreshVersion++ },
+            onReset = {
+                FilterRepository.resetDiagnostics(context)
+                diagnosticsRefreshVersion++
+                Toast.makeText(context, "已清空过滤诊断统计、最近日志和本进程缓存", Toast.LENGTH_SHORT).show()
+            },
+            onCopy = {
+                val text = buildFilterDiagnosticsText(
+                    settingsEnabled = settings.enabled,
+                    report = report,
+                    snapshot = perfSnapshot,
+                    sourceLabel = perfSourceLabel,
+                    persistedSnapshot = webViewPerfSnapshot,
+                    events = events
+                )
+                clipboardManager.setText(AnnotatedString(text))
+                Toast.makeText(context, "过滤性能诊断信息已复制", Toast.LENGTH_SHORT).show()
+            }
+        )
 
         Card(
             shape = RoundedCornerShape(16.dp),
@@ -3526,10 +3527,36 @@ private fun FilterPerformanceDiagnosticsCard(
                     ) {
                         Text("耗时分布", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         FilterPerfStatsRow("WebView shouldBlock", snapshot.shouldBlockDurationMicros, "us")
+                        FilterPerfStatsRow("shouldBlock 解析", snapshot.shouldBlockParseDurationMicros, "us")
+                        FilterPerfStatsRow("shouldBlock 判定", snapshot.shouldBlockEngineDurationMicros, "us")
+                        FilterPerfStatsRow("shouldBlock 事件", snapshot.shouldBlockEventDurationMicros, "us")
+                        FilterPerfStatsRow("shouldBlock 快照", snapshot.shouldBlockSnapshotDurationMicros, "us")
                         FilterPerfStatsRow("规则判定", snapshot.decisionDurationMicros, "us")
                         FilterPerfStatsRow("候选评估/次", snapshot.candidateEvaluationsPerDecision, "条")
                         FilterPerfStatsRow("元素隐藏", snapshot.cosmeticDurationMicros, "us")
                         FilterPerfStatsRow("Scriptlet", snapshot.scriptletDurationMicros, "us")
+                    }
+                }
+
+                if (snapshot.slowShouldBlockSamples.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("慢 shouldBlock 样本", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        snapshot.slowShouldBlockSamples.take(10).forEachIndexed { index, sample ->
+                            Text(
+                                text = "#${index + 1} ${formatSlowShouldBlockSample(sample)}",
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                     }
                 }
 
@@ -4045,10 +4072,23 @@ private fun buildFilterDiagnosticsText(
         appendLine()
         appendLine("[Samples]")
         appendLine("shouldBlock=${formatSampleStats(snapshot.shouldBlockDurationMicros, "us")}")
+        appendLine("shouldBlockParse=${formatSampleStats(snapshot.shouldBlockParseDurationMicros, "us")}")
+        appendLine("shouldBlockEngine=${formatSampleStats(snapshot.shouldBlockEngineDurationMicros, "us")}")
+        appendLine("shouldBlockEvent=${formatSampleStats(snapshot.shouldBlockEventDurationMicros, "us")}")
+        appendLine("shouldBlockSnapshot=${formatSampleStats(snapshot.shouldBlockSnapshotDurationMicros, "us")}")
         appendLine("decision=${formatSampleStats(snapshot.decisionDurationMicros, "us")}")
         appendLine("candidatesPerDecision=${formatSampleStats(snapshot.candidateEvaluationsPerDecision, "rules")}")
         appendLine("cosmetic=${formatSampleStats(snapshot.cosmeticDurationMicros, "us")}")
         appendLine("scriptlet=${formatSampleStats(snapshot.scriptletDurationMicros, "us")}")
+        appendLine()
+        appendLine("[Slow ShouldBlock Samples]")
+        if (snapshot.slowShouldBlockSamples.isEmpty()) {
+            appendLine("暂无超过 20 ms 的 shouldBlock 样本")
+        } else {
+            snapshot.slowShouldBlockSamples.take(10).forEachIndexed { index, sample ->
+                appendLine("#${index + 1} ${formatSlowShouldBlockSample(sample)}")
+            }
+        }
         appendLine()
         appendLine("[Indexes]")
         appendLine("important=${formatIndexStats(snapshot.importantIndex)}")
@@ -4108,6 +4148,25 @@ private fun formatMicros(value: Long): String {
         "${formatDecimal(value.toDouble() / 1_000.0, 2)} ms"
     } else {
         "$value us"
+    }
+}
+
+private fun formatSlowShouldBlockSample(sample: FilterSlowShouldBlockSample): String {
+    return buildString {
+        append(formatTimestamp(sample.timestamp))
+        append(" total=${formatMicros(sample.durationMicros)}")
+        append(" parse=${formatMicros(sample.parseMicros)}")
+        append(" engine=${formatMicros(sample.engineMicros)}")
+        append(" event=${formatMicros(sample.eventMicros)}")
+        append(" snapshot=${formatMicros(sample.snapshotMicros)}")
+        append(" resource=${sample.resourceType.ifBlank { "-" }}")
+        append(" action=${sample.action.ifBlank { "-" }}")
+        append(" cache=${sample.cacheStatus.ifBlank { "-" }}")
+        append(" candidates=${sample.candidateCount}")
+        append(" url=${sample.url.ifBlank { "-" }}")
+        if (sample.ruleText.isNotBlank()) {
+            append(" rule=${sample.ruleText}")
+        }
     }
 }
 

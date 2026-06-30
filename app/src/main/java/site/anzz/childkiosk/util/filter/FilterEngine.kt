@@ -60,6 +60,10 @@ data class FilterPerfSnapshot(
     val generatedCssBytes: Long,
     val generatedScriptletBytes: Long,
     val shouldBlockDurationMicros: FilterPerfSampleStats,
+    val shouldBlockParseDurationMicros: FilterPerfSampleStats,
+    val shouldBlockEngineDurationMicros: FilterPerfSampleStats,
+    val shouldBlockEventDurationMicros: FilterPerfSampleStats,
+    val shouldBlockSnapshotDurationMicros: FilterPerfSampleStats,
     val decisionDurationMicros: FilterPerfSampleStats,
     val candidateEvaluationsPerDecision: FilterPerfSampleStats,
     val cosmeticDurationMicros: FilterPerfSampleStats,
@@ -67,7 +71,23 @@ data class FilterPerfSnapshot(
     val importantIndex: FilterIndexStats,
     val exceptionIndex: FilterIndexStats,
     val blockingIndex: FilterIndexStats,
-    val removeParamIndex: FilterIndexStats
+    val removeParamIndex: FilterIndexStats,
+    val slowShouldBlockSamples: List<FilterSlowShouldBlockSample>
+)
+
+data class FilterSlowShouldBlockSample(
+    val timestamp: Long,
+    val durationMicros: Long,
+    val parseMicros: Long,
+    val engineMicros: Long,
+    val eventMicros: Long,
+    val snapshotMicros: Long,
+    val resourceType: String,
+    val action: String,
+    val url: String,
+    val ruleText: String,
+    val cacheStatus: String,
+    val candidateCount: Int
 )
 
 class FilterEngine private constructor(
@@ -129,8 +149,32 @@ class FilterEngine private constructor(
         )
     }
 
-    fun recordShouldBlockDuration(durationNanos: Long) {
-        perf.recordShouldBlock(durationNanos)
+    fun recordShouldBlockDuration(
+        totalNanos: Long,
+        parseNanos: Long = 0L,
+        engineNanos: Long = 0L,
+        eventNanos: Long = 0L,
+        snapshotNanos: Long = 0L,
+        resourceType: FilterResourceType? = null,
+        action: FilterAction? = null,
+        url: String = "",
+        ruleText: String = "",
+        cacheStatus: String = "",
+        candidateCount: Int = 0
+    ) {
+        perf.recordShouldBlock(
+            totalNanos = totalNanos,
+            parseNanos = parseNanos,
+            engineNanos = engineNanos,
+            eventNanos = eventNanos,
+            snapshotNanos = snapshotNanos,
+            resourceType = resourceType,
+            action = action,
+            url = url,
+            ruleText = ruleText,
+            cacheStatus = cacheStatus,
+            candidateCount = candidateCount
+        )
     }
 
     internal fun decideLinearForTesting(
@@ -716,13 +760,57 @@ private class FilterPerfTracker(private val buildDurationMs: Long) {
     private val generatedScriptletBytes = AtomicLong(0L)
 
     private val shouldBlockDurations = AtomicLongSampler()
+    private val shouldBlockParseDurations = AtomicLongSampler()
+    private val shouldBlockEngineDurations = AtomicLongSampler()
+    private val shouldBlockEventDurations = AtomicLongSampler()
+    private val shouldBlockSnapshotDurations = AtomicLongSampler()
     private val decisionDurations = AtomicLongSampler()
     private val candidateCounts = AtomicLongSampler()
     private val cosmeticDurations = AtomicLongSampler()
     private val scriptletDurations = AtomicLongSampler()
+    private val slowShouldBlockSamples = SlowShouldBlockSampler()
 
-    fun recordShouldBlock(durationNanos: Long) {
-        shouldBlockDurations.record(nanosToMicros(durationNanos))
+    fun recordShouldBlock(
+        totalNanos: Long,
+        parseNanos: Long,
+        engineNanos: Long,
+        eventNanos: Long,
+        snapshotNanos: Long,
+        resourceType: FilterResourceType?,
+        action: FilterAction?,
+        url: String,
+        ruleText: String,
+        cacheStatus: String,
+        candidateCount: Int
+    ) {
+        val totalMicros = nanosToMicros(totalNanos)
+        val parseMicros = nanosToMicros(parseNanos)
+        val engineMicros = nanosToMicros(engineNanos)
+        val eventMicros = nanosToMicros(eventNanos)
+        val snapshotMicros = nanosToMicros(snapshotNanos)
+        shouldBlockDurations.record(totalMicros)
+        shouldBlockParseDurations.record(parseMicros)
+        shouldBlockEngineDurations.record(engineMicros)
+        shouldBlockEventDurations.record(eventMicros)
+        shouldBlockSnapshotDurations.record(snapshotMicros)
+        if (totalMicros >= SLOW_SHOULD_BLOCK_THRESHOLD_MICROS) {
+            slowShouldBlockSamples.record(
+                FilterSlowShouldBlockSample(
+                    timestamp = System.currentTimeMillis(),
+                    durationMicros = totalMicros,
+                    parseMicros = parseMicros,
+                    engineMicros = engineMicros,
+                    eventMicros = eventMicros,
+                    snapshotMicros = snapshotMicros,
+                    resourceType = resourceType?.optionName.orEmpty(),
+                    action = action?.name.orEmpty(),
+                    url = url.take(240),
+                    ruleText = ruleText.take(160),
+                    cacheStatus = cacheStatus,
+                    candidateCount = candidateCount
+                )
+            )
+        }
     }
 
     fun recordCacheHit() {
@@ -789,6 +877,10 @@ private class FilterPerfTracker(private val buildDurationMs: Long) {
             generatedCssBytes = generatedCssBytes.get(),
             generatedScriptletBytes = generatedScriptletBytes.get(),
             shouldBlockDurationMicros = shouldBlockDurations.snapshot(),
+            shouldBlockParseDurationMicros = shouldBlockParseDurations.snapshot(),
+            shouldBlockEngineDurationMicros = shouldBlockEngineDurations.snapshot(),
+            shouldBlockEventDurationMicros = shouldBlockEventDurations.snapshot(),
+            shouldBlockSnapshotDurationMicros = shouldBlockSnapshotDurations.snapshot(),
             decisionDurationMicros = decisionDurations.snapshot(),
             candidateEvaluationsPerDecision = candidateCounts.snapshot(),
             cosmeticDurationMicros = cosmeticDurations.snapshot(),
@@ -796,7 +888,8 @@ private class FilterPerfTracker(private val buildDurationMs: Long) {
             importantIndex = importantIndex,
             exceptionIndex = exceptionIndex,
             blockingIndex = blockingIndex,
-            removeParamIndex = removeParamIndex
+            removeParamIndex = removeParamIndex,
+            slowShouldBlockSamples = slowShouldBlockSamples.snapshot()
         )
     }
 
@@ -814,14 +907,23 @@ private class FilterPerfTracker(private val buildDurationMs: Long) {
         generatedCssBytes.set(0L)
         generatedScriptletBytes.set(0L)
         shouldBlockDurations.reset()
+        shouldBlockParseDurations.reset()
+        shouldBlockEngineDurations.reset()
+        shouldBlockEventDurations.reset()
+        shouldBlockSnapshotDurations.reset()
         decisionDurations.reset()
         candidateCounts.reset()
         cosmeticDurations.reset()
         scriptletDurations.reset()
+        slowShouldBlockSamples.reset()
     }
 
     private fun nanosToMicros(durationNanos: Long): Long {
         return (durationNanos / 1_000L).coerceAtLeast(0L)
+    }
+
+    companion object {
+        private const val SLOW_SHOULD_BLOCK_THRESHOLD_MICROS = 20_000L
     }
 }
 
@@ -861,6 +963,30 @@ private class AtomicLongSampler(private val capacity: Int = 1024) {
             p99 = snapshot.percentile(0.99),
             max = snapshot.last()
         )
+    }
+}
+
+private class SlowShouldBlockSampler(private val capacity: Int = 20) {
+    private val lock = Any()
+    private val samples = ArrayDeque<FilterSlowShouldBlockSample>(capacity)
+
+    fun record(sample: FilterSlowShouldBlockSample) {
+        synchronized(lock) {
+            if (samples.size >= capacity) samples.removeFirst()
+            samples.addLast(sample)
+        }
+    }
+
+    fun snapshot(): List<FilterSlowShouldBlockSample> {
+        return synchronized(lock) {
+            samples.toList().sortedByDescending { it.timestamp }
+        }
+    }
+
+    fun reset() {
+        synchronized(lock) {
+            samples.clear()
+        }
     }
 }
 

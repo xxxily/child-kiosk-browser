@@ -28,23 +28,40 @@ object AdBlocker {
     ): FilterDecision {
         val startedAt = System.nanoTime()
         var engineForStats: site.anzz.childkiosk.util.filter.FilterEngine? = null
+        var parseNanos = 0L
+        var engineNanos = 0L
+        var eventNanos = 0L
+        var snapshotNanos = 0L
+        var requestUrlForStats = ""
+        var resourceTypeForStats: FilterResourceType? = null
+        var decisionForStats: FilterDecision? = null
         try {
             if (!snapshot.enabled || request?.url == null) return FilterDecision.ALLOW
+            val parseStartedAt = System.nanoTime()
             val scheme = request.url.scheme?.lowercase(java.util.Locale.US)
-            if (scheme != "http" && scheme != "https") return FilterDecision.ALLOW
+            if (scheme != "http" && scheme != "https") {
+                parseNanos += System.nanoTime() - parseStartedAt
+                return FilterDecision.ALLOW
+            }
             val requestUrl = request.url.toString()
-            if (requestUrl.length > 2048) return FilterDecision.ALLOW
+            requestUrlForStats = requestUrl
+            if (requestUrl.length > 2048) {
+                parseNanos += System.nanoTime() - parseStartedAt
+                return FilterDecision.ALLOW
+            }
             val requestUrlLower = requestUrl.lowercase(java.util.Locale.US)
             val requestHost = request.url.host.orEmpty().normalizeHost()
             val topLevelHost = WebViewRuntime.hostOf(topLevelUrl)
+            val resourceType = FilterResourceType.infer(
+                url = requestUrl,
+                acceptHeader = request.requestHeaders?.get("Accept"),
+                isMainFrame = request.isForMainFrame
+            )
+            resourceTypeForStats = resourceType
             val requestContext = FilterRequestContext(
                 requestUrl = requestUrl,
                 topLevelUrl = topLevelUrl,
-                resourceType = FilterResourceType.infer(
-                    url = requestUrl,
-                    acceptHeader = request.requestHeaders?.get("Accept"),
-                    isMainFrame = request.isForMainFrame
-                ),
+                resourceType = resourceType,
                 isMainFrame = request.isForMainFrame,
                 method = request.method.orEmpty(),
                 hasGesture = request.hasGesture(),
@@ -52,39 +69,64 @@ object AdBlocker {
                 topLevelHostHint = topLevelHost,
                 requestUrlLowerHint = requestUrlLower
             )
+            parseNanos += System.nanoTime() - parseStartedAt
             val engine = FilterRepository.getCachedEngine(snapshot) ?: return FilterDecision.ALLOW
             engineForStats = engine
+            val resetStartedAt = System.nanoTime()
             FilterRepository.applyPendingDiagnosticsReset(context, engine)
+            snapshotNanos += System.nanoTime() - resetStartedAt
             val siteOverride = FilterRepository.siteOverrideFor(snapshot, requestContext.topLevelHost)
+            val engineStartedAt = System.nanoTime()
             val decision = engine.decide(requestContext, siteOverride)
-            if (decision.action != FilterAction.ALLOW && shouldRecordFilterEvent()) {
-                val diagnostics = decision.diagnostics
-                val event = FilterEvent(
-                    timestamp = System.currentTimeMillis(),
-                    action = decision.action.name,
-                    url = requestUrl,
-                    topLevelUrl = topLevelUrl,
-                    resourceType = requestContext.resourceType.optionName,
-                    ruleText = decision.rule?.rawText.orEmpty(),
-                    sourceName = decision.rule?.sourceName.orEmpty(),
-                    reason = decision.reason,
-                    sourceId = decision.rule?.sourceId.orEmpty(),
-                    matchType = diagnostics?.ruleMatchType.orEmpty(),
-                    indexKey = diagnostics?.ruleIndexKey.orEmpty(),
-                    candidateCount = diagnostics?.candidateCount ?: 0,
-                    cacheStatus = diagnostics?.cacheStatus.orEmpty()
-                )
-                if (isWebviewProcess(context)) {
-                    sendFilterEventBroadcast(context, event)
-                } else {
-                    FilterRepository.recordEvent(context, event)
+            engineNanos += System.nanoTime() - engineStartedAt
+            decisionForStats = decision
+            if (decision.action != FilterAction.ALLOW) {
+                val eventStartedAt = System.nanoTime()
+                if (shouldRecordFilterEvent()) {
+                    val diagnostics = decision.diagnostics
+                    val event = FilterEvent(
+                        timestamp = System.currentTimeMillis(),
+                        action = decision.action.name,
+                        url = requestUrl,
+                        topLevelUrl = topLevelUrl,
+                        resourceType = requestContext.resourceType.optionName,
+                        ruleText = decision.rule?.rawText.orEmpty(),
+                        sourceName = decision.rule?.sourceName.orEmpty(),
+                        reason = decision.reason,
+                        sourceId = decision.rule?.sourceId.orEmpty(),
+                        matchType = diagnostics?.ruleMatchType.orEmpty(),
+                        indexKey = diagnostics?.ruleIndexKey.orEmpty(),
+                        candidateCount = diagnostics?.candidateCount ?: 0,
+                        cacheStatus = diagnostics?.cacheStatus.orEmpty()
+                    )
+                    if (isWebviewProcess(context)) {
+                        sendFilterEventBroadcast(context, event)
+                    } else {
+                        FilterRepository.recordEvent(context, event)
+                    }
                 }
+                eventNanos += System.nanoTime() - eventStartedAt
             }
             return decision
         } finally {
             engineForStats?.let { engine ->
-                engine.recordShouldBlockDuration(System.nanoTime() - startedAt)
+                val snapshotStartedAt = System.nanoTime()
                 FilterRepository.maybeRecordPerfSnapshot(context, snapshot, engine)
+                snapshotNanos += System.nanoTime() - snapshotStartedAt
+                val diagnostics = decisionForStats?.diagnostics
+                engine.recordShouldBlockDuration(
+                    totalNanos = System.nanoTime() - startedAt,
+                    parseNanos = parseNanos,
+                    engineNanos = engineNanos,
+                    eventNanos = eventNanos,
+                    snapshotNanos = snapshotNanos,
+                    resourceType = resourceTypeForStats,
+                    action = decisionForStats?.action,
+                    url = requestUrlForStats,
+                    ruleText = decisionForStats?.rule?.rawText.orEmpty(),
+                    cacheStatus = diagnostics?.cacheStatus.orEmpty(),
+                    candidateCount = diagnostics?.candidateCount ?: 0
+                )
             }
         }
     }

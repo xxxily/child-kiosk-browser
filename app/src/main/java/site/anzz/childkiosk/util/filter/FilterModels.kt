@@ -41,18 +41,19 @@ enum class FilterResourceType(val optionName: String) {
         fun infer(url: String?, acceptHeader: String?, isMainFrame: Boolean): FilterResourceType {
             if (isMainFrame) return DOCUMENT
             val lowerUrl = url.orEmpty().lowercase(Locale.US)
+            val lowerUrlPath = lowerUrl.substringBefore('#').substringBefore('?')
             val lowerAccept = acceptHeader.orEmpty().lowercase(Locale.US)
             return when {
                 lowerUrl.startsWith("ws://") || lowerUrl.startsWith("wss://") -> WEBSOCKET
-                lowerUrl.endsWith(".js") || "javascript" in lowerAccept -> SCRIPT
-                lowerUrl.endsWith(".css") || "text/css" in lowerAccept -> STYLESHEET
-                lowerUrl.endsWith(".png") || lowerUrl.endsWith(".jpg") || lowerUrl.endsWith(".jpeg") ||
-                    lowerUrl.endsWith(".gif") || lowerUrl.endsWith(".webp") || lowerUrl.endsWith(".svg") ||
+                lowerUrlPath.endsWith(".js") || "javascript" in lowerAccept -> SCRIPT
+                lowerUrlPath.endsWith(".css") || "text/css" in lowerAccept -> STYLESHEET
+                lowerUrlPath.endsWith(".png") || lowerUrlPath.endsWith(".jpg") || lowerUrlPath.endsWith(".jpeg") ||
+                    lowerUrlPath.endsWith(".gif") || lowerUrlPath.endsWith(".webp") || lowerUrlPath.endsWith(".svg") ||
                     "image/" in lowerAccept -> IMAGE
-                lowerUrl.endsWith(".woff") || lowerUrl.endsWith(".woff2") || lowerUrl.endsWith(".ttf") ||
-                    lowerUrl.endsWith(".otf") || "font/" in lowerAccept -> FONT
-                lowerUrl.endsWith(".mp4") || lowerUrl.endsWith(".webm") || lowerUrl.endsWith(".mp3") ||
-                    lowerUrl.endsWith(".m3u8") || "video/" in lowerAccept || "audio/" in lowerAccept -> MEDIA
+                lowerUrlPath.endsWith(".woff") || lowerUrlPath.endsWith(".woff2") || lowerUrlPath.endsWith(".ttf") ||
+                    lowerUrlPath.endsWith(".otf") || "font/" in lowerAccept -> FONT
+                lowerUrlPath.endsWith(".mp4") || lowerUrlPath.endsWith(".webm") || lowerUrlPath.endsWith(".mp3") ||
+                    lowerUrlPath.endsWith(".m3u8") || "video/" in lowerAccept || "audio/" in lowerAccept -> MEDIA
                 lowerUrl.contains("xhr") || "application/json" in lowerAccept -> XMLHTTPREQUEST
                 else -> OTHER
             }

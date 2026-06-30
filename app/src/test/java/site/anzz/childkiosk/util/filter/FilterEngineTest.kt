@@ -566,6 +566,71 @@ class FilterEngineTest {
     }
 
     @Test
+    fun resourceTypeInferenceIgnoresQueryAndFragmentForFileExtensions() {
+        assertEquals(
+            FilterResourceType.SCRIPT,
+            FilterResourceType.infer("https://cdn.example.com/app.js?client=1", null, false)
+        )
+        assertEquals(
+            FilterResourceType.STYLESHEET,
+            FilterResourceType.infer("https://cdn.example.com/app.css?v=1#top", null, false)
+        )
+        assertEquals(
+            FilterResourceType.IMAGE,
+            FilterResourceType.infer("https://cdn.example.com/banner.png?t=1", null, false)
+        )
+        assertEquals(
+            FilterResourceType.FONT,
+            FilterResourceType.infer("https://cdn.example.com/font.woff2?v=1", null, false)
+        )
+        assertEquals(
+            FilterResourceType.MEDIA,
+            FilterResourceType.infer("https://cdn.example.com/video.m3u8?token=1", null, false)
+        )
+    }
+
+    @Test
+    fun shouldBlockPerfRecordsSegmentedTimingsAndSlowSamples() {
+        val engine = FilterEngine.build(
+            listOf(FilterRuleSource("test", "test", "||ads.example.com^${'$'}script"))
+        )
+
+        engine.recordShouldBlockDuration(
+            totalNanos = 25_000_000L,
+            parseNanos = 2_000_000L,
+            engineNanos = 12_000_000L,
+            eventNanos = 3_000_000L,
+            snapshotNanos = 8_000_000L,
+            resourceType = FilterResourceType.SCRIPT,
+            action = FilterAction.BLOCK,
+            url = "https://ads.example.com/banner.js?x=1",
+            ruleText = "||ads.example.com^",
+            cacheStatus = "cache-miss",
+            candidateCount = 7
+        )
+
+        val snapshot = engine.perfSnapshot()
+        assertEquals(1, snapshot.shouldBlockDurationMicros.sampleCount)
+        assertEquals(1, snapshot.shouldBlockParseDurationMicros.sampleCount)
+        assertEquals(1, snapshot.shouldBlockEngineDurationMicros.sampleCount)
+        assertEquals(1, snapshot.shouldBlockEventDurationMicros.sampleCount)
+        assertEquals(1, snapshot.shouldBlockSnapshotDurationMicros.sampleCount)
+        assertEquals(25_000L, snapshot.shouldBlockDurationMicros.max)
+        assertEquals(12_000L, snapshot.shouldBlockEngineDurationMicros.max)
+        assertEquals(1, snapshot.slowShouldBlockSamples.size)
+        val sample = snapshot.slowShouldBlockSamples.single()
+        assertEquals(25_000L, sample.durationMicros)
+        assertEquals(2_000L, sample.parseMicros)
+        assertEquals(12_000L, sample.engineMicros)
+        assertEquals(3_000L, sample.eventMicros)
+        assertEquals(8_000L, sample.snapshotMicros)
+        assertEquals("script", sample.resourceType)
+        assertEquals("BLOCK", sample.action)
+        assertEquals("cache-miss", sample.cacheStatus)
+        assertEquals(7, sample.candidateCount)
+    }
+
+    @Test
     fun resetDiagnosticsClearsCountersAndDecisionCaches() {
         val engine = FilterEngine.build(
             listOf(FilterRuleSource("test", "test", "||ads.example.com^${'$'}image"))

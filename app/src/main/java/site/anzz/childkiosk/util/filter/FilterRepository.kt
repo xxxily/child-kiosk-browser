@@ -610,6 +610,10 @@ object FilterRepository {
             .put("generatedCssBytes", snapshot.generatedCssBytes)
             .put("generatedScriptletBytes", snapshot.generatedScriptletBytes)
             .put("shouldBlockDurationMicros", perfSampleStatsToJson(snapshot.shouldBlockDurationMicros))
+            .put("shouldBlockParseDurationMicros", perfSampleStatsToJson(snapshot.shouldBlockParseDurationMicros))
+            .put("shouldBlockEngineDurationMicros", perfSampleStatsToJson(snapshot.shouldBlockEngineDurationMicros))
+            .put("shouldBlockEventDurationMicros", perfSampleStatsToJson(snapshot.shouldBlockEventDurationMicros))
+            .put("shouldBlockSnapshotDurationMicros", perfSampleStatsToJson(snapshot.shouldBlockSnapshotDurationMicros))
             .put("decisionDurationMicros", perfSampleStatsToJson(snapshot.decisionDurationMicros))
             .put("candidateEvaluationsPerDecision", perfSampleStatsToJson(snapshot.candidateEvaluationsPerDecision))
             .put("cosmeticDurationMicros", perfSampleStatsToJson(snapshot.cosmeticDurationMicros))
@@ -618,6 +622,7 @@ object FilterRepository {
             .put("exceptionIndex", indexStatsToJson(snapshot.exceptionIndex))
             .put("blockingIndex", indexStatsToJson(snapshot.blockingIndex))
             .put("removeParamIndex", indexStatsToJson(snapshot.removeParamIndex))
+            .put("slowShouldBlockSamples", JSONArray(snapshot.slowShouldBlockSamples.map { slowShouldBlockSampleToJson(it) }))
     }
 
     private fun perfSnapshotFromJson(json: JSONObject): FilterPerfSnapshot? {
@@ -637,6 +642,10 @@ object FilterRepository {
                 generatedCssBytes = json.optLong("generatedCssBytes", 0L),
                 generatedScriptletBytes = json.optLong("generatedScriptletBytes", 0L),
                 shouldBlockDurationMicros = perfSampleStatsFromJson(json.optJSONObject("shouldBlockDurationMicros")),
+                shouldBlockParseDurationMicros = perfSampleStatsFromJson(json.optJSONObject("shouldBlockParseDurationMicros")),
+                shouldBlockEngineDurationMicros = perfSampleStatsFromJson(json.optJSONObject("shouldBlockEngineDurationMicros")),
+                shouldBlockEventDurationMicros = perfSampleStatsFromJson(json.optJSONObject("shouldBlockEventDurationMicros")),
+                shouldBlockSnapshotDurationMicros = perfSampleStatsFromJson(json.optJSONObject("shouldBlockSnapshotDurationMicros")),
                 decisionDurationMicros = perfSampleStatsFromJson(json.optJSONObject("decisionDurationMicros")),
                 candidateEvaluationsPerDecision = perfSampleStatsFromJson(json.optJSONObject("candidateEvaluationsPerDecision")),
                 cosmeticDurationMicros = perfSampleStatsFromJson(json.optJSONObject("cosmeticDurationMicros")),
@@ -644,9 +653,51 @@ object FilterRepository {
                 importantIndex = indexStatsFromJson(json.optJSONObject("importantIndex")),
                 exceptionIndex = indexStatsFromJson(json.optJSONObject("exceptionIndex")),
                 blockingIndex = indexStatsFromJson(json.optJSONObject("blockingIndex")),
-                removeParamIndex = indexStatsFromJson(json.optJSONObject("removeParamIndex"))
+                removeParamIndex = indexStatsFromJson(json.optJSONObject("removeParamIndex")),
+                slowShouldBlockSamples = slowShouldBlockSamplesFromJson(json.optJSONArray("slowShouldBlockSamples"))
             )
         }.getOrNull()
+    }
+
+    private fun slowShouldBlockSampleToJson(sample: FilterSlowShouldBlockSample): JSONObject {
+        return JSONObject()
+            .put("timestamp", sample.timestamp)
+            .put("durationMicros", sample.durationMicros)
+            .put("parseMicros", sample.parseMicros)
+            .put("engineMicros", sample.engineMicros)
+            .put("eventMicros", sample.eventMicros)
+            .put("snapshotMicros", sample.snapshotMicros)
+            .put("resourceType", sample.resourceType)
+            .put("action", sample.action)
+            .put("url", sample.url)
+            .put("ruleText", sample.ruleText)
+            .put("cacheStatus", sample.cacheStatus)
+            .put("candidateCount", sample.candidateCount)
+    }
+
+    private fun slowShouldBlockSamplesFromJson(array: JSONArray?): List<FilterSlowShouldBlockSample> {
+        array ?: return emptyList()
+        return buildList {
+            for (i in 0 until array.length()) {
+                val json = array.optJSONObject(i) ?: continue
+                add(
+                    FilterSlowShouldBlockSample(
+                        timestamp = json.optLong("timestamp", 0L),
+                        durationMicros = json.optLong("durationMicros", 0L),
+                        parseMicros = json.optLong("parseMicros", 0L),
+                        engineMicros = json.optLong("engineMicros", 0L),
+                        eventMicros = json.optLong("eventMicros", 0L),
+                        snapshotMicros = json.optLong("snapshotMicros", 0L),
+                        resourceType = json.optString("resourceType"),
+                        action = json.optString("action"),
+                        url = json.optString("url"),
+                        ruleText = json.optString("ruleText"),
+                        cacheStatus = json.optString("cacheStatus"),
+                        candidateCount = json.optInt("candidateCount", 0)
+                    )
+                )
+            }
+        }
     }
 
     private fun perfSampleStatsToJson(stats: FilterPerfSampleStats): JSONObject {
