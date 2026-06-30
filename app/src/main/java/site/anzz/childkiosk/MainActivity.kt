@@ -24,9 +24,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import site.anzz.childkiosk.data.AppDatabase
+import site.anzz.childkiosk.data.WebAppEntity
+import site.anzz.childkiosk.ui.AddEditWebAppDialog
 import site.anzz.childkiosk.ui.AdminConsoleScreen
 import site.anzz.childkiosk.ui.KioskMainScreen
 import site.anzz.childkiosk.ui.theme.ChildKioskTheme
@@ -39,6 +42,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsOverlay
 import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsCallbacks
 import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 
 class MainActivity : ComponentActivity() {
@@ -47,6 +52,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var adminComponent: ComponentName
     private var isSoftLockDeferred = false
     private var filterEventReceiver: site.anzz.childkiosk.util.filter.FilterEventReceiver? = null
+    private var pendingEditRequest by mutableStateOf<PendingWebAppEdit?>(null)
+
+    private data class PendingWebAppEdit(
+        val app: WebAppEntity?,
+        val initialTitle: String = "",
+        val initialUrl: String = "",
+        val initialCategory: String = WebAppEntity.CATEGORY_OTHER
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // 0. 早期屏幕方向设置，避免启动闪烁
@@ -118,6 +131,7 @@ class MainActivity : ComponentActivity() {
                     val systemConfig by db.systemConfigDao()
                         .getSystemConfigFlow()
                         .collectAsState(initial = null)
+                    val scope = rememberCoroutineScope()
 
                     val iconSizeMode = remember(currentScreen) {
                         KioskPrefs.getIconSizeMode(this@MainActivity)
@@ -138,6 +152,10 @@ class MainActivity : ComponentActivity() {
                                     iconSizeMode = iconSizeMode,
                                     wallpaperPreset = wallpaperPreset,
                                     normalSystemBars = isNormalSystemUiMode(),
+                                    allowWebAppEdit = isNormalSystemUiMode(),
+                                    onEditWebApp = { app ->
+                                        pendingEditRequest = PendingWebAppEdit(app = app)
+                                    },
                                     onEnterAdmin = { currentScreen = "ADMIN" },
                                     onExitKiosk = { stopLockTaskMode() }
                                 )
@@ -215,6 +233,62 @@ class MainActivity : ComponentActivity() {
                             },
                             onSandboxLimitsChanged = {
                                 applySandboxLimits()
+                            },
+                            normalSystemBars = isNormalSystemUiMode()
+                        )
+                    }
+
+                    pendingEditRequest?.let { request ->
+                        AddEditWebAppDialog(
+                            app = request.app,
+                            initialTitle = request.initialTitle,
+                            initialUrl = request.initialUrl,
+                            initialCategory = request.initialCategory,
+                            onDismiss = {
+                                pendingEditRequest = null
+                            },
+                            onSave = { title, url, icon, category ->
+                                val existingApp = request.app
+                                scope.launch(Dispatchers.IO) {
+                                    if (existingApp == null) {
+                                        val existing = db.webAppDao().getAllWebApps().firstOrNull { app ->
+                                            normalizeWebUrlForCompare(app.url) == normalizeWebUrlForCompare(url)
+                                        }
+                                        if (existing == null) {
+                                            db.webAppDao().insertWebApp(
+                                                WebAppEntity(
+                                                    title = title,
+                                                    url = url,
+                                                    iconPath = icon,
+                                                    isPreset = false,
+                                                    isEnabled = true,
+                                                    category = category,
+                                                    sourceType = WebAppEntity.SOURCE_LOCAL
+                                                )
+                                            )
+                                        } else {
+                                            db.webAppDao().updateWebApp(
+                                                existing.copy(
+                                                    title = title,
+                                                    url = url,
+                                                    iconPath = icon,
+                                                    category = category,
+                                                    isEnabled = true
+                                                )
+                                            )
+                                        }
+                                    } else {
+                                        db.webAppDao().updateWebApp(
+                                            existingApp.copy(title = title, url = url, iconPath = icon, category = category)
+                                        )
+                                    }
+                                }
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    if (existingApp == null) "已添加到应用白名单" else "应用已更新",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                pendingEditRequest = null
                             }
                         )
                     }
@@ -235,10 +309,36 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        consumePendingWebAppEditIntent(intent)
         applyRequestedOrientation()
         applySystemUiMode()
         WebViewPool.warmupBlank()
         triggerKioskIfNeeded()
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        consumePendingWebAppEditIntent(intent)
+    }
+
+    private fun consumePendingWebAppEditIntent(intent: Intent?) {
+        intent ?: return
+        if (intent.getBooleanExtra(EXTRA_EDIT_WEB_APP_REQUEST, false)) {
+            val title = intent.getStringExtra(EXTRA_EDIT_WEB_APP_TITLE).orEmpty()
+            val url = intent.getStringExtra(EXTRA_EDIT_WEB_APP_URL).orEmpty()
+            if (url.isNotBlank()) {
+                pendingEditRequest = PendingWebAppEdit(
+                    app = null,
+                    initialTitle = title.ifBlank { "收藏网站" },
+                    initialUrl = url,
+                    initialCategory = WebAppEntity.CATEGORY_OTHER
+                )
+            }
+            intent.removeExtra(EXTRA_EDIT_WEB_APP_REQUEST)
+            intent.removeExtra(EXTRA_EDIT_WEB_APP_TITLE)
+            intent.removeExtra(EXTRA_EDIT_WEB_APP_URL)
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -491,5 +591,21 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+        const val EXTRA_EDIT_WEB_APP_REQUEST = "site.anzz.childkiosk.extra.EDIT_WEB_APP_REQUEST"
+        const val EXTRA_EDIT_WEB_APP_TITLE = "site.anzz.childkiosk.extra.EDIT_WEB_APP_TITLE"
+        const val EXTRA_EDIT_WEB_APP_URL = "site.anzz.childkiosk.extra.EDIT_WEB_APP_URL"
+    }
+
+    private fun normalizeWebUrlForCompare(url: String): String {
+        return runCatching {
+            val uri = android.net.Uri.parse(url.trim())
+            val scheme = uri.scheme?.lowercase() ?: return@runCatching ""
+            val host = uri.host?.lowercase() ?: return@runCatching ""
+            if (scheme != "http" && scheme != "https") return@runCatching ""
+            val port = if (uri.port >= 0) ":${uri.port}" else ""
+            val path = uri.encodedPath?.takeIf { it.isNotBlank() } ?: "/"
+            val query = uri.encodedQuery?.let { "?$it" }.orEmpty()
+            "$scheme://$host$port$path$query"
+        }.getOrDefault("")
     }
 }

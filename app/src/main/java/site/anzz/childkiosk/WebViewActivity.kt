@@ -35,6 +35,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import site.anzz.childkiosk.data.AppDatabase
+import site.anzz.childkiosk.data.BrowserHistoryEntity
 import site.anzz.childkiosk.data.SystemConfigEntity
 import site.anzz.childkiosk.data.WebAppEntity
 import site.anzz.childkiosk.ui.browser.BrowserTab
@@ -105,6 +106,9 @@ class WebViewActivity : ComponentActivity() {
     private var currentPageLoading = false
     private var currentPageProgress = 0
     private var navigationRootHost = ""
+    private var launchedWebAppId: Int? = null
+    private var lastRecordedHistoryUrl: String = ""
+    private var lastRecordedHistoryAtMs: Long = 0L
     private lateinit var runtimeConfig: WebViewRuntimeConfig
     private var pendingGeolocationRequest: PendingGeolocationRequest? = null
     private var geolocationPermissionDialog: AlertDialog? = null
@@ -229,6 +233,7 @@ class WebViewActivity : ComponentActivity() {
         }
 
         val webAppId = intent.getIntExtra(EXTRA_WEB_APP_ID, -1)
+        launchedWebAppId = webAppId.takeIf { it > 0 }
         Log.d(
             "ChildKioskWebView",
             "Host mode applied: NATIVE_FRAME_LAYOUT, composeHost=false, webAppId=$webAppId"
@@ -586,6 +591,7 @@ class WebViewActivity : ComponentActivity() {
 
             withContext(Dispatchers.Main) {
                 if (webApp != null) {
+                    launchedWebAppId = webApp.id
                     val existing = tabList.firstOrNull { it.url == webApp.url }
                     if (existing != null) {
                         switchToTab(existing.id)
@@ -593,6 +599,7 @@ class WebViewActivity : ComponentActivity() {
                         createNewTab(webApp.url, focus = true)
                     }
                 } else if (!customUrl.isNullOrBlank()) {
+                    launchedWebAppId = null
                     val existing = tabList.firstOrNull { it.url == customUrl }
                     if (existing != null) {
                         switchToTab(existing.id)
@@ -756,6 +763,9 @@ class WebViewActivity : ComponentActivity() {
                 if (rootWebView === webViewRef) {
                     updateFloatingControlsState()
                 }
+            },
+            onPageCommitted = { pageUrl, pageTitle ->
+                recordBrowserHistory(pageUrl, pageTitle)
             },
             onError = { error ->
                 Log.w("ChildKioskWebView", "Native WebView main frame error: $error")
@@ -958,6 +968,9 @@ class WebViewActivity : ComponentActivity() {
                     updateFloatingControlsState()
                 }
             },
+            onPageCommitted = { pageUrl, pageTitle ->
+                recordBrowserHistory(pageUrl, pageTitle)
+            },
             onError = { error ->
                 Log.w("ChildKioskWebView", "Native WebView main frame error: $error")
                 Toast.makeText(this, "网页加载异常：$error", Toast.LENGTH_LONG).show()
@@ -1096,45 +1109,18 @@ class WebViewActivity : ComponentActivity() {
             normalizedUrl = normalizedUrl
         )
 
-        lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val dao = AppDatabase.getInstance(this@WebViewActivity).webAppDao()
-                    val existing = dao.getAllWebApps().firstOrNull { app ->
-                        normalizeWhitelistWebUrl(app.url) == normalizedUrl
-                    }
-                    when {
-                        existing == null -> {
-                            dao.insertWebApp(
-                                WebAppEntity(
-                                    title = title,
-                                    url = normalizedUrl,
-                                    iconPath = "icon_gift",
-                                    isPreset = false,
-                                    isEnabled = true,
-                                    category = WebAppEntity.CATEGORY_OTHER,
-                                    sourceType = WebAppEntity.SOURCE_LOCAL
-                                )
-                            )
-                            "已添加到应用白名单"
-                        }
-                        existing.isEnabled -> {
-                            "该网站已在应用白名单中"
-                        }
-                        else -> {
-                            dao.updateWebApp(existing.copy(isEnabled = true))
-                            "该网站已在白名单中，已重新启用"
-                        }
-                    }
-                }
+        runCatching {
+            val intent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(MainActivity.EXTRA_EDIT_WEB_APP_REQUEST, true)
+                putExtra(MainActivity.EXTRA_EDIT_WEB_APP_TITLE, title)
+                putExtra(MainActivity.EXTRA_EDIT_WEB_APP_URL, normalizedUrl)
             }
-
-            result.onSuccess { message ->
-                Toast.makeText(this@WebViewActivity, message, Toast.LENGTH_SHORT).show()
-            }.onFailure { error ->
-                Log.e("ChildKioskWebView", "Failed to bookmark current page", error)
-                Toast.makeText(this@WebViewActivity, "添加白名单失败：${error.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
-            }
+            startActivity(intent)
+            floatingControlsOverlay?.collapsePanel()
+        }.onFailure { error ->
+            Log.e("ChildKioskWebView", "Failed to open bookmark editor", error)
+            Toast.makeText(this, "无法打开收藏编辑界面：${error.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -1405,6 +1391,41 @@ class WebViewActivity : ComponentActivity() {
             progress = currentPageProgress.coerceIn(0, 100),
             tabs = tabStateInfos
         )
+    }
+
+    private fun recordBrowserHistory(pageUrl: String, pageTitle: String?) {
+        val normalizedUrl = normalizeWhitelistWebUrl(pageUrl)
+        if (normalizedUrl.isBlank()) return
+        val now = System.currentTimeMillis()
+        if (normalizedUrl == lastRecordedHistoryUrl && now - lastRecordedHistoryAtMs < 30_000L) {
+            return
+        }
+        lastRecordedHistoryUrl = normalizedUrl
+        lastRecordedHistoryAtMs = now
+
+        val host = WebViewRuntime.hostOf(normalizedUrl).lowercase(Locale.US)
+        val cleanTitle = bookmarkTitleForCurrentPage(
+            currentTitle = pageTitle.orEmpty(),
+            normalizedUrl = normalizedUrl
+        )
+        val webAppId = launchedWebAppId
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching {
+                val dao = AppDatabase.getInstance(this@WebViewActivity).browserHistoryDao()
+                dao.insert(
+                    BrowserHistoryEntity(
+                        title = cleanTitle,
+                        url = normalizedUrl,
+                        host = host,
+                        visitedAt = now,
+                        webAppId = webAppId
+                    )
+                )
+                dao.deleteOlderThan(now - HISTORY_RETENTION_MS)
+            }.onFailure { error ->
+                Log.w("ChildKioskWebView", "Failed to record browser history", error)
+            }
+        }
     }
 
     private fun startTimeLimitTracking() {
@@ -1938,6 +1959,7 @@ class WebViewActivity : ComponentActivity() {
         const val EXTRA_CUSTOM_URL = "CUSTOM_URL"
         const val EXTRA_SWITCH_TAB_ID = "SWITCH_TAB_ID"
         const val EXTRA_CLOSE_TAB_ID = "CLOSE_TAB_ID"
+        private const val HISTORY_RETENTION_MS = 90L * 24L * 60L * 60L * 1000L
     }
 }
 
@@ -1952,6 +1974,7 @@ private fun createSecureWebView(
     onLoadingStateChanged: (Boolean) -> Unit,
     onProgressUpdate: (Int) -> Unit,
     onNavigationStateChanged: () -> Unit,
+    onPageCommitted: (url: String, title: String?) -> Unit,
     onError: (String) -> Unit,
     existingWebView: WebView? = null,
     runtimeConfig: WebViewRuntimeConfig,
@@ -2018,6 +2041,9 @@ private fun createSecureWebView(
 
                 onLoadingStateChanged(false)
                 onNavigationStateChanged()
+                if (view != null && !url.isNullOrBlank() && WebViewRuntime.isWebUrl(url)) {
+                    onPageCommitted(url, view.title)
+                }
             }
 
             override fun onReceivedError(
@@ -2244,6 +2270,7 @@ private fun createSecureWebView(
                     onLoadingStateChanged = onLoadingStateChanged,
                     onProgressUpdate = onProgressUpdate,
                     onNavigationStateChanged = onNavigationStateChanged,
+                    onPageCommitted = onPageCommitted,
                     onError = onError,
                     runtimeConfig = runtimeConfig,
                     onShowFileChooser = onShowFileChooser,

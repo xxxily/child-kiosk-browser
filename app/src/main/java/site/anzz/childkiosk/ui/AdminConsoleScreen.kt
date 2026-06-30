@@ -25,11 +25,13 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -44,6 +46,8 @@ import site.anzz.childkiosk.util.WebViewProviderDiagnostics
 import site.anzz.childkiosk.util.WebViewProviderSnapshot
 import site.anzz.childkiosk.util.WebViewRuntime
 import site.anzz.childkiosk.util.WebViewPool
+import site.anzz.childkiosk.util.WebIconCandidate
+import site.anzz.childkiosk.util.WebIconDiscovery
 import site.anzz.childkiosk.util.WhitelistSubscriptionRepository
 import site.anzz.childkiosk.util.filter.FilterBuildReport
 import site.anzz.childkiosk.util.filter.FilterEvent
@@ -56,6 +60,7 @@ import site.anzz.childkiosk.util.filter.FilterRepository
 import site.anzz.childkiosk.util.filter.SiteFilterOverride
 import site.anzz.childkiosk.util.filter.normalizeHost
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
@@ -66,6 +71,8 @@ import android.provider.Settings
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import site.anzz.childkiosk.WebViewActivity
+import site.anzz.childkiosk.data.BrowserHistoryEntity
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,7 +83,8 @@ fun AdminConsoleScreen(
     onExitKiosk: () -> Unit,
     onGoToHomeSettings: () -> Unit,
     onProtectionModeChanged: (String) -> Unit = {},
-    onSandboxLimitsChanged: () -> Unit = {}
+    onSandboxLimitsChanged: () -> Unit = {},
+    normalSystemBars: Boolean = false
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -84,7 +92,9 @@ fun AdminConsoleScreen(
     val db = remember { AppDatabase.getInstance(context) }
 
     var webApps by remember { mutableStateOf<List<WebAppEntity>>(emptyList()) }
+    var browserHistory by remember { mutableStateOf<List<BrowserHistoryEntity>>(emptyList()) }
     var showAddDialog by remember { mutableStateOf(false) }
+    var addingInitialWebApp by remember { mutableStateOf<WebAppEntity?>(null) }
     var editingWebApp by remember { mutableStateOf<WebAppEntity?>(null) }
     var whitelistSubscriptionUrl by remember { mutableStateOf(KioskPrefs.getWhitelistSubscriptionUrl(context)) }
     var whitelistAutoRefresh by remember {
@@ -226,6 +236,12 @@ fun AdminConsoleScreen(
         }
     }
 
+    LaunchedEffect(Unit) {
+        db.browserHistoryDao().getRecentHistoryFlow(200).collect { list ->
+            browserHistory = list
+        }
+    }
+
     LaunchedEffect(currentSubPage) {
         quickMode = KioskPrefs.getQuickMode(context)
         protectionMode = KioskPrefs.getProtectionMode(context)
@@ -249,6 +265,7 @@ fun AdminConsoleScreen(
                         "PERFORMANCE" -> "网页性能优化"
                         "WEBVIEW_PROVIDER" -> "WebView 内核环境"
                         "WHITELIST" -> "应用白名单管理"
+                        "HISTORY" -> "浏览历史记录"
                         else -> "配置后台"
                     }
                     Text(titleText, fontWeight = FontWeight.Bold)
@@ -374,6 +391,13 @@ fun AdminConsoleScreen(
                                         title = "应用白名单管理",
                                         summary = "管理并分类展示允许访问的应用（共 ${webApps.size} 个应用）",
                                         onClick = { currentSubPage = "WHITELIST" }
+                                    )
+                                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                                    AdminMenuItem(
+                                        icon = Icons.Default.History,
+                                        title = "浏览历史记录",
+                                        summary = "查看最近访问的网站，支持恢复访问或加入白名单（共 ${browserHistory.size} 条）",
+                                        onClick = { currentSubPage = "HISTORY" }
                                     )
                                 }
                             }
@@ -2518,17 +2542,71 @@ fun AdminConsoleScreen(
                         }
                     }
                 }
+                "HISTORY" -> {
+                    BrowserHistoryScreen(
+                        history = browserHistory,
+                        onOpen = { item ->
+                            val intent = Intent(context, WebViewActivity::class.java).apply {
+                                putExtra(WebViewActivity.EXTRA_CUSTOM_URL, item.url)
+                                putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, KioskPrefs.getOrientationMode(context))
+                                KioskPrefs.putWebViewRuntimeConfig(this, context, normalSystemBars)
+                            }
+                            context.startActivity(intent)
+                        },
+                        onAddToWhitelist = { item ->
+                            editingWebApp = null
+                            showAddDialog = false
+                            addingInitialWebApp = null
+                            scope.launch {
+                                val existing = withContext(Dispatchers.IO) {
+                                    db.webAppDao().getAllWebApps().firstOrNull { app ->
+                                        normalizeHistoryUrl(app.url) == normalizeHistoryUrl(item.url)
+                                    }
+                                }
+                                if (existing != null) {
+                                    editingWebApp = existing
+                                } else {
+                                    addingInitialWebApp = WebAppEntity(
+                                        title = item.title,
+                                        url = item.url,
+                                        iconPath = null,
+                                        isPreset = false,
+                                        isEnabled = true,
+                                        category = WebAppEntity.CATEGORY_OTHER,
+                                        sourceType = WebAppEntity.SOURCE_LOCAL
+                                    )
+                                }
+                            }
+                        },
+                        onDelete = { item ->
+                            scope.launch(Dispatchers.IO) {
+                                db.browserHistoryDao().deleteById(item.id)
+                            }
+                        },
+                        onClearAll = {
+                            scope.launch(Dispatchers.IO) {
+                                db.browserHistoryDao().clearAll()
+                            }
+                            Toast.makeText(context, "浏览历史已清空", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
             }
         }
     }
 
     // 添加 / 编辑 Web 应用 Dialog
-    if (showAddDialog || editingWebApp != null) {
+    if (showAddDialog || editingWebApp != null || addingInitialWebApp != null) {
         val appToEdit = editingWebApp
+        val initialApp = addingInitialWebApp
         AddEditWebAppDialog(
             app = appToEdit,
+            initialTitle = initialApp?.title.orEmpty(),
+            initialUrl = initialApp?.url.orEmpty(),
+            initialCategory = initialApp?.category ?: WebAppEntity.CATEGORY_GAME,
             onDismiss = {
                 showAddDialog = false
+                addingInitialWebApp = null
                 editingWebApp = null
             },
             onSave = { title, url, icon, category ->
@@ -2544,6 +2622,7 @@ fun AdminConsoleScreen(
                     }
                 }
                 showAddDialog = false
+                addingInitialWebApp = null
                 editingWebApp = null
             }
         )
@@ -4236,215 +4315,259 @@ fun WebAppCard(
     }
 }
 
-fun getIconVector(iconName: String?): ImageVector {
-    return when (iconName) {
-        "icon_gamepad" -> Icons.Default.SportsEsports
-        "icon_rocket" -> Icons.Default.Star
-        "icon_puzzle" -> Icons.Default.Extension
-        "icon_book" -> Icons.Default.MenuBook
-        "icon_paint" -> Icons.Default.Palette
-        "icon_pet" -> Icons.Default.Pets
-        "icon_music" -> Icons.Default.MusicNote
-        "icon_school" -> Icons.Default.School
-        "icon_lightbulb" -> Icons.Default.Lightbulb
-        "icon_toy" -> Icons.Default.Face
-        "icon_gift" -> Icons.Default.Favorite
-        "icon_home" -> Icons.Default.Home
-        else -> Icons.Default.Star
+@Composable
+private fun BrowserHistoryScreen(
+    history: List<BrowserHistoryEntity>,
+    onOpen: (BrowserHistoryEntity) -> Unit,
+    onAddToWhitelist: (BrowserHistoryEntity) -> Unit,
+    onDelete: (BrowserHistoryEntity) -> Unit,
+    onClearAll: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("最近浏览", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "保留最近 90 天访问记录，当前显示最近 ${history.size} 条",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    OutlinedButton(
+                        enabled = history.isNotEmpty(),
+                        onClick = onClearAll,
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("清空", fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
+        if (history.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 220.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "暂无浏览历史",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 14.sp
+                )
+            }
+        } else {
+            history.forEach { item ->
+                BrowserHistoryCard(
+                    item = item,
+                    onOpen = { onOpen(item) },
+                    onAddToWhitelist = { onAddToWhitelist(item) },
+                    onDelete = { onDelete(item) }
+                )
+            }
+        }
     }
+}
+
+@Composable
+private fun BrowserHistoryCard(
+    item: BrowserHistoryEntity,
+    onOpen: () -> Unit,
+    onAddToWhitelist: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = item.host.take(1).uppercase(Locale.getDefault()).ifBlank { "W" },
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = item.title.ifBlank { item.host },
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = item.url,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = formatHistoryTime(item.visitedAt),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onOpen) {
+                    Icon(imageVector = Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("打开", fontSize = 12.sp)
+                }
+                TextButton(onClick = onAddToWhitelist) {
+                    Icon(imageVector = Icons.Default.PlaylistAdd, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("加入白名单", fontSize = 12.sp)
+                }
+                IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "删除历史",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatHistoryTime(timestamp: Long): String {
+    return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
+}
+
+private fun normalizeHistoryUrl(url: String): String {
+    return runCatching {
+        val uri = Uri.parse(url.trim())
+        val scheme = uri.scheme?.lowercase(Locale.US) ?: return@runCatching ""
+        val host = uri.host?.lowercase(Locale.US) ?: return@runCatching ""
+        if (scheme != "http" && scheme != "https") return@runCatching ""
+        val port = if (uri.port >= 0) ":${uri.port}" else ""
+        val path = uri.encodedPath?.takeIf { it.isNotBlank() } ?: "/"
+        val query = uri.encodedQuery?.let { "?$it" }.orEmpty()
+        "$scheme://$host$port$path$query"
+    }.getOrDefault("")
 }
 
 private fun isValidUrl(url: String): Boolean {
     val trimmed = url.trim()
-    val hasProtocol = trimmed.startsWith("http://", ignoreCase = true) || 
+    val hasProtocol = trimmed.startsWith("http://", ignoreCase = true) ||
                       trimmed.startsWith("https://", ignoreCase = true)
     val urlToCheck = if (hasProtocol) trimmed else "https://$trimmed"
     return android.util.Patterns.WEB_URL.matcher(urlToCheck).matches()
 }
 
 private fun formatUrl(url: String): String {
-    val trimmed = url.trim()
-    return when {
-        trimmed.startsWith("http://", ignoreCase = true) -> trimmed
-        trimmed.startsWith("https://", ignoreCase = true) -> trimmed
-        else -> "https://$trimmed"
-    }
-}
-
-private fun defaultFaviconPngUrl(url: String): String? {
-    return runCatching {
-        val base = URL(formatUrl(url))
-        if (base.host.isNullOrBlank()) return@runCatching null
-        URL(base.protocol, base.host, base.port, "/favicon.png").toString()
-    }.getOrNull()
-}
-
-private suspend fun discoverBestFaviconUrl(siteUrl: String): String? = withContext(Dispatchers.IO) {
-    runCatching {
-        val base = URL(formatUrl(siteUrl))
-        val faviconPng = URL(base.protocol, base.host, base.port, "/favicon.png").toString()
-        if (isReachableIconUrl(faviconPng)) return@withContext faviconPng
-
-        discoverDeclaredIconUrls(base)
-            .firstOrNull { isReachableIconUrl(it) }
-            ?.let { return@withContext it }
-
-        val appleTouchIcon = URL(base.protocol, base.host, base.port, "/apple-touch-icon.png").toString()
-        if (isReachableIconUrl(appleTouchIcon)) return@withContext appleTouchIcon
-
-        val faviconIco = URL(base.protocol, base.host, base.port, "/favicon.ico").toString()
-        if (isReachableIconUrl(faviconIco)) return@withContext faviconIco
-
-        faviconIco
-    }.getOrNull()
-}
-
-private fun discoverDeclaredIconUrls(base: URL): List<String> {
-    val html = runCatching {
-        val conn = (base.openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            instanceFollowRedirects = true
-            connectTimeout = 3500
-            readTimeout = 3500
-            setRequestProperty("User-Agent", "ChildKioskBrowser/1.0")
-            setRequestProperty("Accept", "text/html,application/xhtml+xml")
-        }
-        try {
-            conn.inputStream.bufferedReader().use { reader ->
-                val buffer = CharArray(96 * 1024)
-                val read = reader.read(buffer)
-                if (read <= 0) "" else String(buffer, 0, read)
-            }
-        } finally {
-            conn.disconnect()
-        }
-    }.getOrDefault("")
-    if (html.isBlank()) return emptyList()
-
-    val linkTagRegex = Regex("<link\\b[^>]*>", RegexOption.IGNORE_CASE)
-    val attrRegex = Regex("""([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>`]+))""")
-    return linkTagRegex.findAll(html)
-        .mapNotNull { match ->
-            val attrs = attrRegex.findAll(match.value)
-                .associate { attr ->
-                    val key = attr.groupValues[1].lowercase(Locale.US)
-                    val value = attr.groupValues.drop(2).firstOrNull { it.isNotEmpty() }.orEmpty()
-                    key to value
-                }
-            val rel = attrs["rel"]?.lowercase(Locale.US).orEmpty()
-            val href = attrs["href"].orEmpty()
-            if (!rel.contains("icon") || href.isBlank()) return@mapNotNull null
-            val iconUrl = runCatching { URL(base, href).toString() }.getOrNull() ?: return@mapNotNull null
-            if (!iconUrl.startsWith("https://", ignoreCase = true) &&
-                !iconUrl.startsWith("http://", ignoreCase = true)
-            ) {
-                return@mapNotNull null
-            }
-            iconCandidateScore(iconUrl, attrs) to iconUrl
-        }
-        .sortedByDescending { it.first }
-        .map { it.second }
-        .distinct()
-        .toList()
-}
-
-private fun iconCandidateScore(url: String, attrs: Map<String, String>): Int {
-    val rel = attrs["rel"]?.lowercase(Locale.US).orEmpty()
-    val type = attrs["type"]?.lowercase(Locale.US).orEmpty()
-    val sizes = attrs["sizes"].orEmpty()
-    var score = 0
-    if ("apple-touch-icon" in rel) score += 60
-    if ("icon" in rel) score += 40
-    if ("shortcut" in rel) score += 5
-    if (url.endsWith(".png", ignoreCase = true) || type.contains("png")) score += 35
-    if (url.endsWith(".webp", ignoreCase = true) || type.contains("webp")) score += 30
-    if (url.endsWith(".svg", ignoreCase = true) || type.contains("svg")) score += 25
-    if (url.endsWith(".ico", ignoreCase = true) || type.contains("icon")) score += 10
-    if (sizes.equals("any", ignoreCase = true)) score += 20
-    val largestSize = Regex("""(\d+)x(\d+)""").findAll(sizes)
-        .mapNotNull { match ->
-            val width = match.groupValues[1].toIntOrNull() ?: return@mapNotNull null
-            val height = match.groupValues[2].toIntOrNull() ?: return@mapNotNull null
-            width * height
-        }
-        .maxOrNull()
-    if (largestSize != null) {
-        score += (largestSize / 1024).coerceAtMost(80)
-    }
-    return score
-}
-
-private fun isReachableIconUrl(url: String): Boolean {
-    return runCatching {
-        val head = openIconConnection(url, "HEAD")
-        val headCode = head.responseCode
-        head.disconnect()
-        when {
-            headCode in 200..399 -> true
-            headCode == HttpURLConnection.HTTP_BAD_METHOD || headCode == HttpURLConnection.HTTP_FORBIDDEN -> {
-                val get = openIconConnection(url, "GET")
-                val getCode = get.responseCode
-                get.disconnect()
-                getCode in 200..399
-            }
-            else -> false
-        }
-    }.getOrDefault(false)
-}
-
-private fun openIconConnection(url: String, method: String): HttpURLConnection {
-    return (URL(url).openConnection() as HttpURLConnection).apply {
-        requestMethod = method
-        instanceFollowRedirects = true
-        connectTimeout = 2500
-        readTimeout = 2500
-        setRequestProperty("User-Agent", "ChildKioskBrowser/1.0")
-        setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
-    }
+    return WebIconDiscovery.normalizeWebUrl(url)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddEditWebAppDialog(
     app: WebAppEntity?,
+    initialTitle: String = "",
+    initialUrl: String = "",
+    initialCategory: String = WebAppEntity.CATEGORY_GAME,
     onDismiss: () -> Unit,
     onSave: (title: String, url: String, icon: String, category: String) -> Unit
 ) {
-    var title by remember { mutableStateOf(app?.title ?: "") }
-    var urlInput by remember { mutableStateOf(app?.url ?: "") }
-    var category by remember { mutableStateOf(app?.category ?: WebAppEntity.CATEGORY_GAME) }
+    var title by remember { mutableStateOf(app?.title ?: initialTitle) }
+    var urlInput by remember { mutableStateOf(app?.url ?: initialUrl) }
+    var category by remember { mutableStateOf(app?.category ?: initialCategory) }
     
     // 如果已有应用且 iconPath 是网络地址，初始化 customIconUrl，否则为空
     var customIconUrl by remember { 
         mutableStateOf(if (app?.iconPath?.startsWith("http", ignoreCase = true) == true) app.iconPath else "") 
     }
     var selectedIcon by remember { mutableStateOf(app?.iconPath ?: "icon_gamepad") }
-    var lastAutoIconUrl by remember { mutableStateOf("") }
+    var discoveredIcons by remember { mutableStateOf<List<WebIconCandidate>>(emptyList()) }
+    var isDiscoveringIcons by remember { mutableStateOf(false) }
+    var iconDiscoveryMessage by remember { mutableStateOf<String?>(null) }
+    var lastAutoIconUrl by remember { mutableStateOf(if (WebIconDiscovery.isNetworkIconUrl(app?.iconPath)) app?.iconPath.orEmpty() else "") }
     
     var isCheckingUrl by remember { mutableStateOf(false) }
     var urlError by remember { mutableStateOf<String?>(null) }
     var pingFailedOnce by remember { mutableStateOf(false) }
 
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
     val scope = rememberCoroutineScope()
+    val dialogMaxHeight = (configuration.screenHeightDp.dp - 32.dp).coerceAtLeast(360.dp)
 
-    // 自动发现网站图标：先尝试 /favicon.png，再解析页面声明图标，最后回退 /favicon.ico。
-    LaunchedEffect(urlInput) {
+    // 自动发现网站图标：解析 HTML/Manifest 声明图标，并补充根目录常见 fallback。
+    LaunchedEffect(urlInput, app?.id) {
         val trimmed = urlInput.trim()
-        if (trimmed.isNotEmpty() && isValidUrl(trimmed)) {
-            val formatted = formatUrl(trimmed)
-            if (customIconUrl.isBlank() || customIconUrl == lastAutoIconUrl) {
-                val previousAutoIconUrl = lastAutoIconUrl
-                val discoveredIcon = discoverBestFaviconUrl(formatted) ?: defaultFaviconPngUrl(formatted)
-                if (!discoveredIcon.isNullOrBlank() &&
-                    (customIconUrl.isBlank() || customIconUrl == previousAutoIconUrl)
-                ) {
-                    lastAutoIconUrl = discoveredIcon
-                    customIconUrl = discoveredIcon
-                    if (selectedIcon == "icon_gamepad" || selectedIcon == previousAutoIconUrl) {
-                        selectedIcon = discoveredIcon
-                    }
+        discoveredIcons = emptyList()
+        iconDiscoveryMessage = null
+        if (trimmed.isBlank() || !isValidUrl(trimmed)) return@LaunchedEffect
+
+        delay(350)
+        val formatted = formatUrl(trimmed)
+        val previousAutoIconUrl = lastAutoIconUrl
+        val canAutoReplace = app == null ||
+            customIconUrl == previousAutoIconUrl ||
+            selectedIcon == previousAutoIconUrl
+
+        isDiscoveringIcons = true
+        val candidates = WebIconDiscovery.discover(context, formatted)
+        isDiscoveringIcons = false
+        discoveredIcons = candidates
+
+        val best = candidates.firstOrNull()
+        if (best != null) {
+            iconDiscoveryMessage = "已找到 ${candidates.size} 个网站图标"
+            if (canAutoReplace) {
+                lastAutoIconUrl = best.url
+                customIconUrl = best.url
+                if (selectedIcon == "icon_gamepad" || selectedIcon == previousAutoIconUrl || WebIconDiscovery.isNetworkIconUrl(selectedIcon)) {
+                    selectedIcon = best.url
                 }
             }
+        } else {
+            iconDiscoveryMessage = "未找到可用网站图标，可手动填写图标地址"
         }
     }
 
@@ -4464,7 +4587,10 @@ fun AddEditWebAppDialog(
     Dialog(onDismissRequest = onDismiss) {
         Card(
             shape = RoundedCornerShape(20.dp),
-            modifier = Modifier.fillMaxWidth().padding(16.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = dialogMaxHeight)
+                .padding(16.dp)
         ) {
             Column(
                 modifier = Modifier
@@ -4566,37 +4692,22 @@ fun AddEditWebAppDialog(
                         .horizontalScroll(rememberScrollState())
                         .padding(bottom = 4.dp)
                 ) {
-                    val icons = listOf(
-                        "icon_gamepad" to Icons.Default.SportsEsports,
-                        "icon_rocket" to Icons.Default.Star,
-                        "icon_puzzle" to Icons.Default.Extension,
-                        "icon_book" to Icons.Default.MenuBook,
-                        "icon_paint" to Icons.Default.Palette,
-                        "icon_pet" to Icons.Default.Pets,
-                        "icon_music" to Icons.Default.MusicNote,
-                        "icon_school" to Icons.Default.School,
-                        "icon_lightbulb" to Icons.Default.Lightbulb,
-                        "icon_toy" to Icons.Default.Face,
-                        "icon_gift" to Icons.Default.Favorite,
-                        "icon_home" to Icons.Default.Home
-                    )
-
-                    icons.forEach { (name, vec) ->
-                        val selected = selectedIcon == name
+                    BuiltInWebAppIcons.forEach { icon ->
+                        val selected = selectedIcon == icon.id
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier
-                                .size(48.dp)
+                                .size(52.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(
                                     if (selected) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.surfaceVariant
                                 )
-                                .clickable { selectedIcon = name }
+                                .clickable { selectedIcon = icon.id }
                         ) {
                             Icon(
-                                imageVector = vec,
-                                contentDescription = name,
+                                imageVector = icon.vector,
+                                contentDescription = icon.label,
                                 tint = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -4632,8 +4743,8 @@ fun AddEditWebAppDialog(
                                     if (customIconUrl.trim().isNotEmpty()) {
                                         selectedIcon = customIconUrl.trim()
                                     } else {
-                                        val fallbackIcon = defaultFaviconPngUrl(urlInput)
-                                            ?: "https://assets.anzz.site/favicon.png"
+                                        val fallbackIcon = WebIconDiscovery.defaultFaviconUrl(urlInput)
+                                            ?: "https://assets.anzz.site/favicon.ico"
                                         selectedIcon = fallbackIcon
                                         customIconUrl = fallbackIcon
                                     }
@@ -4645,8 +4756,8 @@ fun AddEditWebAppDialog(
                                     if (customIconUrl.trim().isNotEmpty()) {
                                         selectedIcon = customIconUrl.trim()
                                     } else {
-                                        val fallbackIcon = defaultFaviconPngUrl(urlInput)
-                                            ?: "https://assets.anzz.site/favicon.png"
+                                        val fallbackIcon = WebIconDiscovery.defaultFaviconUrl(urlInput)
+                                            ?: "https://assets.anzz.site/favicon.ico"
                                         selectedIcon = fallbackIcon
                                         customIconUrl = fallbackIcon
                                     }
@@ -4660,6 +4771,108 @@ fun AddEditWebAppDialog(
                                 color = if (isCustomSelected) MaterialTheme.colorScheme.primary 
                                         else MaterialTheme.colorScheme.onSurface
                             )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                if (isDiscoveringIcons) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    Text("正在读取网站图标...", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                } else {
+                                    Text(
+                                        text = iconDiscoveryMessage ?: "输入网址后自动读取 HTML / Manifest 图标",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            TextButton(
+                                enabled = urlInput.trim().isNotBlank() && isValidUrl(urlInput) && !isDiscoveringIcons,
+                                onClick = {
+                                    val formatted = formatUrl(urlInput)
+                                    scope.launch {
+                                        isDiscoveringIcons = true
+                                        iconDiscoveryMessage = null
+                                        val candidates = WebIconDiscovery.discover(context, formatted, forceRefresh = true)
+                                        isDiscoveringIcons = false
+                                        discoveredIcons = candidates
+                                        val best = candidates.firstOrNull()
+                                        if (best != null) {
+                                            lastAutoIconUrl = best.url
+                                            customIconUrl = best.url
+                                            selectedIcon = best.url
+                                            iconDiscoveryMessage = "已重新读取 ${candidates.size} 个网站图标"
+                                        } else {
+                                            iconDiscoveryMessage = "未找到可用网站图标"
+                                        }
+                                    }
+                                }
+                            ) {
+                                Text("重新读取", fontSize = 12.sp)
+                            }
+                        }
+
+                        if (discoveredIcons.isNotEmpty()) {
+                            Text("网站图标候选：", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
+                            ) {
+                                discoveredIcons.forEach { candidate ->
+                                    val selected = selectedIcon == candidate.url
+                                    Column(
+                                        modifier = Modifier.width(76.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(60.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(MaterialTheme.colorScheme.surface)
+                                                .border(
+                                                    width = if (selected) 2.dp else 1.dp,
+                                                    color = if (selected) MaterialTheme.colorScheme.primary
+                                                        else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                                                    shape = RoundedCornerShape(12.dp)
+                                                )
+                                                .clickable {
+                                                    selectedIcon = candidate.url
+                                                    customIconUrl = candidate.url
+                                                    lastAutoIconUrl = candidate.url
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            coil.compose.AsyncImage(
+                                                model = candidate.url,
+                                                contentDescription = candidate.label,
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .padding(4.dp),
+                                                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                                                error = androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Default.Warning)
+                                            )
+                                        }
+                                        Text(
+                                            text = candidate.sizeHint ?: candidate.source,
+                                            fontSize = 10.sp,
+                                            maxLines = 2,
+                                            textAlign = TextAlign.Center,
+                                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
                         }
 
                         Row(
@@ -4736,10 +4949,15 @@ fun AddEditWebAppDialog(
                             }
 
                             val formattedUrl = formatUrl(urlInput)
+                            val iconToSave = if (WebIconDiscovery.isNetworkIconUrl(selectedIcon)) {
+                                selectedIcon.trim().ifBlank { customIconUrl.trim() }
+                            } else {
+                                selectedIcon
+                            }.ifBlank { "icon_gamepad" }
 
                             if (pingFailedOnce) {
                                 // 第二次点击：强行保存
-                                onSave(title, formattedUrl, selectedIcon, category)
+                                onSave(title, formattedUrl, iconToSave, category)
                                 return@Button
                             }
 
@@ -4753,7 +4971,7 @@ fun AddEditWebAppDialog(
                                     pingFailedOnce = true
                                     urlError = "警告：目标链接可能无法访问，再次点击将直接保存。"
                                 } else {
-                                    onSave(title, formattedUrl, selectedIcon, category)
+                                    onSave(title, formattedUrl, iconToSave, category)
                                 }
                             }
                         },

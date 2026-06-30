@@ -10,11 +10,16 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-@Database(entities = [WebAppEntity::class, SystemConfigEntity::class], version = 5, exportSchema = false)
+@Database(
+    entities = [WebAppEntity::class, SystemConfigEntity::class, BrowserHistoryEntity::class],
+    version = 6,
+    exportSchema = false
+)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun webAppDao(): WebAppDao
     abstract fun systemConfigDao(): SystemConfigDao
+    abstract fun browserHistoryDao(): BrowserHistoryDao
 
     companion object {
         @Volatile
@@ -28,7 +33,7 @@ abstract class AppDatabase : RoomDatabase() {
                     "child_kiosk_database"
                 )
                 .enableMultiInstanceInvalidation()
-                .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .fallbackToDestructiveMigration()
                 .addCallback(DatabaseCallback(context.applicationContext))
                 .build()
@@ -186,6 +191,26 @@ abstract class AppDatabase : RoomDatabase() {
                 ADDITIONAL_DEFAULT_PRESET_APPS.forEachIndexed { index, seed ->
                     insertPresetAppIfMissing(db, seed, baseCreatedAt + index)
                 }
+            }
+        }
+
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS browser_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        title TEXT NOT NULL,
+                        url TEXT NOT NULL,
+                        host TEXT NOT NULL,
+                        visited_at INTEGER NOT NULL,
+                        web_app_id INTEGER
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_browser_history_visited_at ON browser_history(visited_at)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_browser_history_host ON browser_history(host)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_browser_history_url ON browser_history(url)")
             }
         }
 

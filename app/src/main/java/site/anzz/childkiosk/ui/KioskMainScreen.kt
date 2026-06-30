@@ -10,6 +10,7 @@ import android.widget.Toast
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -79,11 +80,14 @@ fun KioskMainScreen(
     iconSizeMode: String,
     wallpaperPreset: String,
     normalSystemBars: Boolean,
+    allowWebAppEdit: Boolean = false,
+    onEditWebApp: (WebAppEntity) -> Unit = {},
     onEnterAdmin: () -> Unit,
     onExitKiosk: () -> Unit
 ) {
     val context = LocalContext.current
     val db = remember { AppDatabase.getInstance(context) }
+    val haptic = LocalHapticFeedback.current
 
     // 拦截物理 Back 键与返回手势，防止通过返回键退出主屏
     BackHandler(enabled = true) {
@@ -311,6 +315,14 @@ fun KioskMainScreen(
                                     iconSizeMode = iconSizeMode,
                                     isDarkWallpaper = isDarkWallpaper,
                                     modifier = Modifier.weight(1f),
+                                    onLongClick = if (allowWebAppEdit) {
+                                        {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            onEditWebApp(app)
+                                        }
+                                    } else {
+                                        null
+                                    },
                                     onClick = {
                                         val intent = Intent(context, WebViewActivity::class.java).apply {
                                             putExtra(WebViewActivity.EXTRA_WEB_APP_ID, app.id)
@@ -489,6 +501,7 @@ fun AppGridItem(
     iconSizeMode: String,
     isDarkWallpaper: Boolean,
     modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -538,9 +551,10 @@ fun AppGridItem(
         modifier = modifier
             .scale(scale)
             .clip(RoundedCornerShape(16.dp))
-            .clickable(
+            .combinedClickable(
                 interactionSource = interactionSource,
                 indication = androidx.compose.material.ripple.rememberRipple(bounded = true, color = textColor.copy(alpha = 0.15f)),
+                onLongClick = onLongClick,
                 onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     onClick()
