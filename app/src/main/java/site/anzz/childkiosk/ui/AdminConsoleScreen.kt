@@ -2822,12 +2822,19 @@ private fun WebFilteringSettingsScreen(
     var showDiagnosticPercentiles by remember { mutableStateOf(true) }
     var showDiagnosticIndexes by remember { mutableStateOf(true) }
     var showDiagnosticEvents by remember { mutableStateOf(true) }
+    var showResetDiagnosticsDialog by remember { mutableStateOf(false) }
     val events = remember(settingsVersion, diagnosticsRefreshVersion) { FilterRepository.getRecentEvents(context) }
     val scope = rememberCoroutineScope()
 
     fun refresh() {
         settingsVersion++
         onFilteringChanged()
+    }
+
+    fun resetDiagnostics() {
+        FilterRepository.resetDiagnostics(context)
+        diagnosticsRefreshVersion++
+        Toast.makeText(context, "已清空过滤诊断统计、最近日志和本进程缓存", Toast.LENGTH_SHORT).show()
     }
 
     Column(
@@ -3183,9 +3190,7 @@ private fun WebFilteringSettingsScreen(
             onShowEventsChange = { showDiagnosticEvents = it },
             onRefresh = { diagnosticsRefreshVersion++ },
             onReset = {
-                FilterRepository.resetDiagnostics(context)
-                diagnosticsRefreshVersion++
-                Toast.makeText(context, "已清空过滤诊断统计、最近日志和本进程缓存", Toast.LENGTH_SHORT).show()
+                showResetDiagnosticsDialog = true
             },
             onCopy = {
                 val text = buildFilterDiagnosticsText(
@@ -3344,6 +3349,51 @@ private fun WebFilteringSettingsScreen(
                 }
             }
         }
+    }
+
+    if (showResetDiagnosticsDialog) {
+        AlertDialog(
+            onDismissRequest = { showResetDiagnosticsDialog = false },
+            icon = {
+                Icon(Icons.Default.RestartAlt, contentDescription = "确认重置过滤诊断")
+            },
+            title = { Text("确认清空过滤诊断？") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 320.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "此操作会清空当前采集到的过滤性能统计、最近过滤日志、过滤判定缓存和 WebView 进程快照。",
+                        fontSize = 13.sp
+                    )
+                    Text(
+                        "清空后无法恢复。建议只在开始新一轮广告过滤测试前执行。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showResetDiagnosticsDialog = false
+                        resetDiagnostics()
+                    },
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("确认清空")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetDiagnosticsDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 }
 

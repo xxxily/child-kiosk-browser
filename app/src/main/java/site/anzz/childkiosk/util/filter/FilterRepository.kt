@@ -32,6 +32,7 @@ object FilterRepository {
     private const val DIAGNOSTICS_RESET_FILE = "filter_diagnostics_reset_at.txt"
     private const val MAX_EVENTS = 200
     private const val PERF_SNAPSHOT_WRITE_INTERVAL_MS = 2_000L
+    private const val DIAGNOSTICS_RESET_CHECK_INTERVAL_MS = 500L
 
     private val engineCache = object : LinkedHashMap<String, FilterEngine>(4, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, FilterEngine>?): Boolean {
@@ -43,8 +44,12 @@ object FilterRepository {
     private val eventGeneration = AtomicLong(0L)
     private val lastPerfSnapshotWriteAt = AtomicLong(0L)
     private val lastDiagnosticsResetAppliedAt = AtomicLong(0L)
+    private val lastDiagnosticsResetCheckAt = AtomicLong(0L)
     private val eventExecutor = Executors.newSingleThreadExecutor { task ->
         Thread(task, "ChildKioskFilterEvents").apply { isDaemon = true }
+    }
+    private val perfSnapshotExecutor = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "ChildKioskFilterPerfSnapshot").apply { isDaemon = true }
     }
 
     fun getSettings(context: Context): FilterSettings {
@@ -287,12 +292,29 @@ object FilterRepository {
         } else {
             lastPerfSnapshotWriteAt.set(now)
         }
-        writePerfSnapshot(
-            context = context.applicationContext,
-            engineKey = engineCacheKey(runtimeSnapshot),
-            snapshot = engine.perfSnapshot(),
-            updatedAt = now
-        )
+        val appContext = context.applicationContext
+        val engineKey = engineCacheKey(runtimeSnapshot)
+        if (force) {
+            applyPendingDiagnosticsReset(appContext, engine, force = true)
+            writePerfSnapshot(
+                context = appContext,
+                engineKey = engineKey,
+                snapshot = engine.perfSnapshot(),
+                updatedAt = System.currentTimeMillis()
+            )
+            return
+        }
+        perfSnapshotExecutor.execute {
+            runCatching {
+                applyPendingDiagnosticsReset(appContext, engine, force = true)
+                writePerfSnapshot(
+                    context = appContext,
+                    engineKey = engineKey,
+                    snapshot = engine.perfSnapshot(),
+                    updatedAt = System.currentTimeMillis()
+                )
+            }
+        }
     }
 
     fun getLatestPerfSnapshot(
@@ -340,17 +362,32 @@ object FilterRepository {
         }
         lastPerfSnapshotWriteAt.set(0L)
         lastDiagnosticsResetAppliedAt.set(now)
+        lastDiagnosticsResetCheckAt.set(now)
     }
 
-    fun applyPendingDiagnosticsReset(context: Context, engine: FilterEngine) {
+    fun applyPendingDiagnosticsReset(
+        context: Context,
+        engine: FilterEngine,
+        force: Boolean = false
+    ): Boolean {
+        val now = System.currentTimeMillis()
+        if (!force) {
+            val previousCheck = lastDiagnosticsResetCheckAt.get()
+            if (now - previousCheck < DIAGNOSTICS_RESET_CHECK_INTERVAL_MS) return false
+            if (!lastDiagnosticsResetCheckAt.compareAndSet(previousCheck, now)) return false
+        } else {
+            lastDiagnosticsResetCheckAt.set(now)
+        }
         val resetAt = readDiagnosticsResetAt(context.applicationContext)
-        if (resetAt <= 0L) return
+        if (resetAt <= 0L) return false
         val previous = lastDiagnosticsResetAppliedAt.get()
-        if (resetAt <= previous) return
+        if (resetAt <= previous) return false
         if (lastDiagnosticsResetAppliedAt.compareAndSet(previous, resetAt)) {
             engine.resetDiagnostics()
             lastPerfSnapshotWriteAt.set(0L)
+            return true
         }
+        return false
     }
 
     fun validateCustomRules(rules: String): FilterBuildReport {

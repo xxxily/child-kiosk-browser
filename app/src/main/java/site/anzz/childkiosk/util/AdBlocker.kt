@@ -72,9 +72,6 @@ object AdBlocker {
             parseNanos += System.nanoTime() - parseStartedAt
             val engine = FilterRepository.getCachedEngine(snapshot) ?: return FilterDecision.ALLOW
             engineForStats = engine
-            val resetStartedAt = System.nanoTime()
-            FilterRepository.applyPendingDiagnosticsReset(context, engine)
-            snapshotNanos += System.nanoTime() - resetStartedAt
             val siteOverride = FilterRepository.siteOverrideFor(snapshot, requestContext.topLevelHost)
             val engineStartedAt = System.nanoTime()
             val decision = engine.decide(requestContext, siteOverride)
