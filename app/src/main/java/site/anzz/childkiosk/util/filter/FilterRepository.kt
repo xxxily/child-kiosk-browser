@@ -229,6 +229,7 @@ object FilterRepository {
     }
 
     fun siteOverrideFor(snapshot: FilterRuntimeSnapshot, host: String): SiteFilterOverride? {
+        if (snapshot.siteOverrides.isEmpty()) return null
         val normalized = host.normalizeHost()
         return snapshot.siteOverrides.firstOrNull { isSameOrSubdomain(normalized, it.host) }
     }

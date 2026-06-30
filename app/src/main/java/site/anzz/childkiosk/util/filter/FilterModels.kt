@@ -228,11 +228,14 @@ data class FilterRequestContext(
     val resourceType: FilterResourceType,
     val isMainFrame: Boolean,
     val method: String,
-    val hasGesture: Boolean
+    val hasGesture: Boolean,
+    private val requestHostHint: String? = null,
+    private val topLevelHostHint: String? = null,
+    private val requestUrlLowerHint: String? = null
 ) {
-    val requestHost: String = requestUrl.hostFromUrl()
-    val topLevelHost: String = topLevelUrl.hostFromUrl()
-    val requestUrlLower: String = requestUrl.lowercase(java.util.Locale.US)
+    val requestHost: String = requestHostHint?.normalizeHost()?.takeIf { it.isNotBlank() } ?: requestUrl.hostFromUrl()
+    val topLevelHost: String = topLevelHostHint?.normalizeHost()?.takeIf { it.isNotBlank() } ?: topLevelUrl.hostFromUrl()
+    val requestUrlLower: String = requestUrlLowerHint ?: requestUrl.lowercase(java.util.Locale.US)
     val isThirdParty: Boolean = isThirdPartyHost(requestHost, topLevelHost)
 }
 

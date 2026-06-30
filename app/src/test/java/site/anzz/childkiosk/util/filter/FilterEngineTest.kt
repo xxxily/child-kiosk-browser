@@ -108,6 +108,7 @@ class FilterEngineTest {
             "https://example.com/"
         )
         assertEquals("https://example.com/page?keep=1", cleaned)
+        assertTrue(engine.perfSnapshot().removeParamIndex.universalRuleCount >= 1)
     }
 
     @Test
@@ -279,6 +280,217 @@ class FilterEngineTest {
         assertEquals(
             FilterAction.ALLOW,
             engine.decide(context("https://notexample.com/path", "https://page.com")).action
+        )
+    }
+
+    @Test
+    fun perfSnapshotRecordsHotPathCounters() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    id = "test",
+                    name = "test",
+                    rulesText = """
+                        /adserver[0-9]+/${'$'}script
+                        ##.ad
+                        example.com##+js(no-window-open-if)
+                    """.trimIndent()
+                )
+            )
+        )
+
+        val request = context(
+            url = "https://cdn.example.net/adserver12/file.js",
+            topLevelUrl = "https://example.com",
+            type = FilterResourceType.SCRIPT
+        )
+        assertEquals(FilterAction.BLOCK, engine.decide(request).action)
+        assertEquals(FilterAction.BLOCK, engine.decide(request).action)
+        assertTrue(engine.cosmeticCssFor("example.com").contains(".ad"))
+        assertTrue(engine.scriptletJsFor("example.com").contains("window.open"))
+
+        val snapshot = engine.perfSnapshot()
+        assertTrue(snapshot.buildDurationMs >= 0L)
+        assertEquals(2L, snapshot.decisionCount)
+        assertTrue(snapshot.cacheMissCount >= 1L)
+        assertTrue(snapshot.cacheHitCount >= 1L)
+        assertTrue(snapshot.candidateEvaluationCount >= 1L)
+        assertTrue(snapshot.regexEvaluationCount >= 1L)
+        assertEquals(1L, snapshot.cosmeticCallCount)
+        assertEquals(1L, snapshot.scriptletCallCount)
+        assertTrue(snapshot.generatedCssBytes > 0L)
+        assertTrue(snapshot.generatedScriptletBytes > 0L)
+        assertTrue(snapshot.decisionDurationMicros.sampleCount >= 2)
+        assertTrue(snapshot.candidateEvaluationsPerDecision.sampleCount >= 2)
+    }
+
+    @Test
+    fun indexedDecisionMatchesLinearReferenceForCoreCases() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    id = "test",
+                    name = "test",
+                    rulesText = """
+                        ||ads.example.com^
+                        ||important.example.com^${'$'}important
+                        @@||ads.example.com/allowed.js${'$'}script
+                        /tracker/${'$'}image,third-party
+                        /adserver[0-9]+/${'$'}script
+                    """.trimIndent()
+                )
+            )
+        )
+
+        listOf(
+            context("https://ads.example.com/banner.js", "https://page.example", FilterResourceType.SCRIPT),
+            context("https://ads.example.com/allowed.js", "https://page.example", FilterResourceType.SCRIPT),
+            context("https://important.example.com/file.js", "https://page.example", FilterResourceType.SCRIPT),
+            context("https://cdn.example.net/tracker/pixel.png", "https://page.example", FilterResourceType.IMAGE),
+            context("https://cdn.example.net/adserver12/file.js", "https://page.example", FilterResourceType.SCRIPT),
+            context("https://cdn.example.net/content/file.css", "https://page.example", FilterResourceType.STYLESHEET)
+        ).forEach { request ->
+            assertIndexedMatchesLinear(engine, request)
+        }
+    }
+
+    @Test
+    fun generatedIndexedDecisionsMatchLinearReference() {
+        val generatedRules = buildString {
+            repeat(120) { index ->
+                appendLine("||ads$index.example.test^${'$'}script,third-party")
+                appendLine("@@||ads$index.example.test/allowed.js${'$'}script")
+                appendLine("/track$index/${'$'}image,third-party")
+            }
+        }
+        val engine = FilterEngine.build(
+            listOf(FilterRuleSource("generated", "generated", generatedRules))
+        )
+
+        repeat(10_000) { index ->
+            val bucket = index % 120
+            val request = when (index % 5) {
+                0 -> context(
+                    "https://ads$bucket.example.test/banner.js?seq=$index",
+                    "https://page.example",
+                    FilterResourceType.SCRIPT
+                )
+                1 -> context(
+                    "https://ads$bucket.example.test/allowed.js?seq=$index",
+                    "https://page.example",
+                    FilterResourceType.SCRIPT
+                )
+                2 -> context(
+                    "https://cdn.example.test/track$bucket/pixel.png?seq=$index",
+                    "https://page.example",
+                    FilterResourceType.IMAGE
+                )
+                3 -> context(
+                    "https://cdn.example.test/track$bucket/pixel.png?seq=$index",
+                    "https://cdn.example.test/home",
+                    FilterResourceType.IMAGE
+                )
+                else -> context(
+                    "https://cdn.example.test/static/file$index.css",
+                    "https://page.example",
+                    FilterResourceType.STYLESHEET
+                )
+            }
+            assertIndexedMatchesLinear(engine, request)
+        }
+    }
+
+    @Test
+    fun embeddedLiteralRulesMatchThroughIndexV2() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    id = "test",
+                    name = "test",
+                    rulesText = """
+                        adsbygoogle${'$'}script
+                        /banner*ad${'$'}script
+                        /ads/*${'$'}image,script
+                        ||googlesyndication.com^
+                    """.trimIndent()
+                )
+            )
+        )
+
+        listOf(
+            context(
+                "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js",
+                "https://example.com",
+                FilterResourceType.SCRIPT
+            ),
+            context(
+                "https://cdn.example.com/static/banner123ad.js",
+                "https://example.com",
+                FilterResourceType.SCRIPT
+            ),
+            context(
+                "https://cdn.example.com/assets/ads/banner.png",
+                "https://example.com",
+                FilterResourceType.IMAGE
+            )
+        ).forEach { request ->
+            assertEquals(FilterAction.BLOCK, engine.decide(request).action)
+            assertIndexedMatchesLinear(engine, request)
+        }
+
+        val stats = engine.perfSnapshot().blockingIndex
+        assertTrue(stats.indexedRuleCount >= 4)
+        assertEquals(0, stats.universalRuleCount)
+    }
+
+    @Test
+    fun cosmeticAndScriptletIndexesRespectHostSuffixAndExclusions() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    id = "test",
+                    name = "test",
+                    rulesText = """
+                        ##.global-ad
+                        example.com##.domain-ad
+                        skip.example.com#@#.global-ad
+                        ~skip.example.com,example.com##.not-on-skip
+                        ~skip.example.com,example.com##+js(no-window-open-if)
+                    """.trimIndent()
+                )
+            )
+        )
+
+        val exampleCss = engine.cosmeticCssFor("www.example.com")
+        assertTrue(exampleCss.contains(".global-ad"))
+        assertTrue(exampleCss.contains(".domain-ad"))
+        assertTrue(exampleCss.contains(".not-on-skip"))
+        assertEquals(exampleCss, engine.cosmeticCssFor("www.example.com"))
+
+        val skipCss = engine.cosmeticCssFor("skip.example.com")
+        assertFalse(skipCss.contains(".global-ad"))
+        assertTrue(skipCss.contains(".domain-ad"))
+        assertFalse(skipCss.contains(".not-on-skip"))
+
+        val exampleJs = engine.scriptletJsFor("www.example.com")
+        assertTrue(exampleJs.contains("window.open"))
+        assertEquals(exampleJs, engine.scriptletJsFor("www.example.com"))
+
+        val skipJs = engine.scriptletJsFor("skip.example.com")
+        assertFalse(skipJs.contains("window.open"))
+    }
+
+    private fun assertIndexedMatchesLinear(
+        engine: FilterEngine,
+        request: FilterRequestContext
+    ) {
+        val indexed = engine.decide(request)
+        val linear = engine.decideLinearForTesting(request)
+        assertEquals("action differs for ${request.requestUrl}", linear.action, indexed.action)
+        assertEquals(
+            "rule differs for ${request.requestUrl}",
+            linear.rule?.rawText,
+            indexed.rule?.rawText
         )
     }
 

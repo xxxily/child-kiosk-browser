@@ -10,9 +10,15 @@ import site.anzz.childkiosk.util.filter.FilterRepository
 import site.anzz.childkiosk.util.filter.FilterRequestContext
 import site.anzz.childkiosk.util.filter.FilterResourceType
 import site.anzz.childkiosk.util.filter.FilterRuntimeSnapshot
+import site.anzz.childkiosk.util.filter.normalizeHost
 import java.io.ByteArrayInputStream
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 object AdBlocker {
+    private const val MAX_FILTER_EVENTS_PER_SECOND = 20
+    private val eventWindowStartMs = AtomicLong(0L)
+    private val eventWindowCount = AtomicInteger(0)
 
     fun shouldBlock(
         context: Context,
@@ -20,44 +26,57 @@ object AdBlocker {
         topLevelUrl: String,
         snapshot: FilterRuntimeSnapshot
     ): FilterDecision {
-        if (!snapshot.enabled || request?.url == null) return FilterDecision.ALLOW
-        val scheme = request.url.scheme?.lowercase(java.util.Locale.US)
-        if (scheme != "http" && scheme != "https") return FilterDecision.ALLOW
-        val requestUrl = request.url.toString()
-        if (requestUrl.length > 2048) return FilterDecision.ALLOW
-        val requestContext = FilterRequestContext(
-            requestUrl = requestUrl,
-            topLevelUrl = topLevelUrl,
-            resourceType = FilterResourceType.infer(
-                url = requestUrl,
-                acceptHeader = request.requestHeaders?.get("Accept"),
-                isMainFrame = request.isForMainFrame
-            ),
-            isMainFrame = request.isForMainFrame,
-            method = request.method.orEmpty(),
-            hasGesture = request.hasGesture()
-        )
-        val engine = FilterRepository.getCachedEngine(snapshot) ?: return FilterDecision.ALLOW
-        val siteOverride = FilterRepository.siteOverrideFor(snapshot, requestContext.topLevelHost)
-        val decision = engine.decide(requestContext, siteOverride)
-        if (decision.action != FilterAction.ALLOW) {
-            val event = FilterEvent(
-                timestamp = System.currentTimeMillis(),
-                action = decision.action.name,
-                url = requestUrl,
+        val startedAt = System.nanoTime()
+        var engineForStats: site.anzz.childkiosk.util.filter.FilterEngine? = null
+        try {
+            if (!snapshot.enabled || request?.url == null) return FilterDecision.ALLOW
+            val scheme = request.url.scheme?.lowercase(java.util.Locale.US)
+            if (scheme != "http" && scheme != "https") return FilterDecision.ALLOW
+            val requestUrl = request.url.toString()
+            if (requestUrl.length > 2048) return FilterDecision.ALLOW
+            val requestUrlLower = requestUrl.lowercase(java.util.Locale.US)
+            val requestHost = request.url.host.orEmpty().normalizeHost()
+            val topLevelHost = WebViewRuntime.hostOf(topLevelUrl)
+            val requestContext = FilterRequestContext(
+                requestUrl = requestUrl,
                 topLevelUrl = topLevelUrl,
-                resourceType = requestContext.resourceType.optionName,
-                ruleText = decision.rule?.rawText.orEmpty(),
-                sourceName = decision.rule?.sourceName.orEmpty(),
-                reason = decision.reason
+                resourceType = FilterResourceType.infer(
+                    url = requestUrl,
+                    acceptHeader = request.requestHeaders?.get("Accept"),
+                    isMainFrame = request.isForMainFrame
+                ),
+                isMainFrame = request.isForMainFrame,
+                method = request.method.orEmpty(),
+                hasGesture = request.hasGesture(),
+                requestHostHint = requestHost,
+                topLevelHostHint = topLevelHost,
+                requestUrlLowerHint = requestUrlLower
             )
-            if (isWebviewProcess(context)) {
-                sendFilterEventBroadcast(context, event)
-            } else {
-                FilterRepository.recordEvent(context, event)
+            val engine = FilterRepository.getCachedEngine(snapshot) ?: return FilterDecision.ALLOW
+            engineForStats = engine
+            val siteOverride = FilterRepository.siteOverrideFor(snapshot, requestContext.topLevelHost)
+            val decision = engine.decide(requestContext, siteOverride)
+            if (decision.action != FilterAction.ALLOW && shouldRecordFilterEvent()) {
+                val event = FilterEvent(
+                    timestamp = System.currentTimeMillis(),
+                    action = decision.action.name,
+                    url = requestUrl,
+                    topLevelUrl = topLevelUrl,
+                    resourceType = requestContext.resourceType.optionName,
+                    ruleText = decision.rule?.rawText.orEmpty(),
+                    sourceName = decision.rule?.sourceName.orEmpty(),
+                    reason = decision.reason
+                )
+                if (isWebviewProcess(context)) {
+                    sendFilterEventBroadcast(context, event)
+                } else {
+                    FilterRepository.recordEvent(context, event)
+                }
             }
+            return decision
+        } finally {
+            engineForStats?.recordShouldBlockDuration(System.nanoTime() - startedAt)
         }
-        return decision
     }
 
     private val EMPTY_GIF = byteArrayOf(
@@ -112,6 +131,14 @@ object AdBlocker {
             setPackage(context.packageName)
         }
         context.sendBroadcast(intent)
+    }
+
+    private fun shouldRecordFilterEvent(nowMs: Long = System.currentTimeMillis()): Boolean {
+        val windowStart = eventWindowStartMs.get()
+        if (nowMs - windowStart >= 1_000L && eventWindowStartMs.compareAndSet(windowStart, nowMs)) {
+            eventWindowCount.set(0)
+        }
+        return eventWindowCount.incrementAndGet() <= MAX_FILTER_EVENTS_PER_SECOND
     }
 
     fun isAdRequest(url: String?): Boolean {

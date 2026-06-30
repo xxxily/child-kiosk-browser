@@ -66,6 +66,22 @@ import java.lang.ref.WeakReference
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+
+private object FilterBlockLogLimiter {
+    private const val MAX_LOGS_PER_SECOND = 8
+    private val windowStartMs = AtomicLong(0L)
+    private val windowCount = AtomicInteger(0)
+
+    fun shouldLog(nowMs: Long = System.currentTimeMillis()): Boolean {
+        val windowStart = windowStartMs.get()
+        if (nowMs - windowStart >= 1_000L && windowStartMs.compareAndSet(windowStart, nowMs)) {
+            windowCount.set(0)
+        }
+        return windowCount.incrementAndGet() <= MAX_LOGS_PER_SECOND
+    }
+}
 
 class WebViewActivity : ComponentActivity() {
 
@@ -2012,10 +2028,12 @@ private fun createSecureWebView(
                     val decision = AdBlocker.shouldBlock(ctx, request, topLevelUrl, runtimeConfig.filterSnapshot)
                     if (decision.action == FilterAction.BLOCK) {
                         val requestUrl = request?.url?.toString().orEmpty()
-                        Log.d(
-                            "ChildKioskWebView",
-                            "Blocked filter request: $requestUrl, rule=${decision.rule?.rawText}, source=${decision.rule?.sourceName}"
-                        )
+                        if (FilterBlockLogLimiter.shouldLog()) {
+                            Log.d(
+                                "ChildKioskWebView",
+                                "Blocked filter request: $requestUrl, rule=${decision.rule?.rawText}, source=${decision.rule?.sourceName}"
+                            )
+                        }
                         val resourceType = FilterResourceType.infer(
                             url = requestUrl,
                             acceptHeader = request?.requestHeaders?.get("Accept"),
@@ -2374,8 +2392,10 @@ private fun injectPageScripts(
     currentTiming: String
 ) {
     webView ?: return
-    injectCosmeticCssIfNeeded(webView, config)
-    injectFilterScriptletsIfNeeded(webView, config)
+    if (currentTiming != "BOTH") {
+        injectCosmeticCssIfNeeded(webView, config)
+        injectFilterScriptletsIfNeeded(webView, config)
+    }
     injectDebugToolIfNeeded(webView, context, config, currentTiming)
     injectCustomScriptIfNeeded(webView, config, currentTiming)
 }
