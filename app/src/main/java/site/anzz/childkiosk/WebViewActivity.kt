@@ -64,6 +64,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.lang.ref.WeakReference
 import java.net.URL
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -1060,6 +1061,7 @@ class WebViewActivity : ComponentActivity() {
                 onRefresh = { refreshFromFloatingControls() },
                 onForceRefresh = { showForceRefreshDialog() },
                 onStopLoading = { stopLoadingFromFloatingControls() },
+                onBookmarkCurrentPage = { bookmarkCurrentPageFromFloatingControls() },
                 onPanelExpandedChanged = {
                     applySystemUiMode()
                 },
@@ -1077,6 +1079,88 @@ class WebViewActivity : ComponentActivity() {
                 }
             )
         )
+    }
+
+    private fun bookmarkCurrentPageFromFloatingControls() {
+        val current = rootWebView
+        val activeTab = tabList.firstOrNull { it.id == activeTabId }
+        val rawUrl = current?.url?.trim().orEmpty().ifBlank { activeTab?.url.orEmpty() }
+        val normalizedUrl = normalizeWhitelistWebUrl(rawUrl)
+        if (normalizedUrl.isBlank()) {
+            Toast.makeText(this, "当前页面不能加入白名单", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val title = bookmarkTitleForCurrentPage(
+            currentTitle = current?.title.orEmpty().ifBlank { activeTab?.title.orEmpty() },
+            normalizedUrl = normalizedUrl
+        )
+
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val dao = AppDatabase.getInstance(this@WebViewActivity).webAppDao()
+                    val existing = dao.getAllWebApps().firstOrNull { app ->
+                        normalizeWhitelistWebUrl(app.url) == normalizedUrl
+                    }
+                    when {
+                        existing == null -> {
+                            dao.insertWebApp(
+                                WebAppEntity(
+                                    title = title,
+                                    url = normalizedUrl,
+                                    iconPath = "icon_gift",
+                                    isPreset = false,
+                                    isEnabled = true,
+                                    category = WebAppEntity.CATEGORY_OTHER,
+                                    sourceType = WebAppEntity.SOURCE_LOCAL
+                                )
+                            )
+                            "已添加到应用白名单"
+                        }
+                        existing.isEnabled -> {
+                            "该网站已在应用白名单中"
+                        }
+                        else -> {
+                            dao.updateWebApp(existing.copy(isEnabled = true))
+                            "该网站已在白名单中，已重新启用"
+                        }
+                    }
+                }
+            }
+
+            result.onSuccess { message ->
+                Toast.makeText(this@WebViewActivity, message, Toast.LENGTH_SHORT).show()
+            }.onFailure { error ->
+                Log.e("ChildKioskWebView", "Failed to bookmark current page", error)
+                Toast.makeText(this@WebViewActivity, "添加白名单失败：${error.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun normalizeWhitelistWebUrl(url: String): String {
+        return runCatching {
+            val uri = Uri.parse(url.trim())
+            val scheme = uri.scheme?.lowercase(Locale.US) ?: return@runCatching ""
+            val host = uri.host?.lowercase(Locale.US) ?: return@runCatching ""
+            if (scheme != "http" && scheme != "https") return@runCatching ""
+            val port = if (uri.port >= 0) ":${uri.port}" else ""
+            val path = uri.encodedPath?.takeIf { it.isNotBlank() } ?: "/"
+            val query = uri.encodedQuery?.let { "?$it" }.orEmpty()
+            "$scheme://$host$port$path$query"
+        }.getOrDefault("")
+    }
+
+    private fun bookmarkTitleForCurrentPage(currentTitle: String, normalizedUrl: String): String {
+        val cleanTitle = currentTitle.trim().replace(Regex("\\s+"), " ")
+        if (
+            cleanTitle.isNotBlank() &&
+            !cleanTitle.startsWith("http://", ignoreCase = true) &&
+            !cleanTitle.startsWith("https://", ignoreCase = true)
+        ) {
+            return cleanTitle.take(60)
+        }
+        return WebViewRuntime.hostOf(normalizedUrl).ifBlank { "收藏网站" }.take(60)
     }
 
     private fun loadUrlFromFloatingControls(url: String) {

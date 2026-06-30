@@ -60,6 +60,7 @@ data class FloatingBrowserControlsCallbacks(
     val onRefresh: () -> Unit = {},
     val onForceRefresh: () -> Unit = {},
     val onStopLoading: () -> Unit = {},
+    val onBookmarkCurrentPage: () -> Unit = {},
     val onPanelExpandedChanged: (Boolean) -> Unit = {},
     val onActionSelected: (String) -> Unit = {},
     val onNewTab: () -> Unit = {},
@@ -536,6 +537,12 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                     title = "主页",
                     iconRes = R.drawable.ic_browser_home_24,
                     enabled = !isHomeScreen
+                ),
+                FloatingControlAction(
+                    id = ACTION_BROWSER_BOOKMARK,
+                    title = "收藏",
+                    iconRes = R.drawable.ic_browser_bookmark_add_24,
+                    enabled = isCurrentPageBookmarkable()
                 ),
                 FloatingControlAction(
                     id = ACTION_BROWSER_BACK,
@@ -1067,6 +1074,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             ACTION_BROWSER_REFRESH -> callbacks.onRefresh()
             ACTION_BROWSER_FORCE_REFRESH -> callbacks.onForceRefresh()
             ACTION_BROWSER_STOP -> callbacks.onStopLoading()
+            ACTION_BROWSER_BOOKMARK -> callbacks.onBookmarkCurrentPage()
             ACTION_PANEL_CLOSE -> setPanelExpanded(expanded = false, animated = true)
             else -> Unit
         }
@@ -1080,6 +1088,13 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         return LinearLayout.LayoutParams(dp(50), dp(56)).apply {
             rightMargin = dp(6)
         }
+    }
+
+    private fun isCurrentPageBookmarkable(): Boolean {
+        if (state.isHomeScreen) return false
+        val url = state.currentUrl.trim()
+        return url.startsWith("http://", ignoreCase = true) ||
+            url.startsWith("https://", ignoreCase = true)
     }
 
     private fun actionBackgroundColor(action: FloatingControlAction): Int {
@@ -1357,6 +1372,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         const val ACTION_BROWSER_REFRESH = "browser.refresh"
         const val ACTION_BROWSER_FORCE_REFRESH = "browser.force_refresh"
         const val ACTION_BROWSER_STOP = "browser.stop"
+        const val ACTION_BROWSER_BOOKMARK = "browser.bookmark"
         const val ACTION_PANEL_CLOSE = "panel.close"
         const val ACTION_BROWSER_HOME = "browser.home"
 

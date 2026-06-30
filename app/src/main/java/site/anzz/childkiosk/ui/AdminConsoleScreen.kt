@@ -45,6 +45,11 @@ import site.anzz.childkiosk.util.WebViewProviderSnapshot
 import site.anzz.childkiosk.util.WebViewRuntime
 import site.anzz.childkiosk.util.WebViewPool
 import site.anzz.childkiosk.util.WhitelistSubscriptionRepository
+import site.anzz.childkiosk.util.filter.FilterBuildReport
+import site.anzz.childkiosk.util.filter.FilterEvent
+import site.anzz.childkiosk.util.filter.FilterIndexStats
+import site.anzz.childkiosk.util.filter.FilterPerfSampleStats
+import site.anzz.childkiosk.util.filter.FilterPerfSnapshot
 import site.anzz.childkiosk.util.filter.FilterPreset
 import site.anzz.childkiosk.util.filter.FilterRepository
 import site.anzz.childkiosk.util.filter.SiteFilterOverride
@@ -2705,10 +2710,16 @@ private fun WebFilteringSettingsScreen(
     onFilteringChanged: () -> Unit
 ) {
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     var settingsVersion by remember { mutableStateOf(0) }
+    var diagnosticsRefreshVersion by remember { mutableStateOf(0) }
     val settings = remember(settingsVersion) { FilterRepository.getSettings(context) }
-    val report = remember(settingsVersion) {
-        FilterRepository.getEngine(context, settings.toRuntimeSnapshot()).report
+    val engine = remember(settingsVersion) {
+        FilterRepository.getEngine(context, settings.toRuntimeSnapshot())
+    }
+    val report = engine.report
+    val perfSnapshot = remember(settingsVersion, diagnosticsRefreshVersion) {
+        engine.perfSnapshot()
     }
     var customRules by remember(settings.customRules) { mutableStateOf(settings.customRules) }
     var customRuleReport by remember { mutableStateOf(FilterRepository.validateCustomRules(customRules)) }
@@ -2716,7 +2727,10 @@ private fun WebFilteringSettingsScreen(
     var customSubscriptionTitle by remember { mutableStateOf("") }
     var customSubscriptionUrl by remember { mutableStateOf("") }
     var updatingSubscriptionId by remember { mutableStateOf<String?>(null) }
-    val events = remember(settingsVersion) { FilterRepository.getRecentEvents(context) }
+    var showDiagnosticPercentiles by remember { mutableStateOf(true) }
+    var showDiagnosticIndexes by remember { mutableStateOf(true) }
+    var showDiagnosticEvents by remember { mutableStateOf(true) }
+    val events = remember(settingsVersion, diagnosticsRefreshVersion) { FilterRepository.getRecentEvents(context) }
     val scope = rememberCoroutineScope()
 
     fun refresh() {
@@ -2779,6 +2793,30 @@ private fun WebFilteringSettingsScreen(
                 }
             }
         }
+
+        FilterPerformanceDiagnosticsCard(
+            filteringEnabled = settings.enabled,
+            report = report,
+            snapshot = perfSnapshot,
+            events = events,
+            showPercentiles = showDiagnosticPercentiles,
+            showIndexes = showDiagnosticIndexes,
+            showEvents = showDiagnosticEvents,
+            onShowPercentilesChange = { showDiagnosticPercentiles = it },
+            onShowIndexesChange = { showDiagnosticIndexes = it },
+            onShowEventsChange = { showDiagnosticEvents = it },
+            onRefresh = { diagnosticsRefreshVersion++ },
+            onCopy = {
+                val text = buildFilterDiagnosticsText(
+                    settingsEnabled = settings.enabled,
+                    report = report,
+                    snapshot = perfSnapshot,
+                    events = events
+                )
+                clipboardManager.setText(AnnotatedString(text))
+                Toast.makeText(context, "过滤性能诊断信息已复制", Toast.LENGTH_SHORT).show()
+            }
+        )
 
         Card(
             shape = RoundedCornerShape(16.dp),
@@ -3190,6 +3228,226 @@ private fun WebFilteringSettingsScreen(
 }
 
 @Composable
+private fun FilterPerformanceDiagnosticsCard(
+    filteringEnabled: Boolean,
+    report: FilterBuildReport,
+    snapshot: FilterPerfSnapshot,
+    events: List<FilterEvent>,
+    showPercentiles: Boolean,
+    showIndexes: Boolean,
+    showEvents: Boolean,
+    onShowPercentilesChange: (Boolean) -> Unit,
+    onShowIndexesChange: (Boolean) -> Unit,
+    onShowEventsChange: (Boolean) -> Unit,
+    onRefresh: () -> Unit,
+    onCopy: () -> Unit
+) {
+    val cacheHitRate = formatRatio(snapshot.cacheHitCount, snapshot.decisionCount)
+    val averageCandidates = if (snapshot.decisionCount > 0L) {
+        formatDecimal(snapshot.candidateEvaluationCount.toDouble() / snapshot.decisionCount.toDouble(), 2)
+    } else {
+        "0"
+    }
+    val blockEvents = events.count { it.action == "BLOCK" }
+    val exceptionEvents = events.count { it.action == "EXCEPTION" }
+
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.BugReport, contentDescription = "过滤性能诊断", tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("过滤性能诊断", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "查看规则编译、命中缓存、候选规则评估和注入资源的实时快照。",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                AssistChip(
+                    onClick = onRefresh,
+                    label = { Text("刷新") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Refresh, contentDescription = "刷新", modifier = Modifier.size(18.dp))
+                    }
+                )
+            }
+
+            if (!filteringEnabled) {
+                Text(
+                    "网页过滤当前关闭。诊断区仍显示最近一次规则编译快照，打开过滤并访问网页后会产生运行指标。",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                DiagnosticItem(label = "规则编译", value = "${snapshot.buildDurationMs} ms")
+                DiagnosticItem(label = "启用规则", value = "${report.enabledRuleCount}/${report.ruleCount}")
+                DiagnosticItem(label = "判定次数", value = snapshot.decisionCount.toString())
+                DiagnosticItem(label = "缓存命中", value = "${snapshot.cacheHitCount}/${snapshot.decisionCount} ($cacheHitRate)")
+                DiagnosticItem(label = "平均候选", value = averageCandidates)
+                DiagnosticItem(label = "正则评估", value = snapshot.regexEvaluationCount.toString())
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterDiagnosticsSwitchRow(
+                    title = "显示 P50/P95/P99/Max",
+                    subtitle = "用于判断网页卡顿是否来自单次极慢判定。",
+                    checked = showPercentiles,
+                    onCheckedChange = onShowPercentilesChange
+                )
+                FilterDiagnosticsSwitchRow(
+                    title = "显示索引结构摘要",
+                    subtitle = "用于观察 token 桶、索引规则和兜底规则规模。",
+                    checked = showIndexes,
+                    onCheckedChange = onShowIndexesChange
+                )
+                FilterDiagnosticsSwitchRow(
+                    title = "包含最近日志摘要",
+                    subtitle = "用于把性能和真实拦截事件放在一起排查。",
+                    checked = showEvents,
+                    onCheckedChange = onShowEventsChange
+                )
+                FilterDiagnosticsSwitchRow(
+                    title = "自动采样刷新",
+                    subtitle = "预留：后续接入周期采样、慢请求追踪和阈值报警。",
+                    checked = false,
+                    onCheckedChange = {},
+                    enabled = false
+                )
+            }
+
+            if (showPercentiles) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("耗时分布", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    FilterPerfStatsRow("WebView shouldBlock", snapshot.shouldBlockDurationMicros, "us")
+                    FilterPerfStatsRow("规则判定", snapshot.decisionDurationMicros, "us")
+                    FilterPerfStatsRow("候选评估/次", snapshot.candidateEvaluationsPerDecision, "条")
+                    FilterPerfStatsRow("元素隐藏", snapshot.cosmeticDurationMicros, "us")
+                    FilterPerfStatsRow("Scriptlet", snapshot.scriptletDurationMicros, "us")
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("页面注入与资源", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                DiagnosticItem(label = "元素隐藏调用", value = snapshot.cosmeticCallCount.toString())
+                DiagnosticItem(label = "Scriptlet 调用", value = snapshot.scriptletCallCount.toString())
+                DiagnosticItem(label = "生成 CSS", value = formatBytes(snapshot.generatedCssBytes))
+                DiagnosticItem(label = "生成 JS", value = formatBytes(snapshot.generatedScriptletBytes))
+            }
+
+            if (showIndexes) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("索引摘要", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    DiagnosticItem(label = "important", value = formatIndexStats(snapshot.importantIndex))
+                    DiagnosticItem(label = "exception", value = formatIndexStats(snapshot.exceptionIndex))
+                    DiagnosticItem(label = "blocking", value = formatIndexStats(snapshot.blockingIndex))
+                    DiagnosticItem(label = "removeparam", value = formatIndexStats(snapshot.removeParamIndex))
+                }
+            }
+
+            if (showEvents) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("最近事件摘要", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    DiagnosticItem(label = "事件缓存", value = "${events.size} 条")
+                    DiagnosticItem(label = "拦截/例外", value = "$blockEvents / $exceptionEvents")
+                    val latestEvent = events.maxByOrNull { it.timestamp }
+                    DiagnosticItem(label = "最近事件", value = latestEvent?.let { "${formatTimestamp(it.timestamp)} ${it.action}" } ?: "暂无")
+                }
+            }
+
+            Button(
+                onClick = onCopy,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.ContentCopy, contentDescription = "复制诊断", modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("复制完整诊断信息")
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterDiagnosticsSwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(subtitle, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled
+        )
+    }
+}
+
+@Composable
+private fun FilterPerfStatsRow(
+    label: String,
+    stats: FilterPerfSampleStats,
+    unit: String
+) {
+    DiagnosticItem(label = label, value = formatSampleStats(stats, unit))
+}
+
+@Composable
 private fun FilterPresetOption(
     selected: Boolean,
     preset: FilterPreset,
@@ -3541,6 +3799,110 @@ fun WhitelistSubscriptionCard(
             }
         }
     }
+}
+
+private fun buildFilterDiagnosticsText(
+    settingsEnabled: Boolean,
+    report: FilterBuildReport,
+    snapshot: FilterPerfSnapshot,
+    events: List<FilterEvent>
+): String {
+    return buildString {
+        appendLine("Child Kiosk Browser - Filter Performance Diagnostics")
+        appendLine("Generated at: ${formatTimestamp(System.currentTimeMillis())}")
+        appendLine("Filtering enabled: ${if (settingsEnabled) "yes" else "no"}")
+        appendLine()
+        appendLine("[Build]")
+        appendLine("buildDurationMs=${snapshot.buildDurationMs}")
+        appendLine("rules=${report.enabledRuleCount}/${report.ruleCount}")
+        appendLine("networkRules=${report.networkRuleCount}")
+        appendLine("cosmeticRules=${report.cosmeticRuleCount}")
+        appendLine("scriptletRules=${report.scriptletRuleCount}")
+        appendLine("unsupportedRules=${report.unsupportedRuleCount}")
+        if (report.errors.isNotEmpty()) {
+            appendLine("errors=${report.errors.joinToString(" | ")}")
+        }
+        appendLine()
+        appendLine("[Runtime]")
+        appendLine("decisionCount=${snapshot.decisionCount}")
+        appendLine("cacheHitCount=${snapshot.cacheHitCount}")
+        appendLine("cacheMissCount=${snapshot.cacheMissCount}")
+        appendLine("cacheHitRate=${formatRatio(snapshot.cacheHitCount, snapshot.decisionCount)}")
+        appendLine("candidateEvaluationCount=${snapshot.candidateEvaluationCount}")
+        appendLine("regexEvaluationCount=${snapshot.regexEvaluationCount}")
+        appendLine("cosmeticCallCount=${snapshot.cosmeticCallCount}")
+        appendLine("scriptletCallCount=${snapshot.scriptletCallCount}")
+        appendLine("generatedCssBytes=${snapshot.generatedCssBytes}")
+        appendLine("generatedScriptletBytes=${snapshot.generatedScriptletBytes}")
+        appendLine()
+        appendLine("[Samples]")
+        appendLine("shouldBlock=${formatSampleStats(snapshot.shouldBlockDurationMicros, "us")}")
+        appendLine("decision=${formatSampleStats(snapshot.decisionDurationMicros, "us")}")
+        appendLine("candidatesPerDecision=${formatSampleStats(snapshot.candidateEvaluationsPerDecision, "rules")}")
+        appendLine("cosmetic=${formatSampleStats(snapshot.cosmeticDurationMicros, "us")}")
+        appendLine("scriptlet=${formatSampleStats(snapshot.scriptletDurationMicros, "us")}")
+        appendLine()
+        appendLine("[Indexes]")
+        appendLine("important=${formatIndexStats(snapshot.importantIndex)}")
+        appendLine("exception=${formatIndexStats(snapshot.exceptionIndex)}")
+        appendLine("blocking=${formatIndexStats(snapshot.blockingIndex)}")
+        appendLine("removeparam=${formatIndexStats(snapshot.removeParamIndex)}")
+        appendLine()
+        appendLine("[Recent Events]")
+        appendLine("total=${events.size}")
+        appendLine("block=${events.count { it.action == "BLOCK" }}")
+        appendLine("allow=${events.count { it.action == "ALLOW" }}")
+        appendLine("exception=${events.count { it.action == "EXCEPTION" }}")
+        events.take(10).forEachIndexed { index, event ->
+            appendLine(
+                "#${index + 1} ${formatTimestamp(event.timestamp)} ${event.action} " +
+                    "${event.resourceType} ${event.url} rule=${event.ruleText.ifBlank { "-" }}"
+            )
+        }
+    }
+}
+
+private fun formatSampleStats(stats: FilterPerfSampleStats, unit: String): String {
+    if (stats.sampleCount <= 0) return "暂无样本"
+    return "n=${stats.sampleCount}, " +
+        "p50=${formatSampleValue(stats.p50, unit)}, " +
+        "p95=${formatSampleValue(stats.p95, unit)}, " +
+        "p99=${formatSampleValue(stats.p99, unit)}, " +
+        "max=${formatSampleValue(stats.max, unit)}"
+}
+
+private fun formatSampleValue(value: Long, unit: String): String {
+    return if (unit == "us") formatMicros(value) else "$value $unit"
+}
+
+private fun formatMicros(value: Long): String {
+    return if (value >= 1_000L) {
+        "${formatDecimal(value.toDouble() / 1_000.0, 2)} ms"
+    } else {
+        "$value us"
+    }
+}
+
+private fun formatIndexStats(stats: FilterIndexStats): String {
+    return "桶 ${stats.tokenBucketCount}，索引 ${stats.indexedRuleCount}，兜底 ${stats.universalRuleCount}"
+}
+
+private fun formatRatio(numerator: Long, denominator: Long): String {
+    if (denominator <= 0L) return "0%"
+    return "${formatDecimal(numerator.toDouble() * 100.0 / denominator.toDouble(), 1)}%"
+}
+
+private fun formatBytes(bytes: Long): String {
+    val safeBytes = bytes.coerceAtLeast(0L)
+    return when {
+        safeBytes >= 1024L * 1024L -> "${formatDecimal(safeBytes.toDouble() / (1024.0 * 1024.0), 2)} MB"
+        safeBytes >= 1024L -> "${formatDecimal(safeBytes.toDouble() / 1024.0, 1)} KB"
+        else -> "$safeBytes B"
+    }
+}
+
+private fun formatDecimal(value: Double, digits: Int): String {
+    return String.format(Locale.US, "%.${digits}f", value)
 }
 
 private fun formatTimestamp(timestamp: Long): String {
