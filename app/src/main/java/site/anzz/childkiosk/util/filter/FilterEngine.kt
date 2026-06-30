@@ -50,6 +50,9 @@ data class FilterPerfSnapshot(
     val decisionCount: Long,
     val cacheHitCount: Long,
     val cacheMissCount: Long,
+    val normalizedCacheHitCount: Long,
+    val normalizedCacheStoreCount: Long,
+    val normalizedCacheBypassCount: Long,
     val candidateEvaluationCount: Long,
     val regexEvaluationCount: Long,
     val cosmeticCallCount: Long,
@@ -75,12 +78,15 @@ class FilterEngine private constructor(
     private val cosmeticRules: List<CosmeticFilterRule>,
     private val scriptletRules: List<ScriptletFilterRule>,
     val report: FilterBuildReport,
-    private val buildDurationMs: Long
+    private val buildDurationMs: Long,
+    private val hasQuerySensitiveNetworkRules: Boolean
 ) {
     private val decisionCache = ConcurrentHashMap<String, FilterDecision>(2048, 0.75f, 4)
+    private val normalizedDecisionCache = ConcurrentHashMap<String, FilterDecision>(1024, 0.75f, 4)
     private val cosmeticCssCache = ConcurrentHashMap<String, String>(64)
     private val scriptletJsCache = ConcurrentHashMap<String, String>(64)
     private val maxCacheSize = 4096
+    private val maxNormalizedCacheSize = 2048
     private val maxHostCacheSize = 256
     private val perf = FilterPerfTracker(buildDurationMs)
     private val cosmeticIndex = CosmeticIndex(cosmeticRules)
@@ -90,6 +96,28 @@ class FilterEngine private constructor(
         if (decisionCache.size > maxCacheSize) decisionCache.clear()
         decisionCache[key] = decision
         return decision
+    }
+
+    private fun cacheDecision(
+        key: String,
+        normalizedKey: String?,
+        decision: FilterDecision
+    ): FilterDecision {
+        cacheDecision(key, decision)
+        if (normalizedKey != null && canStoreInNormalizedCache(decision)) {
+            if (normalizedDecisionCache.size > maxNormalizedCacheSize) normalizedDecisionCache.clear()
+            normalizedDecisionCache[normalizedKey] = decision
+            perf.recordNormalizedCacheStore()
+        }
+        return decision
+    }
+
+    fun resetDiagnostics() {
+        decisionCache.clear()
+        normalizedDecisionCache.clear()
+        cosmeticCssCache.clear()
+        scriptletJsCache.clear()
+        perf.reset()
     }
 
     fun perfSnapshot(): FilterPerfSnapshot {
@@ -202,7 +230,17 @@ class FilterEngine private constructor(
             val cacheKey = "${context.requestUrl}|${context.topLevelHost}|${context.resourceType}|${context.isThirdParty}"
             decisionCache[cacheKey]?.let {
                 perf.recordCacheHit()
-                return it
+                return it.withCacheStatus("full-cache-hit")
+            }
+            val normalizedCacheKey = normalizedDecisionCacheKey(context)
+            if (normalizedCacheKey == null) {
+                perf.recordNormalizedCacheBypass()
+            } else {
+                normalizedDecisionCache[normalizedCacheKey]?.let {
+                    perf.recordCacheHit()
+                    perf.recordNormalizedCacheHit()
+                    return it.withCacheStatus("normalized-cache-hit")
+                }
             }
             perf.recordCacheMiss()
 
@@ -213,30 +251,108 @@ class FilterEngine private constructor(
             evaluatedCandidates += importantMatch.evaluatedCount
             val importantBlock = importantMatch.rule
             if (importantBlock != null) {
-                return cacheDecision(cacheKey,
-                    FilterDecision(FilterAction.BLOCK, importantBlock.rule, "important rule"))
+                return cacheDecision(
+                    cacheKey,
+                    normalizedCacheKey,
+                    FilterDecision(
+                        FilterAction.BLOCK,
+                        importantBlock.rule,
+                        "important rule",
+                        diagnostics = diagnosticsFor(
+                            stage = "important",
+                            candidateCount = evaluatedCandidates,
+                            cacheStatus = "cache-miss",
+                            rule = importantBlock
+                        )
+                    )
+                )
             }
 
             val exceptionMatch = exceptionIndex.firstMatching(url, host, context, perf)
             evaluatedCandidates += exceptionMatch.evaluatedCount
             val exception = exceptionMatch.rule
             if (exception != null) {
-                return cacheDecision(cacheKey,
-                    FilterDecision(FilterAction.EXCEPTION, exception.rule, "exception rule"))
+                return cacheDecision(
+                    cacheKey,
+                    normalizedCacheKey,
+                    FilterDecision(
+                        FilterAction.EXCEPTION,
+                        exception.rule,
+                        "exception rule",
+                        diagnostics = diagnosticsFor(
+                            stage = "exception",
+                            candidateCount = evaluatedCandidates,
+                            cacheStatus = "cache-miss",
+                            rule = exception
+                        )
+                    )
+                )
             }
 
             val blockMatch = blockingIndex.firstMatching(url, host, context, perf)
             evaluatedCandidates += blockMatch.evaluatedCount
             val block = blockMatch.rule
             val decision = if (block != null) {
-                FilterDecision(FilterAction.BLOCK, block.rule, "blocking rule")
+                FilterDecision(
+                    FilterAction.BLOCK,
+                    block.rule,
+                    "blocking rule",
+                    diagnostics = diagnosticsFor(
+                        stage = "blocking",
+                        candidateCount = evaluatedCandidates,
+                        cacheStatus = "cache-miss",
+                        rule = block
+                    )
+                )
             } else {
-                FilterDecision.ALLOW
+                FilterDecision(
+                    FilterAction.ALLOW,
+                    diagnostics = diagnosticsFor(
+                        stage = "allow",
+                        candidateCount = evaluatedCandidates,
+                        cacheStatus = "cache-miss",
+                        rule = null
+                    )
+                )
             }
-            return cacheDecision(cacheKey, decision)
+            return cacheDecision(cacheKey, normalizedCacheKey, decision)
         } finally {
             perf.recordDecision(System.nanoTime() - startedAt, evaluatedCandidates)
         }
+    }
+
+    private fun diagnosticsFor(
+        stage: String,
+        candidateCount: Int,
+        cacheStatus: String,
+        rule: CompiledRule?
+    ): FilterDecisionDiagnostics {
+        return FilterDecisionDiagnostics(
+            candidateCount = candidateCount,
+            matchedStage = stage,
+            cacheStatus = cacheStatus,
+            ruleMatchType = rule?.rule?.matchType?.name.orEmpty(),
+            ruleIndexKey = rule?.indexKey.orEmpty()
+        )
+    }
+
+    private fun FilterDecision.withCacheStatus(cacheStatus: String): FilterDecision {
+        val nextDiagnostics = diagnostics?.copy(cacheStatus = cacheStatus)
+            ?: FilterDecisionDiagnostics(cacheStatus = cacheStatus)
+        return copy(diagnostics = nextDiagnostics)
+    }
+
+    private fun canStoreInNormalizedCache(decision: FilterDecision): Boolean {
+        if (hasQuerySensitiveNetworkRules) return false
+        val pattern = decision.rule?.pattern.orEmpty()
+        return pattern.indexOf('?') < 0 && pattern.indexOf('&') < 0 && pattern.indexOf('=') < 0
+    }
+
+    private fun normalizedDecisionCacheKey(context: FilterRequestContext): String? {
+        if (hasQuerySensitiveNetworkRules) return null
+        if (context.resourceType !in NORMALIZED_CACHE_RESOURCE_TYPES) return null
+        val normalizedUrl = normalizeCacheBustingUrl(context.requestUrl) ?: return null
+        return "$normalizedUrl|${context.topLevelHost}|${context.resourceType}|${context.isThirdParty}"
     }
 
     companion object {
@@ -244,7 +360,8 @@ class FilterEngine private constructor(
             TokenIndex(emptyList()), TokenIndex(emptyList()), TokenIndex(emptyList()), TokenIndex(emptyList()),
             emptyList(), emptyList(),
             FilterBuildReport(0, 0, 0, 0, 0, 0, emptyList(), emptyList()),
-            buildDurationMs = 0L
+            buildDurationMs = 0L,
+            hasQuerySensitiveNetworkRules = false
         )
 
         fun build(sources: List<FilterRuleSource>): FilterEngine {
@@ -295,6 +412,7 @@ class FilterEngine private constructor(
             val exceptions = activeCompiled.filter { it.rule.isException }
             val blocking = activeCompiled.filter { !it.rule.isException && !it.rule.important }
             val removeParam = blocking.filter { it.rule.removeParams.isNotEmpty() }
+            val hasQuerySensitiveNetworkRules = activeCompiled.any { it.rule.isQuerySensitive() }
             val enabledRuleCount = activeCompiled.size
             val unsupportedRuleCount = reports.sumOf { it.unsupportedRules }
             val buildDurationMs = (System.nanoTime() - startedAt) / 1_000_000L
@@ -315,10 +433,15 @@ class FilterEngine private constructor(
                     sourceReports = reports,
                     errors = errors.take(30)
                 ),
-                buildDurationMs = buildDurationMs
+                buildDurationMs = buildDurationMs,
+                hasQuerySensitiveNetworkRules = hasQuerySensitiveNetworkRules
             )
         }
     }
+}
+
+private fun FilterRule.isQuerySensitive(): Boolean {
+    return pattern.any { it == '?' || it == '&' || it == '=' } || removeParams.isNotEmpty()
 }
 
 private fun CosmeticFilterRule.matchesHost(host: String): Boolean {
@@ -523,6 +646,49 @@ private fun removeParamsFromUrl(url: String, params: Set<String>): String? {
     ).toString()
 }
 
+private val NORMALIZED_CACHE_RESOURCE_TYPES = setOf(
+    FilterResourceType.IMAGE,
+    FilterResourceType.SCRIPT,
+    FilterResourceType.STYLESHEET,
+    FilterResourceType.FONT,
+    FilterResourceType.MEDIA
+)
+
+private val CACHE_BUSTING_QUERY_PARAMS = setOf(
+    "t",
+    "ts",
+    "time",
+    "timestamp",
+    "_",
+    "rnd",
+    "random",
+    "cache",
+    "cachebuster",
+    "cb",
+    "v",
+    "ver",
+    "version"
+)
+
+private fun normalizeCacheBustingUrl(url: String): String? {
+    val uri = runCatching { URI(url) }.getOrNull() ?: return null
+    val rawQuery = uri.rawQuery ?: return null
+    val pairs = rawQuery.split("&").filter { it.isNotBlank() }
+    if (pairs.isEmpty()) return null
+    val allCacheBusting = pairs.all { pair ->
+        val name = pair.substringBefore("=", pair).lowercase(Locale.US)
+        name in CACHE_BUSTING_QUERY_PARAMS
+    }
+    if (!allCacheBusting) return null
+    return URI(
+        uri.scheme,
+        uri.authority,
+        uri.path,
+        null,
+        uri.fragment
+    ).toString().takeIf { it != url }
+}
+
 private fun isSafeCssSelector(selector: String): Boolean {
     if (selector.length !in 1..300) return false
     val unsupported = listOf(":-abp-", ":has-text", ":contains(", ":matches-css", ":xpath", "##", "#@#")
@@ -539,6 +705,9 @@ private class FilterPerfTracker(private val buildDurationMs: Long) {
     private val decisionCount = AtomicLong(0L)
     private val cacheHitCount = AtomicLong(0L)
     private val cacheMissCount = AtomicLong(0L)
+    private val normalizedCacheHitCount = AtomicLong(0L)
+    private val normalizedCacheStoreCount = AtomicLong(0L)
+    private val normalizedCacheBypassCount = AtomicLong(0L)
     private val candidateEvaluationCount = AtomicLong(0L)
     private val regexEvaluationCount = AtomicLong(0L)
     private val cosmeticCallCount = AtomicLong(0L)
@@ -562,6 +731,18 @@ private class FilterPerfTracker(private val buildDurationMs: Long) {
 
     fun recordCacheMiss() {
         cacheMissCount.incrementAndGet()
+    }
+
+    fun recordNormalizedCacheHit() {
+        normalizedCacheHitCount.incrementAndGet()
+    }
+
+    fun recordNormalizedCacheStore() {
+        normalizedCacheStoreCount.incrementAndGet()
+    }
+
+    fun recordNormalizedCacheBypass() {
+        normalizedCacheBypassCount.incrementAndGet()
     }
 
     fun recordDecision(durationNanos: Long, evaluatedCandidates: Int) {
@@ -598,6 +779,9 @@ private class FilterPerfTracker(private val buildDurationMs: Long) {
             decisionCount = decisionCount.get(),
             cacheHitCount = cacheHitCount.get(),
             cacheMissCount = cacheMissCount.get(),
+            normalizedCacheHitCount = normalizedCacheHitCount.get(),
+            normalizedCacheStoreCount = normalizedCacheStoreCount.get(),
+            normalizedCacheBypassCount = normalizedCacheBypassCount.get(),
             candidateEvaluationCount = candidateEvaluationCount.get(),
             regexEvaluationCount = regexEvaluationCount.get(),
             cosmeticCallCount = cosmeticCallCount.get(),
@@ -616,6 +800,26 @@ private class FilterPerfTracker(private val buildDurationMs: Long) {
         )
     }
 
+    fun reset() {
+        decisionCount.set(0L)
+        cacheHitCount.set(0L)
+        cacheMissCount.set(0L)
+        normalizedCacheHitCount.set(0L)
+        normalizedCacheStoreCount.set(0L)
+        normalizedCacheBypassCount.set(0L)
+        candidateEvaluationCount.set(0L)
+        regexEvaluationCount.set(0L)
+        cosmeticCallCount.set(0L)
+        scriptletCallCount.set(0L)
+        generatedCssBytes.set(0L)
+        generatedScriptletBytes.set(0L)
+        shouldBlockDurations.reset()
+        decisionDurations.reset()
+        candidateCounts.reset()
+        cosmeticDurations.reset()
+        scriptletDurations.reset()
+    }
+
     private fun nanosToMicros(durationNanos: Long): Long {
         return (durationNanos / 1_000L).coerceAtLeast(0L)
     }
@@ -630,6 +834,14 @@ private class AtomicLongSampler(private val capacity: Int = 1024) {
         val slot = (nextIndex.getAndIncrement() and Int.MAX_VALUE) % capacity
         values.set(slot, value.coerceAtLeast(0L))
         totalCount.incrementAndGet()
+    }
+
+    fun reset() {
+        for (i in 0 until capacity) {
+            values.set(i, 0L)
+        }
+        nextIndex.set(0)
+        totalCount.set(0L)
     }
 
     fun snapshot(): FilterPerfSampleStats {
@@ -899,13 +1111,97 @@ private class CompiledRule(
                     .normalizeHost()
                 if (host.length >= 3) return host
             }
-            // REGEX rules have no reliable literal token
-            if (rule.matchType == FilterMatchType.REGEX) return ""
+            if (rule.matchType == FilterMatchType.REGEX) {
+                return extractRegexLiteralToken(rule.pattern)
+            }
             // Extract longest alphanumeric sequence from pattern
             return TOKEN_REGEX.findAll(rule.pattern)
                 .map { it.value.lowercase(Locale.US) }
                 .maxByOrNull { it.length }
                 ?: ""
+        }
+
+        private fun extractRegexLiteralToken(pattern: String): String {
+            if (hasTopLevelAlternation(pattern)) return ""
+            val withoutOptionalGroups = stripSimpleOptionalGroups(pattern)
+            val candidates = mutableListOf<String>()
+            val current = StringBuilder()
+            var inClass = false
+            var escaped = false
+
+            fun flush() {
+                if (current.length >= URL_INDEX_GRAM_LENGTH) {
+                    candidates += current.toString().lowercase(Locale.US)
+                }
+                current.clear()
+            }
+
+            withoutOptionalGroups.forEach { char ->
+                when {
+                    escaped -> {
+                        when {
+                            char == '.' || char == '-' -> current.append(char)
+                            char.isLetterOrDigit() -> {
+                                if (char in setOf('d', 'D', 's', 'S', 'w', 'W', 'b', 'B')) {
+                                    flush()
+                                } else {
+                                    current.append(char)
+                                }
+                            }
+                            else -> flush()
+                        }
+                        escaped = false
+                    }
+                    char == '\\' -> escaped = true
+                    inClass && char == ']' -> {
+                        inClass = false
+                        flush()
+                    }
+                    inClass -> Unit
+                    char == '[' -> {
+                        inClass = true
+                        flush()
+                    }
+                    char.isLetterOrDigit() || char == '.' || char == '-' -> current.append(char)
+                    else -> flush()
+                }
+            }
+            if (escaped) flush()
+            flush()
+
+            return candidates
+                .filterNot { it in WEAK_REGEX_LITERAL_TOKENS }
+                .maxByOrNull { it.length }
+                ?: ""
+        }
+
+        private fun hasTopLevelAlternation(pattern: String): Boolean {
+            var depth = 0
+            var inClass = false
+            var escaped = false
+            pattern.forEach { char ->
+                when {
+                    escaped -> escaped = false
+                    char == '\\' -> escaped = true
+                    inClass && char == ']' -> inClass = false
+                    inClass -> Unit
+                    char == '[' -> inClass = true
+                    char == '(' -> depth++
+                    char == ')' -> if (depth > 0) depth--
+                    char == '|' && depth == 0 -> return true
+                }
+            }
+            return false
+        }
+
+        private fun stripSimpleOptionalGroups(pattern: String): String {
+            var result = pattern
+            val optionalGroup = Regex("\\([^()]*\\)\\?")
+            while (true) {
+                val next = optionalGroup.replace(result, "/")
+                if (next == result) return result
+                result = next
+            }
         }
 
         private fun indexKeyFor(token: String): String {
@@ -917,6 +1213,18 @@ private class CompiledRule(
                 normalized.take(URL_INDEX_GRAM_LENGTH)
             }
         }
+
+        private val WEAK_REGEX_LITERAL_TOKENS = setOf(
+            "https",
+            "http",
+            "www",
+            "com",
+            "net",
+            "org",
+            "image",
+            "script",
+            "static"
+        )
     }
 }
 

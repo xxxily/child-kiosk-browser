@@ -242,12 +242,21 @@ data class FilterRequestContext(
 data class FilterDecision(
     val action: FilterAction,
     val rule: FilterRule? = null,
-    val reason: String = ""
+    val reason: String = "",
+    val diagnostics: FilterDecisionDiagnostics? = null
 ) {
     companion object {
         val ALLOW = FilterDecision(FilterAction.ALLOW)
     }
 }
+
+data class FilterDecisionDiagnostics(
+    val candidateCount: Int = 0,
+    val matchedStage: String = "",
+    val cacheStatus: String = "",
+    val ruleMatchType: String = "",
+    val ruleIndexKey: String = ""
+)
 
 enum class FilterAction {
     ALLOW,
@@ -263,7 +272,12 @@ data class FilterEvent(
     val resourceType: String,
     val ruleText: String,
     val sourceName: String,
-    val reason: String
+    val reason: String,
+    val sourceId: String = "",
+    val matchType: String = "",
+    val indexKey: String = "",
+    val candidateCount: Int = 0,
+    val cacheStatus: String = ""
 ) {
     fun toJson(): JSONObject {
         return JSONObject()
@@ -275,6 +289,11 @@ data class FilterEvent(
             .put("ruleText", ruleText)
             .put("sourceName", sourceName)
             .put("reason", reason)
+            .put("sourceId", sourceId)
+            .put("matchType", matchType)
+            .put("indexKey", indexKey)
+            .put("candidateCount", candidateCount)
+            .put("cacheStatus", cacheStatus)
     }
 
     companion object {
@@ -287,7 +306,12 @@ data class FilterEvent(
                 resourceType = json.optString("resourceType"),
                 ruleText = json.optString("ruleText"),
                 sourceName = json.optString("sourceName"),
-                reason = json.optString("reason")
+                reason = json.optString("reason"),
+                sourceId = json.optString("sourceId"),
+                matchType = json.optString("matchType"),
+                indexKey = json.optString("indexKey"),
+                candidateCount = json.optInt("candidateCount", 0),
+                cacheStatus = json.optString("cacheStatus")
             )
         }
     }

@@ -54,9 +54,11 @@ object AdBlocker {
             )
             val engine = FilterRepository.getCachedEngine(snapshot) ?: return FilterDecision.ALLOW
             engineForStats = engine
+            FilterRepository.applyPendingDiagnosticsReset(context, engine)
             val siteOverride = FilterRepository.siteOverrideFor(snapshot, requestContext.topLevelHost)
             val decision = engine.decide(requestContext, siteOverride)
             if (decision.action != FilterAction.ALLOW && shouldRecordFilterEvent()) {
+                val diagnostics = decision.diagnostics
                 val event = FilterEvent(
                     timestamp = System.currentTimeMillis(),
                     action = decision.action.name,
@@ -65,7 +67,12 @@ object AdBlocker {
                     resourceType = requestContext.resourceType.optionName,
                     ruleText = decision.rule?.rawText.orEmpty(),
                     sourceName = decision.rule?.sourceName.orEmpty(),
-                    reason = decision.reason
+                    reason = decision.reason,
+                    sourceId = decision.rule?.sourceId.orEmpty(),
+                    matchType = diagnostics?.ruleMatchType.orEmpty(),
+                    indexKey = diagnostics?.ruleIndexKey.orEmpty(),
+                    candidateCount = diagnostics?.candidateCount ?: 0,
+                    cacheStatus = diagnostics?.cacheStatus.orEmpty()
                 )
                 if (isWebviewProcess(context)) {
                     sendFilterEventBroadcast(context, event)

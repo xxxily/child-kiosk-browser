@@ -72,7 +72,12 @@ object FilterRuleParser {
 
         text.lineSequence().forEachIndexed { index, rawLine ->
             val line = rawLine.trim()
-            if (line.isBlank() || line.startsWith("!") || line.startsWith("[")) {
+            if (
+                line.isBlank() ||
+                line.startsWith("!") ||
+                line.startsWith("[") ||
+                line.startsWith("/*")
+            ) {
                 return@forEachIndexed
             }
             totalLines++
@@ -232,7 +237,7 @@ object FilterRuleParser {
         )
     }
 
-    private fun parseAdblockLine(line: String, sourceId: String, sourceName: String): FilterRule {
+    private fun parseAdblockLine(line: String, sourceId: String, sourceName: String): FilterRule? {
         var working = line
         val isException = working.startsWith("@@")
         if (isException) working = working.removePrefix("@@")
@@ -250,6 +255,7 @@ object FilterRuleParser {
 
         val options = parseOptions(optionPart)
         val matchPattern = patternPart.trim()
+        if (matchPattern.isBlank()) return null
         val matchType = when {
             matchPattern.startsWith("||") -> FilterMatchType.DOMAIN_ANCHOR
             matchPattern.startsWith("|") -> FilterMatchType.STARTS_WITH
@@ -264,6 +270,8 @@ object FilterRuleParser {
             FilterMatchType.REGEX -> matchPattern.removePrefix("/").removeSuffix("/")
             FilterMatchType.SUBSTRING -> matchPattern
         }
+        if (options.unsupportedOptions.isNotEmpty()) return null
+        if (shouldSkipWeakUnrestrictedSubstring(matchPattern, matchType, isException, options)) return null
 
         return FilterRule(
             rawText = line,
@@ -368,6 +376,21 @@ object FilterRuleParser {
         return value.all { it.isLetterOrDigit() || it == '_' || it == '-' || it == '*' }
     }
 
+    private fun shouldSkipWeakUnrestrictedSubstring(
+        matchPattern: String,
+        matchType: FilterMatchType,
+        isException: Boolean,
+        options: ParsedOptions
+    ): Boolean {
+        if (isException || matchType != FilterMatchType.SUBSTRING) return false
+        if (options.hasConstraints()) return false
+        val normalized = matchPattern.trim().lowercase(Locale.US)
+        if (normalized in WEAK_UNRESTRICTED_SUBSTRING_RULES) return true
+        if (normalized.length < 5) return true
+        val plainWord = normalized.all { it.isLetterOrDigit() || it == '-' || it == '_' }
+        return plainWord && normalized.length <= 6 && normalized !in HIGH_CONFIDENCE_SHORT_SUBSTRINGS
+    }
+
     fun isRegexSafe(pattern: String): Boolean {
         if (pattern.length > 300) return false
         val riskyFragments = listOf(".*.*", "(.+)+", "(.*)+", "(.+)*", "(.*)*")
@@ -385,7 +408,17 @@ object FilterRuleParser {
         val badFilter: Boolean = false,
         val removeParams: Set<String> = emptySet(),
         val unsupportedOptions: Set<String> = emptySet()
-    )
+    ) {
+        fun hasConstraints(): Boolean {
+            return resourceTypes.isNotEmpty() ||
+                excludedResourceTypes.isNotEmpty() ||
+                thirdParty != null ||
+                domains.isNotEmpty() ||
+                excludedDomains.isNotEmpty() ||
+                important ||
+                removeParams.isNotEmpty()
+        }
+    }
 
     private val COMMON_TRACKING_PARAMS = setOf(
         "utm_source",
@@ -404,6 +437,36 @@ object FilterRuleParser {
         "redirect",
         "redirect-rule",
         "csp"
+    )
+
+    private val WEAK_UNRESTRICTED_SUBSTRING_RULES = setOf(
+        "search",
+        "hidden",
+        "button",
+        "image",
+        "images",
+        "img",
+        "icon",
+        "logo",
+        "static",
+        "assets",
+        "common",
+        "header",
+        "footer",
+        "menu",
+        "nav",
+        "share",
+        "wechat",
+        "weixin"
+    )
+
+    private val HIGH_CONFIDENCE_SHORT_SUBSTRINGS = setOf(
+        "ad",
+        "ads",
+        "adjs",
+        "adid",
+        "adserver",
+        "cnzz"
     )
 
     private val SUPPORTED_SCRIPTLETS = setOf(

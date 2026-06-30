@@ -444,6 +444,164 @@ class FilterEngineTest {
     }
 
     @Test
+    fun skipsWeakUnrestrictedSubstringRulesFromCustomLists() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    id = "anti-ad",
+                    name = "anti-AD",
+                    rulesText = """
+                        Search
+                        hidden
+                        adsbygoogle${'$'}script
+                    """.trimIndent()
+                )
+            )
+        )
+
+        assertEquals(
+            FilterAction.ALLOW,
+            engine.decide(
+                context(
+                    "https://static-t.720static.com/render/_next/static/images/searchBtn.png",
+                    "https://www.720yun.com/",
+                    FilterResourceType.IMAGE
+                )
+            ).action
+        )
+        assertEquals(
+            FilterAction.ALLOW,
+            engine.decide(
+                context(
+                    "https://qiyukf.com/script/widget.js?hidden=1",
+                    "https://www.720yun.com/",
+                    FilterResourceType.SCRIPT
+                )
+            ).action
+        )
+        assertEquals(
+            FilterAction.BLOCK,
+            engine.decide(
+                context(
+                    "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js",
+                    "https://example.com/",
+                    FilterResourceType.SCRIPT
+                )
+            ).action
+        )
+    }
+
+    @Test
+    fun skipsRulesWithUnsupportedDnsOptionsInsteadOfIgnoringThem() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    id = "anti-ad",
+                    name = "anti-AD",
+                    rulesText = """
+                        /^(\S+\.)?analytics(\-|\.)/${'$'}dnstype=A
+                        ||ads.example.com^${'$'}denyallow=example.org
+                    """.trimIndent()
+                )
+            )
+        )
+
+        assertEquals(
+            FilterAction.ALLOW,
+            engine.decide(context("https://analytics.example.com/pixel.gif", "https://site.example")).action
+        )
+        assertEquals(
+            FilterAction.ALLOW,
+            engine.decide(context("https://ads.example.com/banner.js", "https://site.example")).action
+        )
+        assertEquals(0, engine.report.networkRuleCount)
+        assertTrue(engine.report.unsupportedRuleCount >= 2)
+    }
+
+    @Test
+    fun regexRulesUseLiteralPrefilterWhenSafe() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    id = "test",
+                    name = "test",
+                    rulesText = "/adserver[0-9]+/${'$'}script"
+                )
+            )
+        )
+
+        assertEquals(
+            FilterAction.ALLOW,
+            engine.decide(context("https://cdn.example.com/static/app.js", "https://site.example", FilterResourceType.SCRIPT)).action
+        )
+        assertEquals(0L, engine.perfSnapshot().regexEvaluationCount)
+        assertEquals(0, engine.perfSnapshot().blockingIndex.universalRuleCount)
+
+        assertEquals(
+            FilterAction.BLOCK,
+            engine.decide(context("https://cdn.example.com/adserver12/file.js", "https://site.example", FilterResourceType.SCRIPT)).action
+        )
+        assertTrue(engine.perfSnapshot().regexEvaluationCount >= 1L)
+    }
+
+    @Test
+    fun normalizedCacheHandlesStaticCacheBustingUrls() {
+        val engine = FilterEngine.build(
+            listOf(FilterRuleSource("test", "test", "||ads.example.com^${'$'}image"))
+        )
+
+        assertEquals(
+            FilterAction.BLOCK,
+            engine.decide(context("https://ads.example.com/banner.png?t=1", "https://site.example", FilterResourceType.IMAGE)).action
+        )
+        assertEquals(
+            FilterAction.BLOCK,
+            engine.decide(context("https://ads.example.com/banner.png?t=2", "https://site.example", FilterResourceType.IMAGE)).action
+        )
+
+        val snapshot = engine.perfSnapshot()
+        assertTrue(snapshot.normalizedCacheStoreCount >= 1L)
+        assertTrue(snapshot.normalizedCacheHitCount >= 1L)
+        assertTrue(snapshot.cacheHitCount >= 1L)
+    }
+
+    @Test
+    fun resetDiagnosticsClearsCountersAndDecisionCaches() {
+        val engine = FilterEngine.build(
+            listOf(FilterRuleSource("test", "test", "||ads.example.com^${'$'}image"))
+        )
+        val request = context("https://ads.example.com/banner.png?t=1", "https://site.example", FilterResourceType.IMAGE)
+
+        assertEquals(FilterAction.BLOCK, engine.decide(request).action)
+        assertEquals(FilterAction.BLOCK, engine.decide(request).action)
+        assertTrue(engine.perfSnapshot().decisionCount > 0L)
+        assertTrue(engine.perfSnapshot().cacheHitCount > 0L)
+
+        engine.resetDiagnostics()
+
+        val snapshot = engine.perfSnapshot()
+        assertEquals(0L, snapshot.decisionCount)
+        assertEquals(0L, snapshot.cacheHitCount)
+        assertEquals(0L, snapshot.cacheMissCount)
+        assertEquals(0L, snapshot.normalizedCacheHitCount)
+        assertEquals(0L, snapshot.candidateEvaluationCount)
+    }
+
+    @Test
+    fun normalizesGithubBlobSubscriptionUrlsToRawTextUrls() {
+        assertEquals(
+            "https://raw.githubusercontent.com/privacy-protection-tools/anti-AD/master/anti-ad-easylist.txt",
+            FilterRepository.normalizeSubscriptionUrl(
+                "https://github.com/privacy-protection-tools/anti-AD/blob/master/anti-ad-easylist.txt"
+            )
+        )
+        assertEquals(
+            "https://anti-ad.net/easylist.txt",
+            FilterRepository.normalizeSubscriptionUrl("https://anti-ad.net/easylist.txt")
+        )
+    }
+
+    @Test
     fun cosmeticAndScriptletIndexesRespectHostSuffixAndExclusions() {
         val engine = FilterEngine.build(
             listOf(

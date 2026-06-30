@@ -1,6 +1,6 @@
 # 广告拦截引擎性能优化 — 需求实现文档
 
-> 本文档基于 [adblock_performance_optimization_report.md](file:///Users/blaze/work/github/child-kiosk-browser/docs/adblock_performance_optimization_report.md) 的审查评估，结合对实际代码的深入分析，产出可直接指导实现的需求规格。
+> 本文档基于 [adblock_performance_optimization_report.md](./adblock_performance_optimization_report.md) 的审查评估，结合对实际代码的深入分析，产出可直接指导实现的需求规格。
 
 ---
 
@@ -12,9 +12,9 @@
 
 | 原方案描述 | 代码实际情况 | 评估 |
 |:---|:---|:---|
-| 线性扫描 O(N) | [FilterEngine.kt:106-120](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L106-L120) 三次 `firstOrNull` 遍历 | ✅ 准确 |
-| 正则求值开销大 | [FilterEngine.kt:354](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L354) `regex?.matcher()?.find()` | ✅ 准确 |
-| 缓存 512 条命中率低 | [FilterEngine.kt:38-42](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L38-L42) LRU 512，key 含完整 URL | ✅ 准确 |
+| 线性扫描 O(N) | [FilterEngine.kt:106-120](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L106-L120) 三次 `firstOrNull` 遍历 | ✅ 准确 |
+| 正则求值开销大 | [FilterEngine.kt:354](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L354) `regex?.matcher()?.find()` | ✅ 准确 |
+| 缓存 512 条命中率低 | [FilterEngine.kt:38-42](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L38-L42) LRU 512，key 含完整 URL | ✅ 准确 |
 
 ### 1.2 原方案遗漏的关键瓶颈
 
@@ -22,10 +22,10 @@
 
 | 遗漏瓶颈 | 代码位置 | 严重程度 |
 |:---|:---|:---|
-| **`@Synchronized` 全局锁** — `decide()` 串行化所有线程 | [FilterEngine.kt:97](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L97) | 🔴 高 |
-| **重复 lowercase** — `rule.pattern.lowercase()` 每次 `matches()` 都重算 | [FilterEngine.kt:352-353](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L352-L353) | 🟡 中 |
-| **重复字符串解析** — `matchesDomainAnchor()` 每次调用做 `removePrefix`/`substringBefore`/`normalizeHost` | [FilterEngine.kt:368-379](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L368-L379) | 🟡 中 |
-| **cosmetic 规则也线性扫描** — `cosmeticCssFor()` 对全部 cosmetic 规则逐条过滤 | [FilterEngine.kt:48-60](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L48-L60) | 🟡 中 |
+| **`@Synchronized` 全局锁** — `decide()` 串行化所有线程 | [FilterEngine.kt:97](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L97) | 🔴 高 |
+| **重复 lowercase** — `rule.pattern.lowercase()` 每次 `matches()` 都重算 | [FilterEngine.kt:352-353](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L352-L353) | 🟡 中 |
+| **重复字符串解析** — `matchesDomainAnchor()` 每次调用做 `removePrefix`/`substringBefore`/`normalizeHost` | [FilterEngine.kt:368-379](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L368-L379) | 🟡 中 |
+| **cosmetic 规则也线性扫描** — `cosmeticCssFor()` 对全部 cosmetic 规则逐条过滤 | [FilterEngine.kt:48-60](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L48-L60) | 🟡 中 |
 
 ### 1.3 原方案五个方案的可行性评估
 
@@ -63,8 +63,8 @@ graph LR
 
 | 文件 | 改动类型 | 说明 |
 |:---|:---|:---|
-| [FilterEngine.kt](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt) | **重构** | 核心改动：`CompiledRule` 预计算、新增 `TokenIndex`、重写 `decide()` |
-| [FilterEngineTest.kt](file:///Users/blaze/work/github/child-kiosk-browser/app/src/test/java/site/anzz/childkiosk/util/filter/FilterEngineTest.kt) | **新增测试** | 新增索引正确性和性能基准测试 |
+| [FilterEngine.kt](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt) | **重构** | 核心改动：`CompiledRule` 预计算、新增 `TokenIndex`、重写 `decide()` |
+| [FilterEngineTest.kt](../app/src/test/java/site/anzz/childkiosk/util/filter/FilterEngineTest.kt) | **新增测试** | 新增索引正确性和性能基准测试 |
 
 > [!IMPORTANT]
 > 不改动 `FilterRuleParser.kt`、`FilterModels.kt`、`FilterRepository.kt`、`AdBlocker.kt`、`WebViewActivity.kt` 等文件。所有改动封闭在 `FilterEngine.kt` 内部，外部 API 签名不变。
@@ -73,7 +73,7 @@ graph LR
 
 #### 2.3.1 CompiledRule 预计算字段
 
-**现状问题**：[FilterEngine.kt:348-379](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L348-L379) 中，`matches()` 每次调用都重复计算 `rule.pattern.lowercase()`、`matchesDomainAnchor()` 中的字符串解析。
+**现状问题**：[FilterEngine.kt:348-379](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L348-L379) 中，`matches()` 每次调用都重复计算 `rule.pattern.lowercase()`、`matchesDomainAnchor()` 中的字符串解析。
 
 **改动要求**：在 `CompiledRule` 构造时预计算所有不变字段。
 
@@ -261,7 +261,7 @@ class FilterEngine private constructor(
 )
 ```
 
-**修改 `build()` 方法**（[FilterEngine.kt:133-197](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L133-L197)）：
+**修改 `build()` 方法**（[FilterEngine.kt:133-197](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L133-L197)）：
 
 ```kotlin
 // 原代码 L175-183，改为：
@@ -293,7 +293,7 @@ val EMPTY = FilterEngine(
 
 #### 2.3.4 重写 decide() 方法
 
-**替换** [FilterEngine.kt:97-128](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L97-L128)：
+**替换** [FilterEngine.kt:97-128](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L97-L128)：
 
 ```kotlin
 @Synchronized
@@ -343,7 +343,7 @@ fun decide(context: FilterRequestContext, siteOverride: SiteFilterOverride? = nu
 
 #### 2.3.5 修改 matches() 使用预计算字段
 
-**替换** [FilterEngine.kt:348-379](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L348-L379)：
+**替换** [FilterEngine.kt:348-379](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L348-L379)：
 
 ```kotlin
 fun matches(context: FilterRequestContext): Boolean {
@@ -367,7 +367,7 @@ private fun matchesDomainAnchor(context: FilterRequestContext): Boolean {
 
 #### 2.3.6 修改 cleanUrlForNavigation() 适配新结构
 
-**替换** [FilterEngine.kt:77-95](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L77-L95)：
+**替换** [FilterEngine.kt:77-95](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L77-L95)：
 
 ```kotlin
 fun cleanUrlForNavigation(url: String, topLevelUrl: String): String? {
@@ -416,13 +416,13 @@ fun cleanUrlForNavigation(url: String, topLevelUrl: String): String? {
 
 | 文件 | 改动类型 | 说明 |
 |:---|:---|:---|
-| [FilterEngine.kt](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt) | **修改** | 缓存替换为 `ConcurrentHashMap`，去掉 `@Synchronized` |
+| [FilterEngine.kt](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt) | **修改** | 缓存替换为 `ConcurrentHashMap`，去掉 `@Synchronized` |
 
 ### 3.3 详细实现规格
 
 #### 3.3.1 决策缓存升级
 
-**替换** [FilterEngine.kt:38-42](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L38-L42)：
+**替换** [FilterEngine.kt:38-42](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt#L38-L42)：
 
 ```kotlin
 // 使用 ConcurrentHashMap 替代 synchronized LinkedHashMap
@@ -559,13 +559,13 @@ fun universalRulesStillMatchWithoutToken() {
 
 | 文件 | 阶段一 | 阶段二 | 改动范围 |
 |:---|:---|:---|:---|
-| [FilterEngine.kt](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt) | ✏️ 重构 | ✏️ 修改 | `CompiledRule` 预计算, `TokenIndex` 新增, `decide()` 重写, `build()` 适配, 缓存升级 |
-| [FilterEngineTest.kt](file:///Users/blaze/work/github/child-kiosk-browser/app/src/test/java/site/anzz/childkiosk/util/filter/FilterEngineTest.kt) | ➕ 新增测试 | — | 索引正确性测试 |
-| [FilterRuleParser.kt](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterRuleParser.kt) | — | — | 不改动 |
-| [FilterModels.kt](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterModels.kt) | — | — | 不改动 |
-| [FilterRepository.kt](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/filter/FilterRepository.kt) | — | — | 不改动 |
-| [AdBlocker.kt](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/util/AdBlocker.kt) | — | — | 不改动 |
-| [WebViewActivity.kt](file:///Users/blaze/work/github/child-kiosk-browser/app/src/main/java/site/anzz/childkiosk/WebViewActivity.kt) | — | — | 不改动 |
+| [FilterEngine.kt](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterEngine.kt) | ✏️ 重构 | ✏️ 修改 | `CompiledRule` 预计算, `TokenIndex` 新增, `decide()` 重写, `build()` 适配, 缓存升级 |
+| [FilterEngineTest.kt](../app/src/test/java/site/anzz/childkiosk/util/filter/FilterEngineTest.kt) | ➕ 新增测试 | — | 索引正确性测试 |
+| [FilterRuleParser.kt](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterRuleParser.kt) | — | — | 不改动 |
+| [FilterModels.kt](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterModels.kt) | — | — | 不改动 |
+| [FilterRepository.kt](../app/src/main/java/site/anzz/childkiosk/util/filter/FilterRepository.kt) | — | — | 不改动 |
+| [AdBlocker.kt](../app/src/main/java/site/anzz/childkiosk/util/AdBlocker.kt) | — | — | 不改动 |
+| [WebViewActivity.kt](../app/src/main/java/site/anzz/childkiosk/WebViewActivity.kt) | — | — | 不改动 |
 
 ---
 

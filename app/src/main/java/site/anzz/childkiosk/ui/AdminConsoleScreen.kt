@@ -2822,6 +2822,11 @@ private fun WebFilteringSettingsScreen(
             onShowIndexesChange = { showDiagnosticIndexes = it },
             onShowEventsChange = { showDiagnosticEvents = it },
             onRefresh = { diagnosticsRefreshVersion++ },
+            onReset = {
+                FilterRepository.resetDiagnostics(context)
+                diagnosticsRefreshVersion++
+                Toast.makeText(context, "已清空过滤诊断统计、最近日志和本进程缓存", Toast.LENGTH_SHORT).show()
+            },
             onCopy = {
                 val text = buildFilterDiagnosticsText(
                     settingsEnabled = settings.enabled,
@@ -3237,6 +3242,23 @@ private fun WebFilteringSettingsScreen(
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
                             }
+
+                            val meta = listOfNotNull(
+                                event.sourceId.takeIf { it.isNotBlank() }?.let { "sourceId=$it" },
+                                event.matchType.takeIf { it.isNotBlank() }?.let { "type=$it" },
+                                event.indexKey.takeIf { it.isNotBlank() }?.let { "key=$it" },
+                                event.cacheStatus.takeIf { it.isNotBlank() }?.let { "cache=$it" },
+                                event.candidateCount.takeIf { it > 0 }?.let { "candidates=$it" }
+                            ).joinToString("  ")
+                            if (meta.isNotBlank()) {
+                                Text(
+                                    text = meta,
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }
@@ -3262,6 +3284,7 @@ private fun FilterPerformanceDiagnosticsCard(
     onShowIndexesChange: (Boolean) -> Unit,
     onShowEventsChange: (Boolean) -> Unit,
     onRefresh: () -> Unit,
+    onReset: () -> Unit,
     onCopy: () -> Unit
 ) {
     val cacheHitRate = formatRatio(snapshot.cacheHitCount, snapshot.decisionCount)
@@ -3312,6 +3335,13 @@ private fun FilterPerformanceDiagnosticsCard(
                     }
                 )
                 AssistChip(
+                    onClick = onReset,
+                    label = { Text("重置") },
+                    leadingIcon = {
+                        Icon(Icons.Default.RestartAlt, contentDescription = "重置", modifier = Modifier.size(18.dp))
+                    }
+                )
+                AssistChip(
                     onClick = { onExpandedChange(!expanded) },
                     label = { Text(if (expanded) "收起" else "展开") },
                     leadingIcon = {
@@ -3341,6 +3371,7 @@ private fun FilterPerformanceDiagnosticsCard(
                 DiagnosticItem(label = "启用规则", value = "${report.enabledRuleCount}/${report.ruleCount}")
                 DiagnosticItem(label = "判定次数", value = snapshot.decisionCount.toString())
                 DiagnosticItem(label = "缓存命中", value = "${snapshot.cacheHitCount}/${snapshot.decisionCount} ($cacheHitRate)")
+                DiagnosticItem(label = "归一缓存", value = "命中 ${snapshot.normalizedCacheHitCount}，存储 ${snapshot.normalizedCacheStoreCount}")
             }
 
             if (!expanded) {
@@ -3374,6 +3405,7 @@ private fun FilterPerformanceDiagnosticsCard(
                     DiagnosticItem(label = "平均候选", value = averageCandidates)
                     DiagnosticItem(label = "候选评估", value = snapshot.candidateEvaluationCount.toString())
                     DiagnosticItem(label = "正则评估", value = snapshot.regexEvaluationCount.toString())
+                    DiagnosticItem(label = "归一缓存绕过", value = snapshot.normalizedCacheBypassCount.toString())
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -3479,6 +3511,16 @@ private fun FilterPerformanceDiagnosticsCard(
                     Icon(Icons.Default.ContentCopy, contentDescription = "复制诊断", modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("复制完整诊断信息")
+                }
+
+                OutlinedButton(
+                    onClick = onReset,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.RestartAlt, contentDescription = "重置诊断", modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("清空统计、日志和过滤缓存")
                 }
             }
         }
@@ -3912,6 +3954,9 @@ private fun buildFilterDiagnosticsText(
         appendLine("cacheHitCount=${snapshot.cacheHitCount}")
         appendLine("cacheMissCount=${snapshot.cacheMissCount}")
         appendLine("cacheHitRate=${formatRatio(snapshot.cacheHitCount, snapshot.decisionCount)}")
+        appendLine("normalizedCacheHitCount=${snapshot.normalizedCacheHitCount}")
+        appendLine("normalizedCacheStoreCount=${snapshot.normalizedCacheStoreCount}")
+        appendLine("normalizedCacheBypassCount=${snapshot.normalizedCacheBypassCount}")
         appendLine("candidateEvaluationCount=${snapshot.candidateEvaluationCount}")
         appendLine("regexEvaluationCount=${snapshot.regexEvaluationCount}")
         appendLine("cosmeticCallCount=${snapshot.cosmeticCallCount}")
@@ -3940,8 +3985,28 @@ private fun buildFilterDiagnosticsText(
         events.take(10).forEachIndexed { index, event ->
             appendLine(
                 "#${index + 1} ${formatTimestamp(event.timestamp)} ${event.action} " +
-                    "${event.resourceType} ${event.url} rule=${event.ruleText.ifBlank { "-" }}"
+                    "${event.resourceType} ${event.url} " +
+                    "source=${event.sourceName.ifBlank { "-" }} " +
+                    "type=${event.matchType.ifBlank { "-" }} " +
+                    "key=${event.indexKey.ifBlank { "-" }} " +
+                    "candidates=${event.candidateCount} " +
+                    "cache=${event.cacheStatus.ifBlank { "-" }} " +
+                    "rule=${event.ruleText.ifBlank { "-" }}"
             )
+        }
+        val topRules = events
+            .filter { it.ruleText.isNotBlank() }
+            .groupingBy { "${it.sourceName.ifBlank { "-" }} | ${it.ruleText}" }
+            .eachCount()
+            .entries
+            .sortedByDescending { it.value }
+            .take(10)
+        if (topRules.isNotEmpty()) {
+            appendLine()
+            appendLine("[Recent Rule Summary]")
+            topRules.forEachIndexed { index, entry ->
+                appendLine("#${index + 1} count=${entry.value} ${entry.key}")
+            }
         }
     }
 }

@@ -29,6 +29,7 @@ object FilterRepository {
     private const val EVENTS_FILE = "filter_events.json"
     private const val EVENTS_CLEARED_FILE = "filter_events_cleared_at.txt"
     private const val PERF_SNAPSHOT_FILE = "filter_perf_snapshot.json"
+    private const val DIAGNOSTICS_RESET_FILE = "filter_diagnostics_reset_at.txt"
     private const val MAX_EVENTS = 200
     private const val PERF_SNAPSHOT_WRITE_INTERVAL_MS = 2_000L
 
@@ -41,6 +42,7 @@ object FilterRepository {
     private val perfSnapshotLock = Any()
     private val eventGeneration = AtomicLong(0L)
     private val lastPerfSnapshotWriteAt = AtomicLong(0L)
+    private val lastDiagnosticsResetAppliedAt = AtomicLong(0L)
     private val eventExecutor = Executors.newSingleThreadExecutor { task ->
         Thread(task, "ChildKioskFilterEvents").apply { isDaemon = true }
     }
@@ -119,7 +121,7 @@ object FilterRepository {
     }
 
     fun addCustomSubscription(context: Context, title: String, url: String): FilterSubscription {
-        val cleanUrl = url.trim()
+        val cleanUrl = normalizeSubscriptionUrl(url)
         require(cleanUrl.startsWith("https://")) { "仅支持 HTTPS 订阅 URL" }
         val subscription = FilterCatalog.customSubscription(title.trim(), cleanUrl)
         val next = getSettings(context).subscriptions
@@ -157,7 +159,8 @@ object FilterRepository {
                 saveSubscriptions(context, current.map { if (it.id == id) updated else it })
             }
         }
-        val text = downloadRules(target.subscriptionUrl)
+        val normalizedUrl = normalizeSubscriptionUrl(target.subscriptionUrl)
+        val text = downloadRules(normalizedUrl)
         val report = FilterEngine.build(listOf(FilterRuleSource(target.id, target.title, text))).report
         subscriptionFile(context, target.id).apply {
             parentFile?.mkdirs()
@@ -168,7 +171,8 @@ object FilterRepository {
             enabledRuleCount = report.enabledRuleCount,
             unsupportedCount = report.unsupportedRuleCount,
             lastUpdatedAt = System.currentTimeMillis(),
-            lastError = report.errors.firstOrNull().orEmpty()
+            lastError = report.errors.firstOrNull().orEmpty(),
+            subscriptionUrl = normalizedUrl
         )
         saveSubscriptions(context, current.map { if (it.id == id) updated else it })
         invalidate()
@@ -274,6 +278,7 @@ object FilterRepository {
         force: Boolean = false
     ) {
         if (!runtimeSnapshot.enabled) return
+        applyPendingDiagnosticsReset(context, engine)
         val now = System.currentTimeMillis()
         if (!force) {
             val previous = lastPerfSnapshotWriteAt.get()
@@ -298,10 +303,12 @@ object FilterRepository {
         val expectedKey = engineCacheKey(runtimeSnapshot)
         val json = readPerfSnapshotJson(context) ?: return null
         if (json.optString("engineKey") != expectedKey) return null
+        val updatedAt = json.optLong("updatedAt", 0L)
+        if (updatedAt <= readDiagnosticsResetAt(context.applicationContext)) return null
         val snapshot = perfSnapshotFromJson(json.optJSONObject("snapshot") ?: return null) ?: return null
         return FilterPerfDiagnosticSnapshot(
             snapshot = snapshot,
-            updatedAt = json.optLong("updatedAt", 0L),
+            updatedAt = updatedAt,
             processName = json.optString("processName", "")
         )
     }
@@ -312,6 +319,37 @@ object FilterRepository {
             writeEventsClearedAt(context, System.currentTimeMillis())
             prefs(context).edit().remove(KEY_EVENTS).apply()
             eventsAtomicFile(context).delete()
+        }
+    }
+
+    fun resetDiagnostics(context: Context) {
+        val appContext = context.applicationContext
+        val now = System.currentTimeMillis()
+        eventGeneration.incrementAndGet()
+        synchronized(engineCache) {
+            engineCache.values.forEach { it.resetDiagnostics() }
+        }
+        synchronized(eventLock) {
+            writeEventsClearedAt(appContext, now)
+            prefs(appContext).edit().remove(KEY_EVENTS).apply()
+            eventsAtomicFile(appContext).delete()
+        }
+        synchronized(perfSnapshotLock) {
+            perfSnapshotAtomicFile(appContext).delete()
+            writeDiagnosticsResetAt(appContext, now)
+        }
+        lastPerfSnapshotWriteAt.set(0L)
+        lastDiagnosticsResetAppliedAt.set(now)
+    }
+
+    fun applyPendingDiagnosticsReset(context: Context, engine: FilterEngine) {
+        val resetAt = readDiagnosticsResetAt(context.applicationContext)
+        if (resetAt <= 0L) return
+        val previous = lastDiagnosticsResetAppliedAt.get()
+        if (resetAt <= previous) return
+        if (lastDiagnosticsResetAppliedAt.compareAndSet(previous, resetAt)) {
+            engine.resetDiagnostics()
+            lastPerfSnapshotWriteAt.set(0L)
         }
     }
 
@@ -526,12 +564,45 @@ object FilterRepository {
         return AtomicFile(perfSnapshotFile(context))
     }
 
+    private fun readDiagnosticsResetAt(context: Context): Long {
+        val file = diagnosticsResetFile(context)
+        if (!file.isFile) return 0L
+        return runCatching {
+            String(diagnosticsResetAtomicFile(context).readFully(), Charsets.UTF_8).trim().toLong()
+        }.getOrDefault(0L)
+    }
+
+    private fun writeDiagnosticsResetAt(context: Context, timestamp: Long) {
+        val file = diagnosticsResetFile(context)
+        file.parentFile?.mkdirs()
+        val atomicFile = AtomicFile(file)
+        val output = atomicFile.startWrite()
+        try {
+            output.write(timestamp.toString().toByteArray(Charsets.UTF_8))
+            atomicFile.finishWrite(output)
+        } catch (e: Exception) {
+            atomicFile.failWrite(output)
+            throw e
+        }
+    }
+
+    private fun diagnosticsResetFile(context: Context): File {
+        return File(context.applicationContext.filesDir, DIAGNOSTICS_RESET_FILE)
+    }
+
+    private fun diagnosticsResetAtomicFile(context: Context): AtomicFile {
+        return AtomicFile(diagnosticsResetFile(context))
+    }
+
     private fun perfSnapshotToJson(snapshot: FilterPerfSnapshot): JSONObject {
         return JSONObject()
             .put("buildDurationMs", snapshot.buildDurationMs)
             .put("decisionCount", snapshot.decisionCount)
             .put("cacheHitCount", snapshot.cacheHitCount)
             .put("cacheMissCount", snapshot.cacheMissCount)
+            .put("normalizedCacheHitCount", snapshot.normalizedCacheHitCount)
+            .put("normalizedCacheStoreCount", snapshot.normalizedCacheStoreCount)
+            .put("normalizedCacheBypassCount", snapshot.normalizedCacheBypassCount)
             .put("candidateEvaluationCount", snapshot.candidateEvaluationCount)
             .put("regexEvaluationCount", snapshot.regexEvaluationCount)
             .put("cosmeticCallCount", snapshot.cosmeticCallCount)
@@ -556,6 +627,9 @@ object FilterRepository {
                 decisionCount = json.optLong("decisionCount", 0L),
                 cacheHitCount = json.optLong("cacheHitCount", 0L),
                 cacheMissCount = json.optLong("cacheMissCount", 0L),
+                normalizedCacheHitCount = json.optLong("normalizedCacheHitCount", 0L),
+                normalizedCacheStoreCount = json.optLong("normalizedCacheStoreCount", 0L),
+                normalizedCacheBypassCount = json.optLong("normalizedCacheBypassCount", 0L),
                 candidateEvaluationCount = json.optLong("candidateEvaluationCount", 0L),
                 regexEvaluationCount = json.optLong("regexEvaluationCount", 0L),
                 cosmeticCallCount = json.optLong("cosmeticCallCount", 0L),
@@ -619,8 +693,24 @@ object FilterRepository {
         }
     }
 
+    internal fun normalizeSubscriptionUrl(url: String): String {
+        val trimmed = url.trim()
+        val uri = runCatching { java.net.URI(trimmed) }.getOrNull() ?: return trimmed
+        if (!uri.scheme.equals("https", ignoreCase = true)) return trimmed
+        val host = uri.host.orEmpty().lowercase(java.util.Locale.US)
+        if (host != "github.com") return trimmed
+        val pathParts = uri.path.orEmpty().trim('/').split('/').filter { it.isNotBlank() }
+        if (pathParts.size < 5 || pathParts[2] != "blob") return trimmed
+        val owner = pathParts[0]
+        val repo = pathParts[1]
+        val branch = pathParts[3]
+        val filePath = pathParts.drop(4).joinToString("/")
+        return "https://raw.githubusercontent.com/$owner/$repo/$branch/$filePath"
+    }
+
     private fun downloadRules(url: String): String {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+        val normalizedUrl = normalizeSubscriptionUrl(url)
+        val connection = (URL(normalizedUrl).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15000
             readTimeout = 30000
             requestMethod = "GET"
