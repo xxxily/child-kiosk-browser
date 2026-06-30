@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+## [0.2.26] - 2026-07-01
+
+### Changed — 变更
+
+- **过滤诊断快照脱离 WebView 请求热路径**：
+  - 根据 `v0.2.25` 真机诊断日志确认，`FilterEngine.decide()` 已不是主要瓶颈，慢点主要来自 `shouldBlockSnapshot` 在请求线程内同步写诊断快照。
+  - `maybeRecordPerfSnapshot()` 改为请求线程只做原子节流判断，命中写入窗口后交给后台单线程写入快照，减少 WebView `shouldInterceptRequest` 尾延迟。
+  - 诊断 reset 时间戳文件检查增加节流，避免每个请求都读磁盘文件；后台写快照前仍会强制应用 pending reset，防止旧统计被重新写回。
+  - `docs/adblock_performance_diagnostics_summary_2026-07-01.md` 新增本轮实测指标分析、优化方案和验收标准。
+
+### Fixed — 修复
+
+- **过滤诊断重置误触保护**：
+  - 点击过滤性能诊断里的“重置”或“清空统计、日志和过滤缓存”时，先弹出二次确认。
+  - 对话框明确说明会清空性能统计、最近过滤日志、过滤判定缓存和 WebView 进程快照，取消时不会丢失已有采样数据。
+
 ## [0.2.25] - 2026-07-01
 
 ### Added — 新增
