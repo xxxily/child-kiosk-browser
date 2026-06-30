@@ -1,3 +1,33 @@
+## Child Kiosk Browser v0.2.24
+
+本版本继续推进网页过滤 P0/P1 优化，重点处理 anti-AD 自定义订阅引入后的宽泛规则误伤、正则兜底开销和诊断数据清理问题。
+
+> **说明**：本 APK 使用 debug 签名，仅供调试与家庭内部部署。生产/商用请自行用正式 keystore 重新签名。
+
+### 本版本核心变化
+
+* **自定义订阅规则准入更严格**：
+  - WebView 不支持的 `$dnstype`、`$denyallow` 等 DNS/AdGuard Home 规则选项不再被忽略后继续启用。
+  - `Search`、`hidden` 等无域名、无资源类型、无一方/三方约束的弱裸词规则会被跳过，降低正常资源误拦截风险。
+  - GitHub `blob` 订阅页面地址会自动转成 `raw.githubusercontent.com` 文本地址，避免把 GitHub 网页 HTML 当成过滤规则导入。
+  - CSS 块注释不再进入网络规则编译，减少无效编译错误。
+* **过滤热路径继续降噪**：
+  - 可安全提取 literal 的正则规则会进入 token 索引前置过滤，减少无关请求上的正则求值。
+  - 对图片、脚本、样式、字体和媒体资源新增安全的 normalized cache；存在 query-sensitive 规则时自动绕过。
+* **诊断清理和定位能力增强**：
+  - 过滤性能诊断新增“重置”，可清空统计、最近日志、过滤缓存和旧 WebView 快照，避免每轮测试被旧数据影响。
+  - 最近日志和复制诊断信息新增规则来源、匹配类型、索引 key、候选数、缓存状态和规则命中汇总。
+
+### 建议验证
+
+1. 安装后进入“后台管理 -> 网页过滤管理”，点击过滤性能诊断里的“重置”。
+2. 使用 `https://github.com/privacy-protection-tools/anti-AD/blob/master/anti-ad-easylist.txt` 添加或更新自定义订阅，确认列表里保存为 raw 文本地址。
+3. 启用 anti-AD 自定义订阅后访问之前出现误伤的网站，确认 `searchBtn.png`、`wechatcode.png`、`hidden=1` 一类正常资源不再因为 `Search`/`hidden` 裸词被拦。
+4. 访问含 `adsbygoogle.js` 的网页，确认高置信广告请求仍会被拦截。
+5. 回到诊断页点击“刷新”并复制诊断信息，关注 `regexEvaluationCount`、`candidatesPerDecision`、`normalizedCache*` 和最近事件中的 `source/type/key/candidates/cache` 字段。
+
+---
+
 ## Child Kiosk Browser v0.2.23
 
 本版本紧急修复 `0.2.22` 中点击“网页过滤管理”可能直接闪退的问题。

@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+## [0.2.24] - 2026-06-30
+
+### Changed — 变更
+
+- **网页过滤 P0/P1 性能与误伤治理**：
+  - 对 WebView 不支持的 DNS/AdGuard Home 规则选项改为不启用，避免 anti-AD 等自定义订阅里的 `$dnstype`、`$denyallow` 被忽略后错误参与网页请求拦截。
+  - 跳过 `Search`、`hidden` 等无域名、无资源类型、无一方/三方约束的弱裸词规则，降低正常搜索按钮、客服脚本和普通业务参数被误拦截的风险。
+  - 自定义订阅支持将 GitHub `blob` 页面地址自动规范化为 `raw.githubusercontent.com` 文本地址，避免把 GitHub HTML 页面文案误当过滤规则导入。
+  - 为可安全提取 literal 的正则规则建立 token 索引前置过滤，减少正则规则进入每次请求兜底候选池的概率。
+  - 新增静态资源 normalized decision cache，对安全 cache-busting query 的图片、脚本、样式、字体和媒体资源复用判定结果；存在 query-sensitive 规则时会自动绕过，避免改变规则语义。
+
+### Added — 新增
+
+- **过滤诊断重置与更完整的事件元信息**：
+  - 过滤性能诊断卡片新增“重置”入口，可清空性能计数、最近过滤日志、完整 URL cache、normalized cache、host 注入缓存和持久化 WebView 快照，方便每轮真机测试前清理旧结果。
+  - WebView 进程会读取诊断重置时间戳并清空自身内存统计；后台读取快照时会丢弃早于重置时间的旧快照，避免旧指标污染新采样。
+  - 过滤日志和复制诊断信息新增 `sourceId`、`matchType`、`indexKey`、`candidateCount`、`cacheStatus` 与最近规则命中汇总，便于定位具体慢规则和误伤规则来源。
+
 ## [0.2.23] - 2026-06-30
 
 ### Fixed — 修复
