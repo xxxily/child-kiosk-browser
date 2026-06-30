@@ -6,6 +6,23 @@
 
 ## [Unreleased]
 
+## [0.2.20] - 2026-06-30
+
+### Changed — 变更
+
+- **广告过滤热路径二次性能优化 (Adblock Hot Path Optimization)**：
+  - 将过滤规则索引升级为 domain suffix + URL gram 候选检索，修复单 token 精确匹配对 `adsbygoogle.js`、`banner123ad.js`、`/assets/ads/...` 等真实广告 URL 的候选覆盖不足问题，并保持候选按规则优先级稳定评估。
+  - 新增 `removeparam` 专用索引，导航 URL 参数清理不再借用全量 blocking 候选扫描。
+  - 为 cosmetic CSS 与 scriptlet 生成建立域名后缀索引和 host 级缓存，减少页面注入阶段对全部规则的重复扫描。
+  - 优化 `shouldInterceptRequest` 外层开销：复用 WebResourceRequest host/lowercase 结果，减少重复 URI 解析；对广告密集页的拦截日志与过滤事件做限流，避免日志/广播拖慢加载。
+  - 去除过滤引擎构建阶段为了 `badfilter` 产生的二次规则解析。
+
+### Added — 新增
+
+- **过滤性能可观测性与差分回归测试**：
+  - 新增 `FilterPerfSnapshot`，可采样 build 耗时、cache 命中、候选数量、regex 求值、`decide()` p50/p95/p99、cosmetic/scriptlet 生成耗时等指标，方便真机验证下一步是否需要编译快照或 native 引擎。
+  - 增加线性参考引擎差分测试、确定性 10,000 请求生成用例、嵌入式 literal 回归用例和 cosmetic/scriptlet 域名索引测试，保证索引优化不牺牲过滤正确性。
+
 ## [0.2.19] - 2026-06-29
 
 ### Changed — 变更

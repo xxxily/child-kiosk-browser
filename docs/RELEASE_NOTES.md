@@ -1,3 +1,36 @@
+## Child Kiosk Browser v0.2.20
+
+本版本继续针对网页广告过滤的真实加载卡顿做深度优化，重点从“单次规则匹配算法”推进到 WebView 请求热路径、元素隐藏/scriptlet 注入、构建阶段和可观测指标，便于后续在真机强规则集下继续压榨性能。
+
+> **说明**：本 APK 使用 debug 签名，仅供调试与家庭内部部署。生产/商用请自行用正式 keystore 重新签名。
+
+### 本版本核心变化
+
+* **TokenIndex v2 候选检索**：
+  - 规则候选检索从单个 best token 精确命中升级为“域名后缀桶 + URL gram key”，更适配真实广告 URL 中常见的 `adsbygoogle.js`、`banner123ad.js`、`/assets/ads/...` 等嵌入式字面量。
+  - 候选集合会恢复到规则优先级顺序后再匹配，避免索引命中顺序影响过滤语义。
+* **请求热路径瘦身**：
+  - WebView 拦截层复用请求 URL 的 host/lowercase 结果，减少每个资源请求上的重复解析和字符串构造。
+  - 广告密集页面中的拦截日志和过滤事件增加限流，避免大量 blocked 子资源触发日志/广播开销。
+* **元素隐藏与 scriptlet 加速**：
+  - cosmetic CSS 与 scriptlet 生成建立域名后缀索引和 host 缓存，不再每次注入都扫描全部规则。
+  - 跳过 progress=100 延迟路径中的重复过滤 CSS/scriptlet 注入，减少页面加载尾部抖动。
+* **构建和验证增强**：
+  - 去除 `badfilter` 收集导致的二次规则解析。
+  - 新增过滤性能快照 `FilterPerfSnapshot`，用于实测 build 耗时、候选数量、p95/p99 匹配耗时、regex 求值和注入生成耗时。
+  - 增加线性参考差分测试和 10,000 请求生成回归，确保索引优化不牺牲拦截正确性。
+
+### 建议验证
+
+1. **强规则集加载测试**：
+   - 开启“强力去干扰”或手动启用 EasyList、EasyPrivacy、中文广告和移动广告订阅，访问 `https://www.sina.com.cn`、`https://www.zhihu.com`、`https://www.bilibili.com` 等高并发资源页面。
+   - 观察首屏速度、滚动流畅度、广告位残留和页面是否出现误伤。
+2. **后续性能判定**：
+   - 如果 `FilterPerfSnapshot.buildDurationMs` 或真机首开预热仍明显偏慢，再进入下一阶段“持久化编译快照”。
+   - 如果 Kotlin 索引热路径在低端机上仍无法达到目标，再评估 native 引擎 spike。
+
+---
+
 ## Child Kiosk Browser v0.2.19
 
 本版本针对广告过滤与网页拦截引擎进行深度算法级性能重构，彻底移除了高频网络请求拦截下的 $O(N)$ 线性扫描逻辑与全局同步锁，实现百万级规则匹配下的零卡顿极速加载：
