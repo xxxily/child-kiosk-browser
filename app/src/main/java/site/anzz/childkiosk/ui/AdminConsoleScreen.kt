@@ -3353,60 +3353,15 @@ private fun FilterPerformanceDiagnosticsCard(
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                return@Column
-            }
+            } else {
+                if (!filteringEnabled) {
+                    Text(
+                        "网页过滤当前关闭。诊断区仍显示最近一次规则编译快照，打开过滤并访问网页后会产生运行指标。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
 
-            if (!filteringEnabled) {
-                Text(
-                    "网页过滤当前关闭。诊断区仍显示最近一次规则编译快照，打开过滤并访问网页后会产生运行指标。",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text("运行摘要", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                DiagnosticItem(label = "平均候选", value = averageCandidates)
-                DiagnosticItem(label = "候选评估", value = snapshot.candidateEvaluationCount.toString())
-                DiagnosticItem(label = "正则评估", value = snapshot.regexEvaluationCount.toString())
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterDiagnosticsSwitchRow(
-                    title = "显示 P50/P95/P99/Max",
-                    subtitle = "用于判断网页卡顿是否来自单次极慢判定。",
-                    checked = showPercentiles,
-                    onCheckedChange = onShowPercentilesChange
-                )
-                FilterDiagnosticsSwitchRow(
-                    title = "显示索引结构摘要",
-                    subtitle = "用于观察 token 桶、索引规则和兜底规则规模。",
-                    checked = showIndexes,
-                    onCheckedChange = onShowIndexesChange
-                )
-                FilterDiagnosticsSwitchRow(
-                    title = "包含最近日志摘要",
-                    subtitle = "用于把性能和真实拦截事件放在一起排查。",
-                    checked = showEvents,
-                    onCheckedChange = onShowEventsChange
-                )
-                FilterDiagnosticsSwitchRow(
-                    title = "自动采样刷新",
-                    subtitle = "预留：后续接入周期采样、慢请求追踪和阈值报警。",
-                    checked = false,
-                    onCheckedChange = {},
-                    enabled = false
-                )
-            }
-
-            if (showPercentiles) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3415,31 +3370,58 @@ private fun FilterPerformanceDiagnosticsCard(
                         .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("耗时分布", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    FilterPerfStatsRow("WebView shouldBlock", snapshot.shouldBlockDurationMicros, "us")
-                    FilterPerfStatsRow("规则判定", snapshot.decisionDurationMicros, "us")
-                    FilterPerfStatsRow("候选评估/次", snapshot.candidateEvaluationsPerDecision, "条")
-                    FilterPerfStatsRow("元素隐藏", snapshot.cosmeticDurationMicros, "us")
-                    FilterPerfStatsRow("Scriptlet", snapshot.scriptletDurationMicros, "us")
+                    Text("运行摘要", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    DiagnosticItem(label = "平均候选", value = averageCandidates)
+                    DiagnosticItem(label = "候选评估", value = snapshot.candidateEvaluationCount.toString())
+                    DiagnosticItem(label = "正则评估", value = snapshot.regexEvaluationCount.toString())
                 }
-            }
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text("页面注入与资源", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                DiagnosticItem(label = "元素隐藏调用", value = snapshot.cosmeticCallCount.toString())
-                DiagnosticItem(label = "Scriptlet 调用", value = snapshot.scriptletCallCount.toString())
-                DiagnosticItem(label = "生成 CSS", value = formatBytes(snapshot.generatedCssBytes))
-                DiagnosticItem(label = "生成 JS", value = formatBytes(snapshot.generatedScriptletBytes))
-            }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterDiagnosticsSwitchRow(
+                        title = "显示 P50/P95/P99/Max",
+                        subtitle = "用于判断网页卡顿是否来自单次极慢判定。",
+                        checked = showPercentiles,
+                        onCheckedChange = onShowPercentilesChange
+                    )
+                    FilterDiagnosticsSwitchRow(
+                        title = "显示索引结构摘要",
+                        subtitle = "用于观察 token 桶、索引规则和兜底规则规模。",
+                        checked = showIndexes,
+                        onCheckedChange = onShowIndexesChange
+                    )
+                    FilterDiagnosticsSwitchRow(
+                        title = "包含最近日志摘要",
+                        subtitle = "用于把性能和真实拦截事件放在一起排查。",
+                        checked = showEvents,
+                        onCheckedChange = onShowEventsChange
+                    )
+                    FilterDiagnosticsSwitchRow(
+                        title = "自动采样刷新",
+                        subtitle = "预留：后续接入周期采样、慢请求追踪和阈值报警。",
+                        checked = false,
+                        onCheckedChange = {},
+                        enabled = false
+                    )
+                }
 
-            if (showIndexes) {
+                if (showPercentiles) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("耗时分布", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        FilterPerfStatsRow("WebView shouldBlock", snapshot.shouldBlockDurationMicros, "us")
+                        FilterPerfStatsRow("规则判定", snapshot.decisionDurationMicros, "us")
+                        FilterPerfStatsRow("候选评估/次", snapshot.candidateEvaluationsPerDecision, "条")
+                        FilterPerfStatsRow("元素隐藏", snapshot.cosmeticDurationMicros, "us")
+                        FilterPerfStatsRow("Scriptlet", snapshot.scriptletDurationMicros, "us")
+                    }
+                }
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3448,39 +3430,56 @@ private fun FilterPerformanceDiagnosticsCard(
                         .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("索引摘要", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    DiagnosticItem(label = "important", value = formatIndexStats(snapshot.importantIndex))
-                    DiagnosticItem(label = "exception", value = formatIndexStats(snapshot.exceptionIndex))
-                    DiagnosticItem(label = "blocking", value = formatIndexStats(snapshot.blockingIndex))
-                    DiagnosticItem(label = "removeparam", value = formatIndexStats(snapshot.removeParamIndex))
+                    Text("页面注入与资源", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    DiagnosticItem(label = "元素隐藏调用", value = snapshot.cosmeticCallCount.toString())
+                    DiagnosticItem(label = "Scriptlet 调用", value = snapshot.scriptletCallCount.toString())
+                    DiagnosticItem(label = "生成 CSS", value = formatBytes(snapshot.generatedCssBytes))
+                    DiagnosticItem(label = "生成 JS", value = formatBytes(snapshot.generatedScriptletBytes))
                 }
-            }
 
-            if (showEvents) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                if (showIndexes) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("索引摘要", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        DiagnosticItem(label = "important", value = formatIndexStats(snapshot.importantIndex))
+                        DiagnosticItem(label = "exception", value = formatIndexStats(snapshot.exceptionIndex))
+                        DiagnosticItem(label = "blocking", value = formatIndexStats(snapshot.blockingIndex))
+                        DiagnosticItem(label = "removeparam", value = formatIndexStats(snapshot.removeParamIndex))
+                    }
+                }
+
+                if (showEvents) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("最近事件摘要", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        DiagnosticItem(label = "事件缓存", value = "${events.size} 条")
+                        DiagnosticItem(label = "拦截/例外", value = "$blockEvents / $exceptionEvents")
+                        val latestEvent = events.maxByOrNull { it.timestamp }
+                        DiagnosticItem(label = "最近事件", value = latestEvent?.let { "${formatTimestamp(it.timestamp)} ${it.action}" } ?: "暂无")
+                    }
+                }
+
+                Button(
+                    onClick = onCopy,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("最近事件摘要", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    DiagnosticItem(label = "事件缓存", value = "${events.size} 条")
-                    DiagnosticItem(label = "拦截/例外", value = "$blockEvents / $exceptionEvents")
-                    val latestEvent = events.maxByOrNull { it.timestamp }
-                    DiagnosticItem(label = "最近事件", value = latestEvent?.let { "${formatTimestamp(it.timestamp)} ${it.action}" } ?: "暂无")
+                    Icon(Icons.Default.ContentCopy, contentDescription = "复制诊断", modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("复制完整诊断信息")
                 }
-            }
-
-            Button(
-                onClick = onCopy,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Icon(Icons.Default.ContentCopy, contentDescription = "复制诊断", modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("复制完整诊断信息")
             }
         }
     }
