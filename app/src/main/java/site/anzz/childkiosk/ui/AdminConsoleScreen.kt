@@ -48,6 +48,7 @@ import site.anzz.childkiosk.util.WhitelistSubscriptionRepository
 import site.anzz.childkiosk.util.filter.FilterBuildReport
 import site.anzz.childkiosk.util.filter.FilterEvent
 import site.anzz.childkiosk.util.filter.FilterIndexStats
+import site.anzz.childkiosk.util.filter.FilterPerfDiagnosticSnapshot
 import site.anzz.childkiosk.util.filter.FilterPerfSampleStats
 import site.anzz.childkiosk.util.filter.FilterPerfSnapshot
 import site.anzz.childkiosk.util.filter.FilterPreset
@@ -2714,12 +2715,22 @@ private fun WebFilteringSettingsScreen(
     var settingsVersion by remember { mutableStateOf(0) }
     var diagnosticsRefreshVersion by remember { mutableStateOf(0) }
     val settings = remember(settingsVersion) { FilterRepository.getSettings(context) }
+    val runtimeSnapshot = remember(settingsVersion) { settings.toRuntimeSnapshot() }
     val engine = remember(settingsVersion) {
-        FilterRepository.getEngine(context, settings.toRuntimeSnapshot())
+        FilterRepository.getEngine(context, runtimeSnapshot)
     }
     val report = engine.report
-    val perfSnapshot = remember(settingsVersion, diagnosticsRefreshVersion) {
+    val localPerfSnapshot = remember(settingsVersion, diagnosticsRefreshVersion) {
         engine.perfSnapshot()
+    }
+    val webViewPerfSnapshot = remember(settingsVersion, diagnosticsRefreshVersion) {
+        FilterRepository.getLatestPerfSnapshot(context, runtimeSnapshot)
+    }
+    val perfSnapshot = webViewPerfSnapshot?.snapshot ?: localPerfSnapshot
+    val perfSourceLabel = if (webViewPerfSnapshot != null) {
+        "WebView 进程"
+    } else {
+        "后台进程"
     }
     var customRules by remember(settings.customRules) { mutableStateOf(settings.customRules) }
     var customRuleReport by remember { mutableStateOf(FilterRepository.validateCustomRules(customRules)) }
@@ -2727,6 +2738,7 @@ private fun WebFilteringSettingsScreen(
     var customSubscriptionTitle by remember { mutableStateOf("") }
     var customSubscriptionUrl by remember { mutableStateOf("") }
     var updatingSubscriptionId by remember { mutableStateOf<String?>(null) }
+    var diagnosticsExpanded by remember { mutableStateOf(false) }
     var showDiagnosticPercentiles by remember { mutableStateOf(true) }
     var showDiagnosticIndexes by remember { mutableStateOf(true) }
     var showDiagnosticEvents by remember { mutableStateOf(true) }
@@ -2798,10 +2810,14 @@ private fun WebFilteringSettingsScreen(
             filteringEnabled = settings.enabled,
             report = report,
             snapshot = perfSnapshot,
+            persistedSnapshot = webViewPerfSnapshot,
+            sourceLabel = perfSourceLabel,
             events = events,
+            expanded = diagnosticsExpanded,
             showPercentiles = showDiagnosticPercentiles,
             showIndexes = showDiagnosticIndexes,
             showEvents = showDiagnosticEvents,
+            onExpandedChange = { diagnosticsExpanded = it },
             onShowPercentilesChange = { showDiagnosticPercentiles = it },
             onShowIndexesChange = { showDiagnosticIndexes = it },
             onShowEventsChange = { showDiagnosticEvents = it },
@@ -2811,6 +2827,8 @@ private fun WebFilteringSettingsScreen(
                     settingsEnabled = settings.enabled,
                     report = report,
                     snapshot = perfSnapshot,
+                    sourceLabel = perfSourceLabel,
+                    persistedSnapshot = webViewPerfSnapshot,
                     events = events
                 )
                 clipboardManager.setText(AnnotatedString(text))
@@ -3232,10 +3250,14 @@ private fun FilterPerformanceDiagnosticsCard(
     filteringEnabled: Boolean,
     report: FilterBuildReport,
     snapshot: FilterPerfSnapshot,
+    persistedSnapshot: FilterPerfDiagnosticSnapshot?,
+    sourceLabel: String,
     events: List<FilterEvent>,
+    expanded: Boolean,
     showPercentiles: Boolean,
     showIndexes: Boolean,
     showEvents: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
     onShowPercentilesChange: (Boolean) -> Unit,
     onShowIndexesChange: (Boolean) -> Unit,
     onShowEventsChange: (Boolean) -> Unit,
@@ -3267,6 +3289,14 @@ private fun FilterPerformanceDiagnosticsCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 AssistChip(
                     onClick = onRefresh,
                     label = { Text("刷新") },
@@ -3274,6 +3304,56 @@ private fun FilterPerformanceDiagnosticsCard(
                         Icon(Icons.Default.Refresh, contentDescription = "刷新", modifier = Modifier.size(18.dp))
                     }
                 )
+                AssistChip(
+                    onClick = onCopy,
+                    label = { Text("复制") },
+                    leadingIcon = {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "复制", modifier = Modifier.size(18.dp))
+                    }
+                )
+                AssistChip(
+                    onClick = { onExpandedChange(!expanded) },
+                    label = { Text(if (expanded) "收起" else "展开") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = if (expanded) "收起" else "展开",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                DiagnosticItem(label = "指标来源", value = sourceLabel)
+                DiagnosticItem(
+                    label = "更新时间",
+                    value = persistedSnapshot?.updatedAt?.takeIf { it > 0L }?.let { formatTimestamp(it) } ?: "暂无 WebView 运行快照"
+                )
+                DiagnosticItem(label = "规则编译", value = "${snapshot.buildDurationMs} ms")
+                DiagnosticItem(label = "启用规则", value = "${report.enabledRuleCount}/${report.ruleCount}")
+                DiagnosticItem(label = "判定次数", value = snapshot.decisionCount.toString())
+                DiagnosticItem(label = "缓存命中", value = "${snapshot.cacheHitCount}/${snapshot.decisionCount} ($cacheHitRate)")
+            }
+
+            if (!expanded) {
+                Text(
+                    if (persistedSnapshot == null) {
+                        "尚未收到 WebView 进程运行快照。请打开网页产生请求后回到此处点击刷新。"
+                    } else {
+                        "已折叠详细指标，点击“展开”查看分位数、索引、注入资源和最近事件。"
+                    },
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                return@Column
             }
 
             if (!filteringEnabled) {
@@ -3292,11 +3372,9 @@ private fun FilterPerformanceDiagnosticsCard(
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                DiagnosticItem(label = "规则编译", value = "${snapshot.buildDurationMs} ms")
-                DiagnosticItem(label = "启用规则", value = "${report.enabledRuleCount}/${report.ruleCount}")
-                DiagnosticItem(label = "判定次数", value = snapshot.decisionCount.toString())
-                DiagnosticItem(label = "缓存命中", value = "${snapshot.cacheHitCount}/${snapshot.decisionCount} ($cacheHitRate)")
+                Text("运行摘要", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 DiagnosticItem(label = "平均候选", value = averageCandidates)
+                DiagnosticItem(label = "候选评估", value = snapshot.candidateEvaluationCount.toString())
                 DiagnosticItem(label = "正则评估", value = snapshot.regexEvaluationCount.toString())
             }
 
@@ -3805,12 +3883,19 @@ private fun buildFilterDiagnosticsText(
     settingsEnabled: Boolean,
     report: FilterBuildReport,
     snapshot: FilterPerfSnapshot,
+    sourceLabel: String,
+    persistedSnapshot: FilterPerfDiagnosticSnapshot?,
     events: List<FilterEvent>
 ): String {
     return buildString {
         appendLine("Child Kiosk Browser - Filter Performance Diagnostics")
         appendLine("Generated at: ${formatTimestamp(System.currentTimeMillis())}")
         appendLine("Filtering enabled: ${if (settingsEnabled) "yes" else "no"}")
+        appendLine("Metric source: $sourceLabel")
+        appendLine("Metric updated at: ${persistedSnapshot?.updatedAt?.takeIf { it > 0L }?.let { formatTimestamp(it) } ?: "not available"}")
+        if (!persistedSnapshot?.processName.isNullOrBlank()) {
+            appendLine("Metric process: ${persistedSnapshot?.processName}")
+        }
         appendLine()
         appendLine("[Build]")
         appendLine("buildDurationMs=${snapshot.buildDurationMs}")

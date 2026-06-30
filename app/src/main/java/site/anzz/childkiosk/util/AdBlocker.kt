@@ -75,7 +75,10 @@ object AdBlocker {
             }
             return decision
         } finally {
-            engineForStats?.recordShouldBlockDuration(System.nanoTime() - startedAt)
+            engineForStats?.let { engine ->
+                engine.recordShouldBlockDuration(System.nanoTime() - startedAt)
+                FilterRepository.maybeRecordPerfSnapshot(context, snapshot, engine)
+            }
         }
     }
 

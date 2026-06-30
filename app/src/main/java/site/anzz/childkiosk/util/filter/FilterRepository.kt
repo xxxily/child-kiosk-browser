@@ -11,6 +11,12 @@ import java.net.URL
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
+data class FilterPerfDiagnosticSnapshot(
+    val snapshot: FilterPerfSnapshot,
+    val updatedAt: Long,
+    val processName: String
+)
+
 object FilterRepository {
     private const val PREFS_NAME = "kiosk_filter_prefs"
     private const val KEY_ENABLED = "enabled"
@@ -22,7 +28,9 @@ object FilterRepository {
     private const val RULE_DIR = "filter_subscriptions"
     private const val EVENTS_FILE = "filter_events.json"
     private const val EVENTS_CLEARED_FILE = "filter_events_cleared_at.txt"
+    private const val PERF_SNAPSHOT_FILE = "filter_perf_snapshot.json"
     private const val MAX_EVENTS = 200
+    private const val PERF_SNAPSHOT_WRITE_INTERVAL_MS = 2_000L
 
     private val engineCache = object : LinkedHashMap<String, FilterEngine>(4, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, FilterEngine>?): Boolean {
@@ -30,7 +38,9 @@ object FilterRepository {
         }
     }
     private val eventLock = Any()
+    private val perfSnapshotLock = Any()
     private val eventGeneration = AtomicLong(0L)
+    private val lastPerfSnapshotWriteAt = AtomicLong(0L)
     private val eventExecutor = Executors.newSingleThreadExecutor { task ->
         Thread(task, "ChildKioskFilterEvents").apply { isDaemon = true }
     }
@@ -257,6 +267,45 @@ object FilterRepository {
         }
     }
 
+    fun maybeRecordPerfSnapshot(
+        context: Context,
+        runtimeSnapshot: FilterRuntimeSnapshot,
+        engine: FilterEngine,
+        force: Boolean = false
+    ) {
+        if (!runtimeSnapshot.enabled) return
+        val now = System.currentTimeMillis()
+        if (!force) {
+            val previous = lastPerfSnapshotWriteAt.get()
+            if (now - previous < PERF_SNAPSHOT_WRITE_INTERVAL_MS) return
+            if (!lastPerfSnapshotWriteAt.compareAndSet(previous, now)) return
+        } else {
+            lastPerfSnapshotWriteAt.set(now)
+        }
+        writePerfSnapshot(
+            context = context.applicationContext,
+            engineKey = engineCacheKey(runtimeSnapshot),
+            snapshot = engine.perfSnapshot(),
+            updatedAt = now
+        )
+    }
+
+    fun getLatestPerfSnapshot(
+        context: Context,
+        runtimeSnapshot: FilterRuntimeSnapshot
+    ): FilterPerfDiagnosticSnapshot? {
+        if (!runtimeSnapshot.enabled) return null
+        val expectedKey = engineCacheKey(runtimeSnapshot)
+        val json = readPerfSnapshotJson(context) ?: return null
+        if (json.optString("engineKey") != expectedKey) return null
+        val snapshot = perfSnapshotFromJson(json.optJSONObject("snapshot") ?: return null) ?: return null
+        return FilterPerfDiagnosticSnapshot(
+            snapshot = snapshot,
+            updatedAt = json.optLong("updatedAt", 0L),
+            processName = json.optString("processName", "")
+        )
+    }
+
     fun clearEvents(context: Context) {
         eventGeneration.incrementAndGet()
         synchronized(eventLock) {
@@ -431,6 +480,143 @@ object FilterRepository {
 
     private fun eventsClearedAtomicFile(context: Context): AtomicFile {
         return AtomicFile(eventsClearedFile(context))
+    }
+
+    private fun writePerfSnapshot(
+        context: Context,
+        engineKey: String,
+        snapshot: FilterPerfSnapshot,
+        updatedAt: Long
+    ) {
+        runCatching {
+            synchronized(perfSnapshotLock) {
+                val file = perfSnapshotFile(context)
+                file.parentFile?.mkdirs()
+                val atomicFile = AtomicFile(file)
+                val output = atomicFile.startWrite()
+                try {
+                    val json = JSONObject()
+                        .put("engineKey", engineKey)
+                        .put("updatedAt", updatedAt)
+                        .put("processName", currentProcessName())
+                        .put("snapshot", perfSnapshotToJson(snapshot))
+                    output.write(json.toString().toByteArray(Charsets.UTF_8))
+                    atomicFile.finishWrite(output)
+                } catch (e: Exception) {
+                    atomicFile.failWrite(output)
+                    throw e
+                }
+            }
+        }
+    }
+
+    private fun readPerfSnapshotJson(context: Context): JSONObject? {
+        val file = perfSnapshotFile(context)
+        if (!file.isFile) return null
+        return runCatching {
+            JSONObject(String(perfSnapshotAtomicFile(context).readFully(), Charsets.UTF_8))
+        }.getOrNull()
+    }
+
+    private fun perfSnapshotFile(context: Context): File {
+        return File(context.applicationContext.filesDir, PERF_SNAPSHOT_FILE)
+    }
+
+    private fun perfSnapshotAtomicFile(context: Context): AtomicFile {
+        return AtomicFile(perfSnapshotFile(context))
+    }
+
+    private fun perfSnapshotToJson(snapshot: FilterPerfSnapshot): JSONObject {
+        return JSONObject()
+            .put("buildDurationMs", snapshot.buildDurationMs)
+            .put("decisionCount", snapshot.decisionCount)
+            .put("cacheHitCount", snapshot.cacheHitCount)
+            .put("cacheMissCount", snapshot.cacheMissCount)
+            .put("candidateEvaluationCount", snapshot.candidateEvaluationCount)
+            .put("regexEvaluationCount", snapshot.regexEvaluationCount)
+            .put("cosmeticCallCount", snapshot.cosmeticCallCount)
+            .put("scriptletCallCount", snapshot.scriptletCallCount)
+            .put("generatedCssBytes", snapshot.generatedCssBytes)
+            .put("generatedScriptletBytes", snapshot.generatedScriptletBytes)
+            .put("shouldBlockDurationMicros", perfSampleStatsToJson(snapshot.shouldBlockDurationMicros))
+            .put("decisionDurationMicros", perfSampleStatsToJson(snapshot.decisionDurationMicros))
+            .put("candidateEvaluationsPerDecision", perfSampleStatsToJson(snapshot.candidateEvaluationsPerDecision))
+            .put("cosmeticDurationMicros", perfSampleStatsToJson(snapshot.cosmeticDurationMicros))
+            .put("scriptletDurationMicros", perfSampleStatsToJson(snapshot.scriptletDurationMicros))
+            .put("importantIndex", indexStatsToJson(snapshot.importantIndex))
+            .put("exceptionIndex", indexStatsToJson(snapshot.exceptionIndex))
+            .put("blockingIndex", indexStatsToJson(snapshot.blockingIndex))
+            .put("removeParamIndex", indexStatsToJson(snapshot.removeParamIndex))
+    }
+
+    private fun perfSnapshotFromJson(json: JSONObject): FilterPerfSnapshot? {
+        return runCatching {
+            FilterPerfSnapshot(
+                buildDurationMs = json.optLong("buildDurationMs", 0L),
+                decisionCount = json.optLong("decisionCount", 0L),
+                cacheHitCount = json.optLong("cacheHitCount", 0L),
+                cacheMissCount = json.optLong("cacheMissCount", 0L),
+                candidateEvaluationCount = json.optLong("candidateEvaluationCount", 0L),
+                regexEvaluationCount = json.optLong("regexEvaluationCount", 0L),
+                cosmeticCallCount = json.optLong("cosmeticCallCount", 0L),
+                scriptletCallCount = json.optLong("scriptletCallCount", 0L),
+                generatedCssBytes = json.optLong("generatedCssBytes", 0L),
+                generatedScriptletBytes = json.optLong("generatedScriptletBytes", 0L),
+                shouldBlockDurationMicros = perfSampleStatsFromJson(json.optJSONObject("shouldBlockDurationMicros")),
+                decisionDurationMicros = perfSampleStatsFromJson(json.optJSONObject("decisionDurationMicros")),
+                candidateEvaluationsPerDecision = perfSampleStatsFromJson(json.optJSONObject("candidateEvaluationsPerDecision")),
+                cosmeticDurationMicros = perfSampleStatsFromJson(json.optJSONObject("cosmeticDurationMicros")),
+                scriptletDurationMicros = perfSampleStatsFromJson(json.optJSONObject("scriptletDurationMicros")),
+                importantIndex = indexStatsFromJson(json.optJSONObject("importantIndex")),
+                exceptionIndex = indexStatsFromJson(json.optJSONObject("exceptionIndex")),
+                blockingIndex = indexStatsFromJson(json.optJSONObject("blockingIndex")),
+                removeParamIndex = indexStatsFromJson(json.optJSONObject("removeParamIndex"))
+            )
+        }.getOrNull()
+    }
+
+    private fun perfSampleStatsToJson(stats: FilterPerfSampleStats): JSONObject {
+        return JSONObject()
+            .put("sampleCount", stats.sampleCount)
+            .put("p50", stats.p50)
+            .put("p95", stats.p95)
+            .put("p99", stats.p99)
+            .put("max", stats.max)
+    }
+
+    private fun perfSampleStatsFromJson(json: JSONObject?): FilterPerfSampleStats {
+        json ?: return FilterPerfSampleStats(sampleCount = 0, p50 = 0L, p95 = 0L, p99 = 0L, max = 0L)
+        return FilterPerfSampleStats(
+            sampleCount = json.optInt("sampleCount", 0),
+            p50 = json.optLong("p50", 0L),
+            p95 = json.optLong("p95", 0L),
+            p99 = json.optLong("p99", 0L),
+            max = json.optLong("max", 0L)
+        )
+    }
+
+    private fun indexStatsToJson(stats: FilterIndexStats): JSONObject {
+        return JSONObject()
+            .put("tokenBucketCount", stats.tokenBucketCount)
+            .put("indexedRuleCount", stats.indexedRuleCount)
+            .put("universalRuleCount", stats.universalRuleCount)
+    }
+
+    private fun indexStatsFromJson(json: JSONObject?): FilterIndexStats {
+        json ?: return FilterIndexStats(tokenBucketCount = 0, indexedRuleCount = 0, universalRuleCount = 0)
+        return FilterIndexStats(
+            tokenBucketCount = json.optInt("tokenBucketCount", 0),
+            indexedRuleCount = json.optInt("indexedRuleCount", 0),
+            universalRuleCount = json.optInt("universalRuleCount", 0)
+        )
+    }
+
+    private fun currentProcessName(): String {
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            android.app.Application.getProcessName()
+        } else {
+            ""
+        }
     }
 
     private fun downloadRules(url: String): String {

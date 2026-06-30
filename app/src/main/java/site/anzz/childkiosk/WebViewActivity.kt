@@ -2494,10 +2494,9 @@ private fun injectCosmeticCssIfNeeded(
     val host = WebViewRuntime.hostOf(pageUrl)
     if (host.isBlank()) return
     val siteOverride = FilterRepository.siteOverrideFor(config.filterSnapshot, host)
-    val css = FilterRepository.getCachedEngine(config.filterSnapshot)
-        ?.cosmeticCssFor(host, siteOverride)
-        ?.take(256 * 1024)
-        ?: return
+    val engine = FilterRepository.getCachedEngine(config.filterSnapshot) ?: return
+    val css = engine.cosmeticCssFor(host, siteOverride).take(256 * 1024)
+    FilterRepository.maybeRecordPerfSnapshot(webView.context, config.filterSnapshot, engine)
     if (css.isBlank()) return
     val cssJson = JSONObject.quote(css)
     val js = """
@@ -2525,9 +2524,9 @@ private fun injectFilterScriptletsIfNeeded(
     val host = WebViewRuntime.hostOf(pageUrl)
     if (host.isBlank()) return
     val siteOverride = FilterRepository.siteOverrideFor(config.filterSnapshot, host)
-    val scriptlets = FilterRepository.getCachedEngine(config.filterSnapshot)
-        ?.scriptletJsFor(host, siteOverride)
-        ?: return
+    val engine = FilterRepository.getCachedEngine(config.filterSnapshot) ?: return
+    val scriptlets = engine.scriptletJsFor(host, siteOverride)
+    FilterRepository.maybeRecordPerfSnapshot(webView.context, config.filterSnapshot, engine)
     if (scriptlets.isBlank()) return
     val js = """
         (function() {
