@@ -67,7 +67,8 @@ data class FloatingBrowserControlsCallbacks(
     val onCloseTab: (String) -> Unit = {},
     val onSwitchTab: (String) -> Unit = {},
     val onHome: () -> Unit = {},
-    val onOpenWebApp: (site.anzz.childkiosk.data.WebAppEntity) -> Unit = {}
+    val onOpenWebApp: (site.anzz.childkiosk.data.WebAppEntity) -> Unit = {},
+    val onShowSiteInfoPanel: (String) -> Unit = {}
 )
 
 enum class FloatingControlActionStyle {
@@ -139,6 +140,18 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         handleAction(ACTION_PANEL_CLOSE)
     }
 
+    private val infoButton = ImageButton(context).apply {
+        contentDescription = "网站信息与权限配置"
+        scaleType = ImageView.ScaleType.CENTER
+        setPadding(dp(8), dp(8), dp(8), dp(8))
+        background = roundedBackground(Color.TRANSPARENT, dp(10))
+        minimumWidth = dp(36)
+        minimumHeight = dp(36)
+        setOnClickListener {
+            callbacks.onShowSiteInfoPanel(state.currentUrl)
+        }
+    }
+
     private val urlInput = EditText(context).apply {
         minHeight = dp(44)
         setSingleLine(true)
@@ -149,8 +162,8 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         setHintTextColor(PanelHintColor)
         hint = "输入网址"
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(12), dp(8), dp(12), dp(8))
-        background = roundedBackground(Color.WHITE, dp(12), StrokeColor, dp(1))
+        setPadding(dp(4), dp(8), dp(12), dp(8))
+        background = null
         setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_GO) {
                 submitUrl()
@@ -246,11 +259,29 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
+                val urlContainer = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    background = roundedBackground(Color.WHITE, dp(12), StrokeColor, dp(1))
+                    setPadding(dp(6), 0, 0, 0)
+                    addView(
+                        infoButton,
+                        LinearLayout.LayoutParams(dp(36), dp(36))
+                    )
+                    addView(
+                        urlInput,
+                        LinearLayout.LayoutParams(
+                            0,
+                            dp(44),
+                            1f
+                        )
+                    )
+                }
                 addView(
-                    urlInput,
+                    urlContainer,
                     LinearLayout.LayoutParams(
                         0,
-                        dp(44),
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
                         1f
                     )
                 )
@@ -380,7 +411,28 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         }
         progressView.progress = state.progress
         progressView.isVisible = state.isLoading || state.progress in 1..99
+        updateInfoButtonIcon(state.currentUrl)
         renderSections()
+    }
+
+    private fun updateInfoButtonIcon(url: String) {
+        val trimmed = url.trim()
+        val isHttps = trimmed.startsWith("https://", ignoreCase = true)
+        val isHttp = trimmed.startsWith("http://", ignoreCase = true)
+
+        val iconRes = when {
+            isHttps -> R.drawable.ic_browser_secure_24
+            isHttp -> R.drawable.ic_browser_warning_24
+            else -> R.drawable.ic_browser_info_24
+        }
+        infoButton.setImageResource(iconRes)
+
+        val tintColor = when {
+            isHttps -> Color.parseColor("#4CAF50")
+            isHttp -> Color.parseColor("#F44336")
+            else -> PanelTextColor
+        }
+        infoButton.imageTintList = ColorStateList.valueOf(tintColor)
     }
 
     fun setPanelExpanded(expanded: Boolean, animated: Boolean = true) {

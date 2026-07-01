@@ -30,7 +30,32 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -91,7 +116,7 @@ private object FilterBlockLogLimiter {
 class WebViewActivity : ComponentActivity() {
 
     private val tabList = mutableListOf<BrowserTab>()
-    private var activeTabId: String? = null
+    internal var activeTabId: String? = null
     private val MAX_ACTIVE_WEBVIEWS = 2
     private var rootWebView: WebView? = null
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
@@ -118,6 +143,36 @@ class WebViewActivity : ComponentActivity() {
     private var pendingDownloadRequest: PendingDownloadRequest? = null
     private var downloadPermissionDialog: AlertDialog? = null
     private var bookmarkEditorView: ComposeView? = null
+    private var customDialogView: ComposeView? = null
+    internal val lastAttemptedSchemeMap = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    private fun showCustomComposeDialog(content: @Composable () -> Unit) {
+        val root = webViewRoot ?: return
+        dismissCustomComposeDialog()
+        val dialogView = ComposeView(this).apply {
+            setContent {
+                ChildKioskTheme {
+                    content()
+                }
+            }
+        }
+        customDialogView = dialogView
+        root.addView(
+            dialogView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+    }
+
+    private fun dismissCustomComposeDialog() {
+        customDialogView?.let { view ->
+            (view.parent as? ViewGroup)?.removeView(view)
+            view.disposeComposition()
+        }
+        customDialogView = null
+    }
 
     private data class PendingGeolocationRequest(
         val origin: String?,
@@ -343,41 +398,98 @@ class WebViewActivity : ComponentActivity() {
         callback: GeolocationPermissions.Callback?
     ) {
         if (callback == null) return
+        val siteName = displayOrigin(origin)
+
         if (runtimeConfig.limitGeolocation) {
             callback.invoke(origin, false, false)
             Toast.makeText(this, "网页定位功能已受限制", Toast.LENGTH_SHORT).show()
             return
         }
 
+        if (origin != null && runtimeConfig.geolocationBlacklist.contains(origin)) {
+            Log.d("ChildKioskWebView", "Geolocation origin is in blacklist: $origin")
+            callback.invoke(origin, false, false)
+            return
+        }
+
         finishPendingGeolocationRequest(allow = false, retain = false)
         geolocationPermissionDialog?.dismiss()
+        dismissCustomComposeDialog()
+
         pendingGeolocationRequest = PendingGeolocationRequest(origin, callback)
 
-        val siteName = displayOrigin(origin)
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("允许网站获取位置？")
-            .setMessage("$siteName 请求获取当前设备位置。")
-            .setNegativeButton("拒绝") { _, _ ->
-                finishPendingGeolocationRequest(allow = false, retain = false)
-            }
-            .setPositiveButton("允许") { _, _ ->
-                if (hasLocationPermission()) {
-                    finishPendingGeolocationRequest(allow = true, retain = true)
-                } else {
-                    requestAndroidLocationPermission()
+        showCustomComposeDialog {
+            BeautifulConfirmDialog(
+                title = "允许网站获取位置？",
+                message = "$siteName 正在请求获取当前设备位置。\n（这有助于提供本地化的服务或内容）",
+                icon = Icons.Default.LocationOn,
+                blacklistText = "拒绝且不再提示（加入黑名单）",
+                onNegative = {
+                    dismissCustomComposeDialog()
+                    finishPendingGeolocationRequest(allow = false, retain = false)
+                },
+                onPositive = {
+                    dismissCustomComposeDialog()
+                    if (hasLocationPermission()) {
+                        finishPendingGeolocationRequest(allow = true, retain = true)
+                    } else {
+                        requestAndroidLocationPermission()
+                    }
+                },
+                onBlacklist = {
+                    dismissCustomComposeDialog()
+                    finishPendingGeolocationRequest(allow = false, retain = false)
+                    if (origin != null) {
+                        KioskPrefs.addGeolocationToBlacklist(this@WebViewActivity, origin)
+                        val currentList = runtimeConfig.geolocationBlacklist.toMutableSet()
+                        currentList.add(origin)
+                        runtimeConfig = runtimeConfig.copy(geolocationBlacklist = currentList)
+                        Toast.makeText(this@WebViewActivity, "已将该网址加入定位黑名单", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onDismiss = {
+                    dismissCustomComposeDialog()
+                    finishPendingGeolocationRequest(allow = false, retain = false)
                 }
-            }
-            .setOnCancelListener {
-                finishPendingGeolocationRequest(allow = false, retain = false)
-            }
-            .create()
-        dialog.setOnDismissListener {
-            if (geolocationPermissionDialog === dialog) {
-                geolocationPermissionDialog = null
-            }
+            )
         }
-        geolocationPermissionDialog = dialog
-        dialog.show()
+    }
+
+    internal fun handleCustomSchemeRedirect(urlStr: String, scheme: String) {
+        dismissCustomComposeDialog()
+
+        showCustomComposeDialog {
+            BeautifulConfirmDialog(
+                title = "允许网页唤起外部应用？",
+                message = "网页正在请求打开第三方应用 (协议: $scheme://)。\n这可能会跳转至其他软件，请确认是否安全。",
+                icon = Icons.Default.Share,
+                blacklistText = "拒绝且不再提示（加入黑名单）",
+                onNegative = {
+                    dismissCustomComposeDialog()
+                },
+                onPositive = {
+                    dismissCustomComposeDialog()
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(urlStr))
+                        startActivity(intent)
+                    } catch (e: Exception) {
+                        Log.w("ChildKioskWebView", "Failed to launch external app: $urlStr", e)
+                        Toast.makeText(this@WebViewActivity, "无法打开对应的外部应用", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onBlacklist = {
+                    dismissCustomComposeDialog()
+                    KioskPrefs.addSchemeToBlacklist(this@WebViewActivity, scheme)
+                    val currentList = runtimeConfig.schemeBlacklist.toMutableSet()
+                    currentList.add(scheme)
+                    runtimeConfig = runtimeConfig.copy(schemeBlacklist = currentList)
+                    Toast.makeText(this@WebViewActivity, "已将协议 [$scheme] 加入 Scheme 黑名单", Toast.LENGTH_SHORT).show()
+                },
+                onDismiss = {
+                    dismissCustomComposeDialog()
+                }
+            )
+        }
     }
 
     fun requestDownload(
@@ -1094,9 +1206,17 @@ class WebViewActivity : ComponentActivity() {
                 },
                 onOpenWebApp = { webApp ->
                     createNewTab(webApp.url, focus = true)
+                },
+                onShowSiteInfoPanel = { url ->
+                    showSiteInfoPanel(url)
                 }
             )
         )
+    }
+
+    private fun showSiteInfoPanel(url: String) {
+        floatingControlsOverlay?.setPanelExpanded(false)
+        showSiteInfoDialog(url)
     }
 
     private fun bookmarkCurrentPageFromFloatingControls() {
@@ -2021,6 +2141,53 @@ class WebViewActivity : ComponentActivity() {
         }
     }
 
+    private fun showSiteInfoDialog(url: String) {
+        dismissCustomComposeDialog()
+
+        val host = try {
+            Uri.parse(url).host?.lowercase() ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+        val activeTab = activeTabId
+        val currentAttemptedScheme = activeTab?.let { lastAttemptedSchemeMap[it] }
+
+        showCustomComposeDialog {
+            SiteInfoContent(
+                host = host,
+                url = url,
+                currentAttemptedScheme = currentAttemptedScheme,
+                initialLimitGeolocation = runtimeConfig.limitGeolocation,
+                initialLimitCustomScheme = runtimeConfig.limitCustomScheme,
+                initialGeoBlacklist = runtimeConfig.geolocationBlacklist,
+                initialSchemeBlacklist = runtimeConfig.schemeBlacklist,
+                onDismiss = { dismissCustomComposeDialog() },
+                onClearData = {
+                    val origin = try {
+                        val uri = Uri.parse(url)
+                        "${uri.scheme}://${uri.host}"
+                    } catch (ex: Exception) {
+                        ""
+                    }
+                    if (origin.isNotBlank()) {
+                        android.webkit.WebStorage.getInstance().deleteOrigin(origin)
+                        Toast.makeText(this@WebViewActivity, "已清理本站 ($host) 的本地存储和缓存", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(this@WebViewActivity, "无法解析本站域名，清理失败", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onUpdateGeoBlacklist = { newSet ->
+                    KioskPrefs.setGeolocationBlacklist(this@WebViewActivity, newSet)
+                    runtimeConfig = runtimeConfig.copy(geolocationBlacklist = newSet)
+                },
+                onUpdateSchemeBlacklist = { newSet ->
+                    KioskPrefs.setSchemeBlacklist(this@WebViewActivity, newSet)
+                    runtimeConfig = runtimeConfig.copy(schemeBlacklist = newSet)
+                }
+            )
+        }
+    }
+
     companion object {
         const val EXTRA_WEB_APP_ID = "WEB_APP_ID"
         const val EXTRA_ORIENTATION_MODE = "ORIENTATION_MODE"
@@ -2161,19 +2328,38 @@ private fun createSecureWebView(
                     return false
                 }
 
-                if (!WebViewRuntime.isWebUrl(urlStr)) {
-                    val isNormalMode = KioskPrefs.getProtectionMode(ctx) == KioskPrefs.MODE_NONE
-                    if (isNormalMode) {
-                        try {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(urlStr))
-                            ctx.startActivity(intent)
-                            return true
-                        } catch (e: Exception) {
-                            Log.w("ChildKioskWebView", "Normal mode: failed to launch external app for $urlStr", e)
-                            return false
+                val uri = Uri.parse(urlStr)
+                val scheme = uri.scheme?.lowercase()?.trim()
+                val isCustomScheme = scheme != null && 
+                                     scheme != "http" && 
+                                     scheme != "https" && 
+                                     scheme != "file" && 
+                                     scheme != "about" && 
+                                     scheme != "javascript" && 
+                                     scheme != "data"
+
+                if (isCustomScheme && scheme != null) {
+                    (ctx as? WebViewActivity)?.let { activity ->
+                        activity.activeTabId?.let { tabId ->
+                            activity.lastAttemptedSchemeMap[tabId] = scheme
                         }
                     }
-                    onBlocked(urlStr)
+                    val isNormalMode = KioskPrefs.getProtectionMode(ctx) == KioskPrefs.MODE_NONE
+                    if (!isNormalMode) {
+                        onBlocked(urlStr)
+                        return true
+                    }
+                    if (runtimeConfig.limitCustomScheme) {
+                        Log.d("ChildKioskWebView", "Custom scheme redirect is disabled globally")
+                        onBlocked(urlStr)
+                        return true
+                    }
+                    if (runtimeConfig.schemeBlacklist.contains(scheme)) {
+                        Log.d("ChildKioskWebView", "Custom scheme is in blacklist: $scheme")
+                        onBlocked(urlStr)
+                        return true
+                    }
+                    (ctx as? WebViewActivity)?.handleCustomSchemeRedirect(urlStr, scheme)
                     return true
                 }
 
@@ -2822,3 +3008,406 @@ private fun injectRawExternalScript(webView: WebView, rawJs: String, guardKey: S
 
 private val externalScriptCache = ConcurrentHashMap<String, String>()
 private val debugFallbackCallbacks = ConcurrentHashMap<String, DebugFallbackRequest>()
+
+@Composable
+private fun BeautifulConfirmDialog(
+    title: String,
+    message: String,
+    icon: ImageVector = Icons.Default.Info,
+    negativeText: String = "拒绝",
+    positiveText: String = "允许",
+    blacklistText: String? = null,
+    onNegative: () -> Unit,
+    onPositive: () -> Unit,
+    onBlacklist: (() -> Unit)? = null,
+    onDismiss: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.5f))
+            .clickable(enabled = true, onClick = onDismiss),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.85f)
+                .padding(16.dp)
+                .clickable(enabled = false) {},
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .padding(bottom = 12.dp)
+                )
+
+                Text(
+                    text = title,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                Text(
+                    text = message,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 20.sp,
+                    modifier = Modifier.padding(bottom = 24.dp)
+                )
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onNegative,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(negativeText)
+                        }
+
+                        Button(
+                            onClick = onPositive,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(positiveText)
+                        }
+                    }
+
+                    if (blacklistText != null && onBlacklist != null) {
+                        TextButton(
+                            onClick = onBlacklist,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            )
+                        ) {
+                            Text(blacklistText, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SiteInfoContent(
+    host: String,
+    url: String,
+    currentAttemptedScheme: String?,
+    initialLimitGeolocation: Boolean,
+    initialLimitCustomScheme: Boolean,
+    initialGeoBlacklist: Set<String>,
+    initialSchemeBlacklist: Set<String>,
+    onDismiss: () -> Unit,
+    onClearData: () -> Unit,
+    onUpdateGeoBlacklist: (Set<String>) -> Unit,
+    onUpdateSchemeBlacklist: (Set<String>) -> Unit
+) {
+    var geoBlacklist by remember { mutableStateOf(initialGeoBlacklist) }
+    var schemeBlacklist by remember { mutableStateOf(initialSchemeBlacklist) }
+
+    val isGeoBlacklisted = geoBlacklist.contains(host)
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.5f))
+            .clickable(enabled = true, onClick = onDismiss),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.9f)
+                .heightIn(max = 520.dp)
+                .clickable(enabled = false, onClick = {}),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                val trimmed = url.trim()
+                val isHttps = trimmed.startsWith("https://", ignoreCase = true)
+                val isHttp = trimmed.startsWith("http://", ignoreCase = true)
+                val (icon, titleText, color, descText) = when {
+                    isHttps -> QuadrupleInfo(Icons.Default.Lock, "此连接是安全的", Color(0xFF4CAF50), "你与该网站建立的是加密 HTTPS 安全连接。")
+                    isHttp -> QuadrupleInfo(Icons.Default.Warning, "此连接不安全", Color(0xFFF44336), "你与该网站的连接未加密，请勿在此输入任何敏感隐私信息。")
+                    else -> QuadrupleInfo(Icons.Default.Info, "网站信息", MaterialTheme.colorScheme.primary, "当前页面正通过系统特殊协议进行渲染。")
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = color,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (host.isNotBlank()) host else "未知网站",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = titleText.toString(),
+                            fontSize = 11.sp,
+                            color = color,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = descText.toString(),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = "定位权限 (Geolocation)",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                if (initialLimitGeolocation) {
+                    Text(
+                        text = "⚠️ 已被管理员在沙箱中全局禁用定位功能",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isGeoBlacklisted) "彻底禁止并拉黑" else "允许网页询问定位",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Switch(
+                            checked = !isGeoBlacklisted,
+                            onCheckedChange = {
+                                val newSet = geoBlacklist.toMutableSet()
+                                if (!it) {
+                                    newSet.add(host)
+                                } else {
+                                    newSet.remove(host)
+                                }
+                                geoBlacklist = newSet
+                                onUpdateGeoBlacklist(newSet)
+                            }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Text(
+                    text = "外部应用跳转 (Custom Scheme)",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                if (initialLimitCustomScheme) {
+                    Text(
+                        text = "⚠️ 已被管理员在沙箱中全局禁用自定义 Scheme 跳转",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                } else if (currentAttemptedScheme != null) {
+                    val isSchemeBlocked = schemeBlacklist.contains(currentAttemptedScheme)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "检测到尝试调起: $currentAttemptedScheme://",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = if (isSchemeBlocked) "已拉黑" else "允许询问",
+                                fontSize = 11.sp,
+                                color = if (isSchemeBlocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(end = 6.dp)
+                            )
+                            Switch(
+                                checked = !isSchemeBlocked,
+                                onCheckedChange = {
+                                    val newSet = schemeBlacklist.toMutableSet()
+                                    if (!it) {
+                                        newSet.add(currentAttemptedScheme)
+                                    } else {
+                                        newSet.remove(currentAttemptedScheme)
+                                    }
+                                    schemeBlacklist = newSet
+                                    onUpdateSchemeBlacklist(newSet)
+                                }
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                        text = "此网页近期无外部应用调起请求记录",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
+
+                if (schemeBlacklist.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "当前已拉黑的 Scheme 协议列表：",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        val chunks = schemeBlacklist.chunked(3)
+                        for (rowItems in chunks) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                for (item in rowItems) {
+                                    Row(
+                                        modifier = Modifier
+                                            .background(MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(6.dp))
+                                            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
+                                            .padding(horizontal = 6.dp, vertical = 3.dp)
+                                            .weight(1f),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "$item://",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "移除",
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier
+                                                .size(14.dp)
+                                                .clickable {
+                                                    val newSet = schemeBlacklist.toMutableSet()
+                                                    newSet.remove(item)
+                                                    schemeBlacklist = newSet
+                                                    onUpdateSchemeBlacklist(newSet)
+                                                }
+                                        )
+                                    }
+                                }
+                                val remaining = 3 - rowItems.size
+                                if (remaining > 0) {
+                                    repeat(remaining) {
+                                        Spacer(modifier = Modifier.weight(1f))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onClearData,
+                        modifier = Modifier.weight(1.2f),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text("清理本站缓存与数据", fontSize = 11.sp)
+                    }
+
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(0.8f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("关闭")
+                    }
+                }
+            }
+        }
+    }
+}
+
+private data class QuadrupleInfo<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)

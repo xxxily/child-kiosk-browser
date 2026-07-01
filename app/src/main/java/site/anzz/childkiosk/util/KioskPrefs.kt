@@ -44,7 +44,10 @@ data class WebViewRuntimeConfig(
     val customJsInjectEnabled: Boolean,
     val customJsInjectTiming: String,
     val customJsInjectUrl: String,
-    val customJsInjectCode: String
+    val customJsInjectCode: String,
+    val limitCustomScheme: Boolean,
+    val schemeBlacklist: Set<String>,
+    val geolocationBlacklist: Set<String>
 ) {
     fun toJson(): JSONObject {
         return JSONObject()
@@ -81,6 +84,9 @@ data class WebViewRuntimeConfig(
             .put("customJsInjectTiming", customJsInjectTiming)
             .put("customJsInjectUrl", customJsInjectUrl)
             .put("customJsInjectCode", customJsInjectCode)
+            .put("limitCustomScheme", limitCustomScheme)
+            .put("schemeBlacklist", org.json.JSONArray(schemeBlacklist))
+            .put("geolocationBlacklist", org.json.JSONArray(geolocationBlacklist))
     }
 
     companion object {
@@ -123,7 +129,22 @@ data class WebViewRuntimeConfig(
                 customJsInjectEnabled = json.optBoolean("customJsInjectEnabled", fallback.customJsInjectEnabled),
                 customJsInjectTiming = json.optString("customJsInjectTiming", fallback.customJsInjectTiming),
                 customJsInjectUrl = json.optString("customJsInjectUrl", fallback.customJsInjectUrl),
-                customJsInjectCode = json.optString("customJsInjectCode", fallback.customJsInjectCode)
+                customJsInjectCode = json.optString("customJsInjectCode", fallback.customJsInjectCode),
+                limitCustomScheme = json.optBoolean("limitCustomScheme", fallback.limitCustomScheme),
+                schemeBlacklist = json.optJSONArray("schemeBlacklist")?.let { array ->
+                    val set = mutableSetOf<String>()
+                    for (i in 0 until array.length()) {
+                        set.add(array.getString(i))
+                    }
+                    set
+                } ?: fallback.schemeBlacklist,
+                geolocationBlacklist = json.optJSONArray("geolocationBlacklist")?.let { array ->
+                    val set = mutableSetOf<String>()
+                    for (i in 0 until array.length()) {
+                        set.add(array.getString(i))
+                    }
+                    set
+                } ?: fallback.geolocationBlacklist
             )
         }
     }
@@ -266,6 +287,7 @@ object KioskPrefs {
             .putString("inject_timing_mode", "BOTH")
             .putBoolean("custom_js_inject_enabled", false)
             .putString("custom_js_inject_timing", "BOTH")
+            .putBoolean("limit_custom_scheme", false)
     }
 
     private fun applyChildMode(editor: SharedPreferences.Editor) {
@@ -306,6 +328,7 @@ object KioskPrefs {
             .putString("inject_timing_mode", "BOTH")
             .putBoolean("custom_js_inject_enabled", false)
             .putString("custom_js_inject_timing", "BOTH")
+            .putBoolean("limit_custom_scheme", true)
     }
 
     private fun applyDebugMode(editor: SharedPreferences.Editor) {
@@ -346,6 +369,7 @@ object KioskPrefs {
             .putString("inject_timing_mode", "BOTH")
             .putBoolean("custom_js_inject_enabled", false)
             .putString("custom_js_inject_timing", "BOTH")
+            .putBoolean("limit_custom_scheme", false)
     }
 
     fun getProtectionMode(context: Context): String {
@@ -543,7 +567,10 @@ object KioskPrefs {
             customJsInjectEnabled = isCustomJsInjectEnabled(context),
             customJsInjectTiming = getCustomJsInjectTiming(context),
             customJsInjectUrl = getCustomJsInjectUrl(context),
-            customJsInjectCode = getCustomJsInjectCode(context)
+            customJsInjectCode = getCustomJsInjectCode(context),
+            limitCustomScheme = isLimitCustomSchemeEnabled(context),
+            schemeBlacklist = getSchemeBlacklist(context),
+            geolocationBlacklist = getGeolocationBlacklist(context)
         )
     }
 
@@ -695,6 +722,44 @@ object KioskPrefs {
     fun isLimitGeolocationEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_geolocation", false)
     fun setLimitGeolocationEnabled(context: Context, enabled: Boolean) =
         customEditor(context).putBoolean("limit_geolocation", enabled).apply()
+
+    fun isLimitCustomSchemeEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_custom_scheme", false)
+    fun setLimitCustomSchemeEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean("limit_custom_scheme", enabled).apply()
+
+    fun getSchemeBlacklist(context: Context): Set<String> {
+        return prefs(context).getStringSet("scheme_blacklist", emptySet()) ?: emptySet()
+    }
+    fun setSchemeBlacklist(context: Context, list: Set<String>) {
+        prefs(context).edit().putStringSet("scheme_blacklist", list).apply()
+    }
+    fun addSchemeToBlacklist(context: Context, scheme: String) {
+        val current = getSchemeBlacklist(context).toMutableSet()
+        current.add(scheme)
+        setSchemeBlacklist(context, current)
+    }
+    fun removeSchemeFromBlacklist(context: Context, scheme: String) {
+        val current = getSchemeBlacklist(context).toMutableSet()
+        current.remove(scheme)
+        setSchemeBlacklist(context, current)
+    }
+
+    fun getGeolocationBlacklist(context: Context): Set<String> {
+        return prefs(context).getStringSet("geolocation_blacklist", emptySet()) ?: emptySet()
+    }
+    fun setGeolocationBlacklist(context: Context, list: Set<String>) {
+        prefs(context).edit().putStringSet("geolocation_blacklist", list).apply()
+    }
+    fun addGeolocationToBlacklist(context: Context, origin: String) {
+        val current = getGeolocationBlacklist(context).toMutableSet()
+        current.add(origin)
+        setGeolocationBlacklist(context, current)
+    }
+    fun removeGeolocationFromBlacklist(context: Context, origin: String) {
+        val current = getGeolocationBlacklist(context).toMutableSet()
+        current.remove(origin)
+        setGeolocationBlacklist(context, current)
+    }
 
     fun isLimitSslCheckEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_ssl_check", true)
     fun setLimitSslCheckEnabled(context: Context, enabled: Boolean) =

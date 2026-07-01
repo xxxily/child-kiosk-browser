@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -1418,6 +1419,9 @@ fun AdminConsoleScreen(
                         mutableStateOf(KioskPrefs.isFloatingBrowserControlsEnabled(context))
                     }
                     var limitGeolocation by remember { mutableStateOf(KioskPrefs.isLimitGeolocationEnabled(context)) }
+                    var limitCustomScheme by remember { mutableStateOf(KioskPrefs.isLimitCustomSchemeEnabled(context)) }
+                    var schemeBlacklist by remember { mutableStateOf(KioskPrefs.getSchemeBlacklist(context)) }
+                    var geolocationBlacklist by remember { mutableStateOf(KioskPrefs.getGeolocationBlacklist(context)) }
                     var limitSslCheck by remember { mutableStateOf(KioskPrefs.isLimitSslCheckEnabled(context)) }
                     var limitMultiWindow by remember { mutableStateOf(KioskPrefs.isLimitMultiWindowEnabled(context)) }
                     var limitFileAccess by remember { mutableStateOf(KioskPrefs.isLimitFileAccessEnabled(context)) }
@@ -2167,23 +2171,164 @@ fun AdminConsoleScreen(
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                                 // 选项 5: 地理位置限制
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用网页定位 (Geolocation)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认按浏览器能力允许网页申请定位；开启后直接拒绝网页地理位置权限，保护儿童隐私", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Switch(
-                                        checked = limitGeolocation,
-                                        onCheckedChange = {
-                                            limitGeolocation = it
-                                            KioskPrefs.setLimitGeolocationEnabled(context, it)
-                                            onSandboxLimitsChanged()
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("禁用网页定位 (Geolocation)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                            Text("默认按浏览器能力允许网页申请定位；开启后直接拒绝网页地理位置权限，保护儿童隐私", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
-                                    )
+                                        Switch(
+                                            checked = limitGeolocation,
+                                            onCheckedChange = {
+                                                limitGeolocation = it
+                                                KioskPrefs.setLimitGeolocationEnabled(context, it)
+                                                onSandboxLimitsChanged()
+                                            }
+                                        )
+                                    }
+
+                                    if (!limitGeolocation && geolocationBlacklist.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("定位黑名单 (已彻底禁止获取位置的域名)：", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Column(
+                                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            geolocationBlacklist.chunked(2).forEach { rowItems ->
+                                                Row(
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                     rowItems.forEach { item ->
+                                                         Row(
+                                                             modifier = Modifier
+                                                                 .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f), shape = RoundedCornerShape(8.dp))
+                                                                 .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                                                                 .padding(horizontal = 10.dp, vertical = 5.dp)
+                                                                 .weight(1f),
+                                                             verticalAlignment = Alignment.CenterVertically,
+                                                             horizontalArrangement = Arrangement.SpaceBetween
+                                                         ) {
+                                                             Text(
+                                                                 text = item,
+                                                                 fontSize = 11.sp,
+                                                                 color = MaterialTheme.colorScheme.onSurface,
+                                                                 maxLines = 1,
+                                                                 overflow = TextOverflow.Ellipsis,
+                                                                 modifier = Modifier.weight(1f)
+                                                             )
+                                                             Spacer(modifier = Modifier.width(4.dp))
+                                                             Icon(
+                                                                 imageVector = Icons.Default.Close,
+                                                                 contentDescription = "移除",
+                                                                 tint = MaterialTheme.colorScheme.error,
+                                                                 modifier = Modifier
+                                                                     .size(16.dp)
+                                                                     .clickable {
+                                                                         val newList = geolocationBlacklist.toMutableSet()
+                                                                         newList.remove(item)
+                                                                         geolocationBlacklist = newList
+                                                                         KioskPrefs.setGeolocationBlacklist(context, newList)
+                                                                         onSandboxLimitsChanged()
+                                                                     }
+                                                             )
+                                                         }
+                                                     }
+                                                     if (rowItems.size < 2) {
+                                                         Spacer(modifier = Modifier.weight(1f))
+                                                     }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项 5-2: 禁用自定义 Scheme 协议
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("禁用自定义 Scheme 调起外部 App", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                            Text("开启后强行静默拦截所有非 Web 协议（如 weixin://, alipays:// 等）；关闭后允许询问跳转或根据黑名单过滤", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        Switch(
+                                            checked = limitCustomScheme,
+                                            onCheckedChange = {
+                                                limitCustomScheme = it
+                                                KioskPrefs.setLimitCustomSchemeEnabled(context, it)
+                                                onSandboxLimitsChanged()
+                                            }
+                                        )
+                                    }
+
+                                    if (!limitCustomScheme && schemeBlacklist.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("Scheme 协议黑名单 (已彻底拒绝调起的协议)：", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Column(
+                                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            schemeBlacklist.chunked(3).forEach { rowItems ->
+                                                Row(
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                     rowItems.forEach { item ->
+                                                         Row(
+                                                             modifier = Modifier
+                                                                 .background(MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(8.dp))
+                                                                 .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                                                                 .padding(horizontal = 8.dp, vertical = 5.dp)
+                                                                 .weight(1f),
+                                                             verticalAlignment = Alignment.CenterVertically,
+                                                             horizontalArrangement = Arrangement.SpaceBetween
+                                                         ) {
+                                                             Text(
+                                                                 text = "$item://",
+                                                                 fontSize = 11.sp,
+                                                                 color = MaterialTheme.colorScheme.onSurface,
+                                                                 maxLines = 1,
+                                                                 overflow = TextOverflow.Ellipsis,
+                                                                 modifier = Modifier.weight(1f)
+                                                             )
+                                                             Spacer(modifier = Modifier.width(4.dp))
+                                                             Icon(
+                                                                 imageVector = Icons.Default.Close,
+                                                                 contentDescription = "移除",
+                                                                 tint = MaterialTheme.colorScheme.error,
+                                                                 modifier = Modifier
+                                                                     .size(16.dp)
+                                                                     .clickable {
+                                                                         val newList = schemeBlacklist.toMutableSet()
+                                                                         newList.remove(item)
+                                                                         schemeBlacklist = newList
+                                                                         KioskPrefs.setSchemeBlacklist(context, newList)
+                                                                         onSandboxLimitsChanged()
+                                                                     }
+                                                             )
+                                                         }
+                                                     }
+                                                     val remaining = 3 - rowItems.size
+                                                     if (remaining > 0) {
+                                                         repeat(remaining) {
+                                                             Spacer(modifier = Modifier.weight(1f))
+                                                         }
+                                                     }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
 
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
