@@ -22,12 +22,14 @@ data class WebIconCandidate(
     val label: String,
     val source: String,
     val sizeHint: String? = null,
-    val score: Int = 0
+    val score: Int = 0,
+    val referer: String? = null
 )
 
 object WebIconDiscovery {
     private const val TAG = "WebIconDiscovery"
     private const val PREFS_NAME = "web_icon_discovery_cache"
+    private const val CACHE_SCHEMA_VERSION = 2
     private const val CACHE_TTL_MS = 7L * 24L * 60L * 60L * 1000L
     private const val FAILED_CACHE_TTL_MS = 12L * 60L * 60L * 1000L
     private const val MAX_HTML_CHARS = 192 * 1024
@@ -91,6 +93,27 @@ object WebIconDiscovery {
             text.startsWith("https://", ignoreCase = true)
     }
 
+    fun iconRefererFor(siteUrl: String?): String? {
+        return iconRefererCandidatesFor(siteUrl).firstOrNull()
+    }
+
+    fun iconRefererCandidatesFor(siteUrl: String?): List<String> {
+        val text = siteUrl?.trim().orEmpty()
+        if (text.isBlank()) return emptyList()
+        val base = normalizedBaseUrl(text) ?: return emptyList()
+        val candidates = linkedSetOf(base.toString())
+        val host = base.host.lowercase(Locale.US)
+        val alternateHost = if (host.startsWith("www.")) {
+            host.removePrefix("www.")
+        } else {
+            "www.$host"
+        }
+        runCatching {
+            URL(base.protocol, alternateHost, base.port, "/").toString()
+        }.getOrNull()?.let { candidates += it }
+        return candidates.toList()
+    }
+
     private fun discoverFresh(baseUrl: URL): List<WebIconCandidate> {
         val rawCandidates = linkedSetOf<WebIconCandidate>()
         rawCandidates += declaredIconCandidates(baseUrl)
@@ -99,8 +122,9 @@ object WebIconDiscovery {
 
         return rawCandidates
             .mapNotNull { candidate ->
-                val verifiedUrl = resolveFinalIconUrl(candidate.url) ?: return@mapNotNull null
-                candidate.copy(url = verifiedUrl)
+                val verified = resolveFinalIcon(candidate.url, candidate.referer ?: baseUrl.toString())
+                    ?: return@mapNotNull null
+                candidate.copy(url = verified.url, referer = verified.referer ?: candidate.referer)
             }
             .distinctBy { normalizeCandidateUrl(it.url) }
             .sortedWith(compareByDescending<WebIconCandidate> { it.score }.thenBy { it.url.length })
@@ -108,18 +132,22 @@ object WebIconDiscovery {
     }
 
     private fun declaredIconCandidates(baseUrl: URL): List<WebIconCandidate> {
-        val html = fetchText(
+        val page = fetchText(
             url = baseUrl,
             accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             maxChars = MAX_HTML_CHARS
         )
+        val html = page.text
         if (html.isBlank()) return emptyList()
+        val pageUrl = page.finalUrl ?: baseUrl
 
         val candidates = mutableListOf<WebIconCandidate>()
-        candidates += parseLinkIconCandidates(html, baseUrl)
+        candidates += parseLinkIconCandidates(html, pageUrl)
+        candidates += parseMetaImageCandidates(html, pageUrl)
+        candidates += parseLogoImageCandidates(html, pageUrl)
 
-        manifestHref(html, baseUrl)?.let { manifestUrl ->
-            candidates += parseManifestIconCandidates(manifestUrl)
+        manifestHref(html, pageUrl)?.let { manifestUrl ->
+            candidates += parseManifestIconCandidates(manifestUrl, pageUrl.toString())
         }
         return candidates
     }
@@ -127,7 +155,7 @@ object WebIconDiscovery {
     private fun manifestIconCandidates(baseUrl: URL): List<WebIconCandidate> {
         val manifestUrl = runCatching { URL(baseUrl, "/manifest.webmanifest") }.getOrNull()
             ?: return emptyList()
-        return parseManifestIconCandidates(manifestUrl)
+        return parseManifestIconCandidates(manifestUrl, baseUrl.toString())
     }
 
     private fun parseLinkIconCandidates(html: String, baseUrl: URL): List<WebIconCandidate> {
@@ -157,9 +185,82 @@ object WebIconDiscovery {
                     label = candidateLabel(source, sizes),
                     source = source,
                     sizeHint = sizes,
-                    score = iconCandidateScore(url, rel, attrs["type"].orEmpty(), sizes)
+                    score = iconCandidateScore(url, rel, attrs["type"].orEmpty(), sizes),
+                    referer = baseUrl.toString()
                 )
             }
+            .toList()
+    }
+
+    private fun parseMetaImageCandidates(html: String, baseUrl: URL): List<WebIconCandidate> {
+        val metaTagRegex = Regex("<meta\\b[^>]*>", RegexOption.IGNORE_CASE)
+        return metaTagRegex.findAll(html)
+            .mapNotNull { match ->
+                val attrs = parseHtmlAttrs(match.value)
+                val name = attrs["property"]?.lowercase(Locale.US)
+                    ?: attrs["name"]?.lowercase(Locale.US)
+                    ?: return@mapNotNull null
+                if (name !in setOf("og:image", "og:image:url", "twitter:image", "twitter:image:src")) {
+                    return@mapNotNull null
+                }
+                val content = attrs["content"].orEmpty()
+                val url = runCatching { URL(baseUrl, content).toString() }.getOrNull()
+                    ?: return@mapNotNull null
+                if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) {
+                    return@mapNotNull null
+                }
+                WebIconCandidate(
+                    url = url,
+                    label = "页面分享图",
+                    source = "HTML Meta Image",
+                    sizeHint = null,
+                    score = iconCandidateScore(url, name, attrs["type"].orEmpty(), null) + 10,
+                    referer = baseUrl.toString()
+                )
+            }
+            .toList()
+    }
+
+    private fun parseLogoImageCandidates(html: String, baseUrl: URL): List<WebIconCandidate> {
+        val imgTagRegex = Regex("<img\\b[^>]*>", RegexOption.IGNORE_CASE)
+        return imgTagRegex.findAll(html)
+            .mapNotNull { match ->
+                val tag = match.value
+                val attrs = parseHtmlAttrs(tag)
+                val src = attrs["src"].orEmpty().ifBlank {
+                    attrs["data-src"].orEmpty().ifBlank { attrs["data-original"].orEmpty() }
+                }
+                if (src.isBlank()) return@mapNotNull null
+                val descriptor = listOf(
+                    attrs["class"],
+                    attrs["id"],
+                    attrs["alt"],
+                    attrs["title"],
+                    src
+                ).joinToString(" ").lowercase(Locale.US)
+                val isLogoLike = descriptor.contains("logo") ||
+                    descriptor.contains("brand") ||
+                    descriptor.contains("favicon") ||
+                    descriptor.contains("appicon") ||
+                    descriptor.contains("app-icon") ||
+                    descriptor.contains("siteicon") ||
+                    descriptor.contains("site-icon")
+                if (!isLogoLike) return@mapNotNull null
+                val url = runCatching { URL(baseUrl, src).toString() }.getOrNull()
+                    ?: return@mapNotNull null
+                if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) {
+                    return@mapNotNull null
+                }
+                WebIconCandidate(
+                    url = url,
+                    label = "页面 Logo",
+                    source = "HTML Logo Image",
+                    sizeHint = null,
+                    score = iconCandidateScore(url, "logo image", attrs["type"].orEmpty(), null) + 34,
+                    referer = baseUrl.toString()
+                )
+            }
+            .take(8)
             .toList()
     }
 
@@ -178,12 +279,13 @@ object WebIconDiscovery {
             .firstOrNull()
     }
 
-    private fun parseManifestIconCandidates(manifestUrl: URL): List<WebIconCandidate> {
+    private fun parseManifestIconCandidates(manifestUrl: URL, referer: String? = null): List<WebIconCandidate> {
         val json = fetchText(
             url = manifestUrl,
             accept = "application/manifest+json,application/json,text/plain,*/*;q=0.8",
-            maxChars = 96 * 1024
-        )
+            maxChars = 96 * 1024,
+            referer = referer
+        ).text
         if (json.isBlank()) return emptyList()
 
         return runCatching {
@@ -202,7 +304,8 @@ object WebIconDiscovery {
                             label = candidateLabel("Web Manifest", sizes),
                             source = "Web Manifest",
                             sizeHint = sizes,
-                            score = iconCandidateScore(url, "manifest icon", item.optString("type"), sizes) + 8
+                            score = iconCandidateScore(url, "manifest icon", item.optString("type"), sizes) + 8,
+                            referer = referer ?: manifestUrl.toString()
                         )
                     )
                 }
@@ -220,89 +323,126 @@ object WebIconDiscovery {
                 label = "根目录 Apple Touch",
                 source = "Root Fallback",
                 sizeHint = null,
-                score = 86
+                score = 86,
+                referer = baseUrl.toString()
             ),
             "/apple-touch-icon-precomposed.png" to WebIconCandidate(
                 url = URL(baseUrl.protocol, baseUrl.host, baseUrl.port, "/apple-touch-icon-precomposed.png").toString(),
                 label = "根目录 Apple Touch",
                 source = "Root Fallback",
                 sizeHint = null,
-                score = 82
+                score = 82,
+                referer = baseUrl.toString()
             ),
             "/favicon.svg" to WebIconCandidate(
                 url = URL(baseUrl.protocol, baseUrl.host, baseUrl.port, "/favicon.svg").toString(),
                 label = "根目录 SVG",
                 source = "Root Fallback",
                 sizeHint = null,
-                score = 72
+                score = 72,
+                referer = baseUrl.toString()
             ),
             "/favicon.png" to WebIconCandidate(
                 url = URL(baseUrl.protocol, baseUrl.host, baseUrl.port, "/favicon.png").toString(),
                 label = "根目录 PNG",
                 source = "Root Fallback",
                 sizeHint = null,
-                score = 68
+                score = 68,
+                referer = baseUrl.toString()
             ),
             "/favicon.ico" to WebIconCandidate(
                 url = URL(baseUrl.protocol, baseUrl.host, baseUrl.port, "/favicon.ico").toString(),
                 label = "根目录 ICO",
                 source = "Root Fallback",
                 sizeHint = null,
-                score = 48
+                score = 48,
+                referer = baseUrl.toString()
             )
         )
         return paths.map { it.second }
     }
 
-    private fun resolveFinalIconUrl(iconUrl: String): String? {
+    private fun resolveFinalIcon(iconUrl: String, referer: String?): VerifiedIcon? {
         if (!iconUrl.startsWith("http://", true) && !iconUrl.startsWith("https://", true)) return null
-        val methods = listOf("HEAD", "GET")
-        methods.forEach { method ->
-            val result = runCatching {
-                val conn = openConnection(URL(iconUrl), method, iconAcceptHeader())
-                try {
-                    val code = conn.responseCode
-                    if (code in 200..399) {
-                        val type = conn.contentType.orEmpty().lowercase(Locale.US)
-                        val length = conn.contentLengthLong
-                        if (method == "HEAD" || looksLikeIcon(iconUrl, type) || length in 1..3_000_000L) {
-                            conn.url.toString()
-                        } else {
-                            null
-                        }
-                    } else {
-                        null
-                    }
-                } finally {
-                    conn.disconnect()
-                }
-            }.getOrNull()
-            if (!result.isNullOrBlank()) return result
+        listOf(referer, null).distinct().forEach { requestReferer ->
+            resolveFinalIconWithReferer(iconUrl, requestReferer)?.let { return it }
         }
         return null
     }
 
-    private fun fetchText(url: URL, accept: String, maxChars: Int): String {
+    private fun resolveFinalIconWithReferer(iconUrl: String, referer: String?): VerifiedIcon? {
+        val headResult = probeIconHead(iconUrl, referer)
+        if (headResult?.isUsable == true) return headResult
+        return probeIconBytes(iconUrl, referer)
+    }
+
+    private fun probeIconHead(iconUrl: String, referer: String?): VerifiedIcon? {
         return runCatching {
-            val conn = openConnection(url, "GET", accept)
+            val conn = openConnection(URL(iconUrl), "HEAD", iconAcceptHeader(), referer)
             try {
                 val code = conn.responseCode
-                if (code !in 200..399) return@runCatching ""
+                if (code !in 200..399) return@runCatching null
+                val finalUrl = conn.url.toString()
+                val type = conn.contentType.orEmpty().lowercase(Locale.US)
+                val length = conn.contentLengthLong
+                val usable = contentTypeIsImage(type) && !contentTypeIsHtml(type) && length in 1..3_000_000L
+                VerifiedIcon(finalUrl, referer, usable)
+            } finally {
+                conn.disconnect()
+            }
+        }.getOrNull()
+    }
+
+    private fun probeIconBytes(iconUrl: String, referer: String?): VerifiedIcon? {
+        return runCatching {
+            val conn = openConnection(URL(iconUrl), "GET", iconAcceptHeader(), referer)
+            try {
+                val code = conn.responseCode
+                if (code !in 200..399) return@runCatching null
+                val finalUrl = conn.url.toString()
+                val type = conn.contentType.orEmpty().lowercase(Locale.US)
+                val length = conn.contentLengthLong
+                if (length > 3_000_000L) return@runCatching null
+                val signature = ByteArray(32)
+                val read = conn.inputStream.use { input -> input.read(signature) }
+                if (read <= 0) return@runCatching null
+                if (contentTypeIsHtml(type) || !looksLikeDecodableImage(finalUrl, type, signature, read)) {
+                    return@runCatching null
+                }
+                VerifiedIcon(finalUrl, referer, true)
+            } finally {
+                conn.disconnect()
+            }
+        }.getOrNull()
+    }
+
+    private fun fetchText(
+        url: URL,
+        accept: String,
+        maxChars: Int,
+        referer: String? = null
+    ): FetchTextResult {
+        return runCatching {
+            val conn = openConnection(url, "GET", accept, referer)
+            try {
+                val code = conn.responseCode
+                if (code !in 200..399) return@runCatching FetchTextResult("")
                 conn.inputStream.bufferedReader().use { reader ->
                     val buffer = CharArray(maxChars)
                     val read = reader.read(buffer)
-                    if (read <= 0) "" else String(buffer, 0, read)
+                    val text = if (read <= 0) "" else String(buffer, 0, read)
+                    FetchTextResult(text, conn.url)
                 }
             } finally {
                 conn.disconnect()
             }
         }.getOrElse { error ->
             Log.d(TAG, "Fetch failed: $url", error)
-            ""
+            FetchTextResult("")
         }
     }
 
-    private fun openConnection(url: URL, method: String, accept: String): HttpURLConnection {
+    private fun openConnection(url: URL, method: String, accept: String, referer: String? = null): HttpURLConnection {
         return (url.openConnection() as HttpURLConnection).apply {
             requestMethod = method
             instanceFollowRedirects = true
@@ -311,6 +451,9 @@ object WebIconDiscovery {
             setRequestProperty("User-Agent", USER_AGENT)
             setRequestProperty("Accept", accept)
             setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+            if (!referer.isNullOrBlank()) {
+                setRequestProperty("Referer", referer)
+            }
         }
     }
 
@@ -320,7 +463,7 @@ object WebIconDiscovery {
 
     private fun looksLikeIcon(url: String, contentType: String): Boolean {
         val path = Uri.parse(url).path.orEmpty().lowercase(Locale.US)
-        return contentType.startsWith("image/") ||
+        return contentTypeIsImage(contentType) ||
             contentType.contains("icon") ||
             path.endsWith(".ico") ||
             path.endsWith(".png") ||
@@ -328,6 +471,52 @@ object WebIconDiscovery {
             path.endsWith(".svg") ||
             path.endsWith(".jpg") ||
             path.endsWith(".jpeg")
+    }
+
+    private fun contentTypeIsImage(contentType: String): Boolean {
+        return contentType.startsWith("image/") ||
+            contentType.contains("icon")
+    }
+
+    private fun contentTypeIsHtml(contentType: String): Boolean {
+        return contentType.contains("text/html") ||
+            contentType.contains("application/xhtml")
+    }
+
+    private fun looksLikeDecodableImage(url: String, contentType: String, bytes: ByteArray, read: Int): Boolean {
+        if (read >= 8 &&
+            bytes[0] == 0x89.toByte() &&
+            bytes[1] == 0x50.toByte() &&
+            bytes[2] == 0x4E.toByte() &&
+            bytes[3] == 0x47.toByte()
+        ) return true
+        if (read >= 3 &&
+            bytes[0] == 0xFF.toByte() &&
+            bytes[1] == 0xD8.toByte() &&
+            bytes[2] == 0xFF.toByte()
+        ) return true
+        if (read >= 12 &&
+            bytes[0] == 'R'.code.toByte() &&
+            bytes[1] == 'I'.code.toByte() &&
+            bytes[2] == 'F'.code.toByte() &&
+            bytes[3] == 'F'.code.toByte() &&
+            bytes[8] == 'W'.code.toByte() &&
+            bytes[9] == 'E'.code.toByte() &&
+            bytes[10] == 'B'.code.toByte() &&
+            bytes[11] == 'P'.code.toByte()
+        ) return true
+        if (read >= 4 &&
+            bytes[0] == 0x00.toByte() &&
+            bytes[1] == 0x00.toByte() &&
+            bytes[2] == 0x01.toByte() &&
+            bytes[3] == 0x00.toByte()
+        ) return true
+        val prefix = String(bytes, 0, read.coerceAtMost(bytes.size)).trimStart()
+        if (prefix.startsWith("<svg", ignoreCase = true) || prefix.startsWith("<?xml", ignoreCase = true)) {
+            return true
+        }
+        return looksLikeIcon(url, contentType) && !prefix.startsWith("<!doctype html", ignoreCase = true) &&
+            !prefix.startsWith("<html", ignoreCase = true)
     }
 
     private fun parseHtmlAttrs(tag: String): Map<String, String> {
@@ -413,6 +602,7 @@ object WebIconDiscovery {
         val raw = prefs.getString(key, null) ?: return null
         return runCatching {
             val json = JSONObject(raw)
+            if (json.optInt("version", 1) != CACHE_SCHEMA_VERSION) return@runCatching null
             val cachedAt = json.optLong("cachedAt")
             val expiresAt = json.optLong("expiresAt", 0L)
             val candidatesJson = json.optJSONArray("candidates") ?: JSONArray()
@@ -426,7 +616,8 @@ object WebIconDiscovery {
                             label = item.optString("label"),
                             source = item.optString("source"),
                             sizeHint = item.optString("sizeHint").takeIf { it.isNotBlank() },
-                            score = item.optInt("score")
+                            score = item.optInt("score"),
+                            referer = item.optString("referer").takeIf { it.isNotBlank() }
                         )
                     )
                 }
@@ -438,6 +629,7 @@ object WebIconDiscovery {
     private fun writeCache(prefs: SharedPreferences, key: String, candidates: List<WebIconCandidate>) {
         val now = System.currentTimeMillis()
         val json = JSONObject()
+            .put("version", CACHE_SCHEMA_VERSION)
             .put("cachedAt", now)
             .put("expiresAt", cacheExpiresAt(now, key, candidates.isEmpty()))
             .put(
@@ -451,6 +643,7 @@ object WebIconDiscovery {
                                 .put("source", candidate.source)
                                 .put("sizeHint", candidate.sizeHint.orEmpty())
                                 .put("score", candidate.score)
+                                .put("referer", candidate.referer.orEmpty())
                         )
                     }
                 }
@@ -478,4 +671,15 @@ object WebIconDiscovery {
         val jitter = (key.hashCode().toLong() and Long.MAX_VALUE) % jitterWindow
         return now + ttl + jitter
     }
+
+    private data class FetchTextResult(
+        val text: String,
+        val finalUrl: URL? = null
+    )
+
+    private data class VerifiedIcon(
+        val url: String,
+        val referer: String?,
+        val isUsable: Boolean
+    )
 }

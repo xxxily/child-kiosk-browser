@@ -30,6 +30,7 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.ComposeView
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -38,6 +39,7 @@ import site.anzz.childkiosk.data.AppDatabase
 import site.anzz.childkiosk.data.BrowserHistoryEntity
 import site.anzz.childkiosk.data.SystemConfigEntity
 import site.anzz.childkiosk.data.WebAppEntity
+import site.anzz.childkiosk.ui.AddEditWebAppDialog
 import site.anzz.childkiosk.ui.browser.BrowserTab
 import site.anzz.childkiosk.ui.browser.TabStateInfo
 import site.anzz.childkiosk.ui.browser.TabMemoryCache
@@ -53,6 +55,7 @@ import site.anzz.childkiosk.util.TimeLimiter
 import site.anzz.childkiosk.util.WebViewRuntime
 import site.anzz.childkiosk.util.WebViewRuntimeConfig
 import site.anzz.childkiosk.util.WebViewPool
+import site.anzz.childkiosk.ui.theme.ChildKioskTheme
 import site.anzz.childkiosk.util.filter.FilterAction
 import site.anzz.childkiosk.util.filter.FilterRepository
 import site.anzz.childkiosk.util.filter.FilterRequestContext
@@ -114,6 +117,7 @@ class WebViewActivity : ComponentActivity() {
     private var geolocationPermissionDialog: AlertDialog? = null
     private var pendingDownloadRequest: PendingDownloadRequest? = null
     private var downloadPermissionDialog: AlertDialog? = null
+    private var bookmarkEditorView: ComposeView? = null
 
     private data class PendingGeolocationRequest(
         val origin: String?,
@@ -288,6 +292,7 @@ class WebViewActivity : ComponentActivity() {
         downloadPermissionDialog?.dismiss()
         downloadPermissionDialog = null
         pendingDownloadRequest = null
+        dismissBookmarkEditor()
         exitFullscreenView()
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
@@ -1110,18 +1115,81 @@ class WebViewActivity : ComponentActivity() {
         )
 
         runCatching {
-            val intent = Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                putExtra(MainActivity.EXTRA_EDIT_WEB_APP_REQUEST, true)
-                putExtra(MainActivity.EXTRA_EDIT_WEB_APP_TITLE, title)
-                putExtra(MainActivity.EXTRA_EDIT_WEB_APP_URL, normalizedUrl)
-            }
-            startActivity(intent)
+            showBookmarkEditor(title = title, url = normalizedUrl)
             floatingControlsOverlay?.collapsePanel()
         }.onFailure { error ->
             Log.e("ChildKioskWebView", "Failed to open bookmark editor", error)
             Toast.makeText(this, "无法打开收藏编辑界面：${error.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun showBookmarkEditor(title: String, url: String) {
+        val root = webViewRoot ?: return
+        dismissBookmarkEditor()
+        val editorView = ComposeView(this).apply {
+            setContent {
+                ChildKioskTheme {
+                    AddEditWebAppDialog(
+                        app = null,
+                        initialTitle = title,
+                        initialUrl = url,
+                        initialCategory = WebAppEntity.CATEGORY_OTHER,
+                        onDismiss = { dismissBookmarkEditor() },
+                        onSave = { savedTitle, savedUrl, icon, category ->
+                            lifecycleScope.launch(Dispatchers.IO) {
+                                val db = AppDatabase.getInstance(this@WebViewActivity)
+                                val existing = db.webAppDao().getAllWebApps().firstOrNull { app ->
+                                    normalizeWhitelistWebUrl(app.url) == normalizeWhitelistWebUrl(savedUrl)
+                                }
+                                if (existing == null) {
+                                    db.webAppDao().insertWebApp(
+                                        WebAppEntity(
+                                            title = savedTitle,
+                                            url = savedUrl,
+                                            iconPath = icon,
+                                            isPreset = false,
+                                            isEnabled = true,
+                                            category = category,
+                                            sourceType = WebAppEntity.SOURCE_LOCAL
+                                        )
+                                    )
+                                } else {
+                                    db.webAppDao().updateWebApp(
+                                        existing.copy(
+                                            title = savedTitle,
+                                            url = savedUrl,
+                                            iconPath = icon,
+                                            category = category,
+                                            isEnabled = true
+                                        )
+                                    )
+                                }
+                                withContext(Dispatchers.Main) {
+                                    dismissBookmarkEditor()
+                                    Toast.makeText(this@WebViewActivity, "已收藏网站", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+        }
+        bookmarkEditorView = editorView
+        root.addView(
+            editorView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+    }
+
+    private fun dismissBookmarkEditor() {
+        bookmarkEditorView?.let { view ->
+            (view.parent as? ViewGroup)?.removeView(view)
+            view.disposeComposition()
+        }
+        bookmarkEditorView = null
     }
 
     private fun normalizeWhitelistWebUrl(url: String): String {

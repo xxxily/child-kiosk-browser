@@ -1,5 +1,8 @@
 package site.anzz.childkiosk.ui
 
+import android.app.DownloadManager
+import android.content.Context
+import android.webkit.URLUtil
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,7 +28,6 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -35,6 +37,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import site.anzz.childkiosk.data.AppDatabase
 import site.anzz.childkiosk.data.SystemConfigEntity
 import site.anzz.childkiosk.data.WebAppEntity
@@ -4289,12 +4292,12 @@ fun WebAppCard(
                 contentAlignment = Alignment.Center
             ) {
                 if (isNetworkIcon) {
-                    coil.compose.AsyncImage(
-                        model = iconPath,
+                    NetworkWebIcon(
+                        url = iconPath,
                         contentDescription = app.title,
+                        referer = app.url,
                         modifier = Modifier.fillMaxSize(),
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                        error = androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Default.Star)
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
                     )
                 } else {
                     val iconVector = getIconVector(iconPath)
@@ -4432,6 +4435,8 @@ private fun BrowserHistoryScreen(
     onDelete: (BrowserHistoryEntity) -> Unit,
     onClearAll: () -> Unit
 ) {
+    var showClearConfirm by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -4462,7 +4467,7 @@ private fun BrowserHistoryScreen(
                     }
                     OutlinedButton(
                         enabled = history.isNotEmpty(),
-                        onClick = onClearAll,
+                        onClick = { showClearConfirm = true },
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -4496,6 +4501,35 @@ private fun BrowserHistoryScreen(
                 )
             }
         }
+    }
+
+    if (showClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            icon = {
+                Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = null)
+            },
+            title = { Text("确认清空浏览历史？") },
+            text = {
+                Text("将删除当前保存的全部浏览历史记录，清空后无法恢复。")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showClearConfirm = false
+                        onClearAll()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("确认清空")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirm = false }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 }
 
@@ -4633,6 +4667,7 @@ fun AddEditWebAppDialog(
     }
     var selectedIcon by remember { mutableStateOf(app?.iconPath ?: "icon_gamepad") }
     var discoveredIcons by remember { mutableStateOf<List<WebIconCandidate>>(emptyList()) }
+    var failedIconUrls by remember { mutableStateOf<Set<String>>(emptySet()) }
     var isDiscoveringIcons by remember { mutableStateOf(false) }
     var iconDiscoveryMessage by remember { mutableStateOf<String?>(null) }
     var lastAutoIconUrl by remember { mutableStateOf(if (WebIconDiscovery.isNetworkIconUrl(app?.iconPath)) app?.iconPath.orEmpty() else "") }
@@ -4642,14 +4677,33 @@ fun AddEditWebAppDialog(
     var pingFailedOnce by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
-    val configuration = LocalConfiguration.current
     val scope = rememberCoroutineScope()
-    val dialogMaxHeight = (configuration.screenHeightDp.dp - 32.dp).coerceAtLeast(360.dp)
+
+    fun selectNetworkIcon(iconUrl: String) {
+        selectedIcon = iconUrl
+        customIconUrl = iconUrl
+        lastAutoIconUrl = iconUrl
+    }
+
+    fun markCandidateLoadFailed(candidate: WebIconCandidate) {
+        val newFailed = failedIconUrls + candidate.url
+        failedIconUrls = newFailed
+        if (selectedIcon == candidate.url) {
+            val replacement = discoveredIcons.firstOrNull { it.url !in newFailed }
+            if (replacement != null) {
+                selectNetworkIcon(replacement.url)
+            } else {
+                selectedIcon = "icon_gamepad"
+                if (customIconUrl == candidate.url) customIconUrl = ""
+            }
+        }
+    }
 
     // 自动发现网站图标：解析 HTML/Manifest 声明图标，并补充根目录常见 fallback。
     LaunchedEffect(urlInput, app?.id) {
         val trimmed = urlInput.trim()
         discoveredIcons = emptyList()
+        failedIconUrls = emptySet()
         iconDiscoveryMessage = null
         if (trimmed.isBlank() || !isValidUrl(trimmed)) return@LaunchedEffect
 
@@ -4669,8 +4723,7 @@ fun AddEditWebAppDialog(
         if (best != null) {
             iconDiscoveryMessage = "已找到 ${candidates.size} 个网站图标"
             if (canAutoReplace) {
-                lastAutoIconUrl = best.url
-                customIconUrl = best.url
+                selectNetworkIcon(best.url)
                 if (selectedIcon == "icon_gamepad" || selectedIcon == previousAutoIconUrl || WebIconDiscovery.isNetworkIconUrl(selectedIcon)) {
                     selectedIcon = best.url
                 }
@@ -4693,350 +4746,385 @@ fun AddEditWebAppDialog(
         }.getOrDefault(false)
     }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            shape = RoundedCornerShape(20.dp),
+    val visibleDiscoveredIcons = discoveredIcons.filterNot { it.url in failedIconUrls }
+    val isCustomSelected = WebIconDiscovery.isNetworkIconUrl(selectedIcon)
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
             modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = dialogMaxHeight)
-                .padding(16.dp)
+                .fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
         ) {
             Column(
                 modifier = Modifier
-                    .padding(20.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .fillMaxSize()
             ) {
-                Text(
-                    text = if (app == null) "添加应用" else "编辑应用",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                )
-
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("应用名称 (如 Scratch)") },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = urlInput,
-                    onValueChange = {
-                        urlInput = it
-                        urlError = null
-                    },
-                    label = { Text("应用链接 (如 scratch.mit.edu)") },
-                    shape = RoundedCornerShape(12.dp),
-                    isError = urlError != null,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                if (urlInput.trim().startsWith("http://", ignoreCase = true)) {
-                    Text(
-                        text = "⚠️ 警告：当前添加的是未加密的 HTTP 网站。在公共网络中可能会有被监听或劫持的风险，建议使用 HTTPS。",
-                        color = Color(0xFFE65100), // 橙色警告
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(horizontal = 4.dp)
-                    )
-                }
-
-                if (urlError != null) {
-                    Text(
-                        text = urlError ?: "",
-                        color = if (pingFailedOnce) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
-                        fontSize = 12.sp
-                    )
-                }
-
-                // 分类选择
-                Text("选择应用分类：", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(bottom = 4.dp)
+                        .statusBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val categories = listOf(
-                        WebAppEntity.CATEGORY_GAME to "游戏",
-                        WebAppEntity.CATEGORY_VIDEO to "视频",
-                        WebAppEntity.CATEGORY_BOOK to "绘本",
-                        WebAppEntity.CATEGORY_STUDY to "学习",
-                        WebAppEntity.CATEGORY_TOOL to "工具",
-                        WebAppEntity.CATEGORY_OTHER to "其他"
-                    )
-                    categories.forEach { (catKey, catName) ->
-                        val isSelected = category == catKey
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier
-                                .widthIn(min = 78.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(
-                                    if (isSelected) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.surfaceVariant
-                                )
-                                .clickable { category = catKey }
-                                .padding(vertical = 8.dp)
-                        ) {
-                            Text(
-                                text = catName,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (app == null) "添加应用" else "编辑应用",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "设置名称、链接、分类和图标",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "关闭")
                     }
                 }
 
-                // 图标选择
-                Text("选择代表图标：", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(bottom = 4.dp)
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    BuiltInWebAppIcons.forEach { icon ->
-                        val selected = selectedIcon == icon.id
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier
-                                .size(52.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(
-                                    if (selected) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.surfaceVariant
-                                )
-                                .clickable { selectedIcon = icon.id }
-                        ) {
-                            Icon(
-                                imageVector = icon.vector,
-                                contentDescription = icon.label,
-                                tint = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-
-                // 自定义网络图片/Favicon 图标
-                val isCustomSelected = selectedIcon.startsWith("http://", ignoreCase = true) || 
-                                       selectedIcon.startsWith("https://", ignoreCase = true)
-                
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isCustomSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f)
-                                         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                    ),
-                    border = androidx.compose.foundation.BorderStroke(
-                        width = 1.dp,
-                        color = if (isCustomSelected) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                    OutlinedTextField(
+                        value = title,
+                        onValueChange = { title = it },
+                        label = { Text("应用名称") },
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
                     )
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+
+                    OutlinedTextField(
+                        value = urlInput,
+                        onValueChange = {
+                            urlInput = it
+                            urlError = null
+                            pingFailedOnce = false
+                        },
+                        label = { Text("应用链接") },
+                        shape = RoundedCornerShape(12.dp),
+                        isError = urlError != null,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    if (urlInput.trim().startsWith("http://", ignoreCase = true)) {
+                        Text(
+                            text = "当前添加的是未加密的 HTTP 网站。在公共网络中可能会有被监听或劫持的风险，建议使用 HTTPS。",
+                            color = Color(0xFFE65100),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        )
+                    }
+
+                    if (urlError != null) {
+                        Text(
+                            text = urlError ?: "",
+                            color = if (pingFailedOnce) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    Text("选择应用分类：", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(bottom = 4.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    if (customIconUrl.trim().isNotEmpty()) {
-                                        selectedIcon = customIconUrl.trim()
-                                    } else {
-                                        val fallbackIcon = WebIconDiscovery.defaultFaviconUrl(urlInput)
-                                            ?: "https://assets.anzz.site/favicon.ico"
-                                        selectedIcon = fallbackIcon
-                                        customIconUrl = fallbackIcon
-                                    }
-                                }
-                        ) {
-                            RadioButton(
-                                selected = isCustomSelected,
-                                onClick = {
-                                    if (customIconUrl.trim().isNotEmpty()) {
-                                        selectedIcon = customIconUrl.trim()
-                                    } else {
-                                        val fallbackIcon = WebIconDiscovery.defaultFaviconUrl(urlInput)
-                                            ?: "https://assets.anzz.site/favicon.ico"
-                                        selectedIcon = fallbackIcon
-                                        customIconUrl = fallbackIcon
-                                    }
-                                }
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "使用自定义网络图标",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isCustomSelected) MaterialTheme.colorScheme.primary 
-                                        else MaterialTheme.colorScheme.onSurface
-                            )
+                        val categories = listOf(
+                            WebAppEntity.CATEGORY_GAME to "游戏",
+                            WebAppEntity.CATEGORY_VIDEO to "视频",
+                            WebAppEntity.CATEGORY_BOOK to "绘本",
+                            WebAppEntity.CATEGORY_STUDY to "学习",
+                            WebAppEntity.CATEGORY_TOOL to "工具",
+                            WebAppEntity.CATEGORY_OTHER to "其他"
+                        )
+                        categories.forEach { (catKey, catName) ->
+                            val isSelected = category == catKey
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .widthIn(min = 78.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (isSelected) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.surfaceVariant
+                                    )
+                                    .clickable { category = catKey }
+                                    .padding(vertical = 8.dp)
+                            ) {
+                                Text(
+                                    text = catName,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
+                    }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                    Text("选择代表图标：", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(bottom = 4.dp)
+                    ) {
+                        BuiltInWebAppIcons.forEach { icon ->
+                            val selected = selectedIcon == icon.id
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (selected) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.surfaceVariant
+                                    )
+                                    .clickable { selectedIcon = icon.id }
+                            ) {
+                                Icon(
+                                    imageVector = icon.vector,
+                                    contentDescription = icon.label,
+                                    tint = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isCustomSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f)
+                                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(
+                            width = 1.dp,
+                            color = if (isCustomSelected) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                if (isDiscoveringIcons) {
-                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                    Text("正在读取网站图标...", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                } else {
-                                    Text(
-                                        text = iconDiscoveryMessage ?: "输入网址后自动读取 HTML / Manifest 图标",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            TextButton(
-                                enabled = urlInput.trim().isNotBlank() && isValidUrl(urlInput) && !isDiscoveringIcons,
-                                onClick = {
-                                    val formatted = formatUrl(urlInput)
-                                    scope.launch {
-                                        isDiscoveringIcons = true
-                                        iconDiscoveryMessage = null
-                                        val candidates = WebIconDiscovery.discover(context, formatted, forceRefresh = true)
-                                        isDiscoveringIcons = false
-                                        discoveredIcons = candidates
-                                        val best = candidates.firstOrNull()
-                                        if (best != null) {
-                                            lastAutoIconUrl = best.url
-                                            customIconUrl = best.url
-                                            selectedIcon = best.url
-                                            iconDiscoveryMessage = "已重新读取 ${candidates.size} 个网站图标"
-                                        } else {
-                                            iconDiscoveryMessage = "未找到可用网站图标"
-                                        }
-                                    }
-                                }
-                            ) {
-                                Text("重新读取", fontSize = 12.sp)
-                            }
-                        }
-
-                        if (discoveredIcons.isNotEmpty()) {
-                            Text("网站图标候选：", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState())
-                            ) {
-                                discoveredIcons.forEach { candidate ->
-                                    val selected = selectedIcon == candidate.url
-                                    Column(
-                                        modifier = Modifier.width(76.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(60.dp)
-                                                .clip(RoundedCornerShape(12.dp))
-                                                .background(MaterialTheme.colorScheme.surface)
-                                                .border(
-                                                    width = if (selected) 2.dp else 1.dp,
-                                                    color = if (selected) MaterialTheme.colorScheme.primary
-                                                        else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-                                                    shape = RoundedCornerShape(12.dp)
-                                                )
-                                                .clickable {
-                                                    selectedIcon = candidate.url
-                                                    customIconUrl = candidate.url
-                                                    lastAutoIconUrl = candidate.url
-                                                },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            coil.compose.AsyncImage(
-                                                model = candidate.url,
-                                                contentDescription = candidate.label,
-                                                modifier = Modifier
-                                                    .fillMaxSize()
-                                                    .padding(4.dp),
-                                                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-                                                error = androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Default.Warning)
-                                            )
+                                    .clickable {
+                                        if (customIconUrl.trim().isNotEmpty()) {
+                                            selectedIcon = customIconUrl.trim()
+                                        } else {
+                                            val fallbackIcon = WebIconDiscovery.defaultFaviconUrl(urlInput)
+                                                ?: "https://assets.anzz.site/favicon.ico"
+                                            selectedIcon = fallbackIcon
+                                            customIconUrl = fallbackIcon
                                         }
+                                    }
+                            ) {
+                                RadioButton(
+                                    selected = isCustomSelected,
+                                    onClick = {
+                                        if (customIconUrl.trim().isNotEmpty()) {
+                                            selectedIcon = customIconUrl.trim()
+                                        } else {
+                                            val fallbackIcon = WebIconDiscovery.defaultFaviconUrl(urlInput)
+                                                ?: "https://assets.anzz.site/favicon.ico"
+                                            selectedIcon = fallbackIcon
+                                            customIconUrl = fallbackIcon
+                                        }
+                                    }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "使用自定义网络图标",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isCustomSelected) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    if (isDiscoveringIcons) {
+                                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                        Text("正在读取网站图标...", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    } else {
                                         Text(
-                                            text = candidate.sizeHint ?: candidate.source,
-                                            fontSize = 10.sp,
-                                            maxLines = 2,
-                                            textAlign = TextAlign.Center,
-                                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            text = when {
+                                                discoveredIcons.isNotEmpty() && visibleDiscoveredIcons.isEmpty() ->
+                                                    "读取到的图标无法显示，已自动过滤"
+                                                else -> iconDiscoveryMessage ?: "输入网址后自动读取 HTML / Manifest 图标"
+                                            },
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 }
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(56.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(MaterialTheme.colorScheme.surface),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (customIconUrl.trim().startsWith("http", ignoreCase = true)) {
-                                    coil.compose.AsyncImage(
-                                        model = customIconUrl.trim(),
-                                        contentDescription = "预览",
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                        error = androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Default.Warning)
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Default.Warning,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.outline
-                                    )
+                                TextButton(
+                                    enabled = urlInput.trim().isNotBlank() && isValidUrl(urlInput) && !isDiscoveringIcons,
+                                    onClick = {
+                                        val formatted = formatUrl(urlInput)
+                                        scope.launch {
+                                            isDiscoveringIcons = true
+                                            failedIconUrls = emptySet()
+                                            iconDiscoveryMessage = null
+                                            val candidates = WebIconDiscovery.discover(context, formatted, forceRefresh = true)
+                                            isDiscoveringIcons = false
+                                            discoveredIcons = candidates
+                                            val best = candidates.firstOrNull()
+                                            if (best != null) {
+                                                selectNetworkIcon(best.url)
+                                                iconDiscoveryMessage = "已重新读取 ${candidates.size} 个网站图标"
+                                            } else {
+                                                iconDiscoveryMessage = "未找到可用网站图标"
+                                            }
+                                        }
+                                    }
+                                ) {
+                                    Text("重新读取", fontSize = 12.sp)
                                 }
                             }
 
-                            OutlinedTextField(
-                                value = customIconUrl,
-                                onValueChange = {
-                                    customIconUrl = it
-                                    selectedIcon = it.trim()
-                                },
-                                placeholder = { Text("图标网址，如 assets.anzz.site/logo.png") },
-                                shape = RoundedCornerShape(10.dp),
-                                singleLine = true,
-                                modifier = Modifier.weight(1f),
-                                colors = TextFieldDefaults.outlinedTextFieldColors(
-                                    containerColor = MaterialTheme.colorScheme.surface,
-                                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                            if (visibleDiscoveredIcons.isNotEmpty()) {
+                                Text("网站图标候选：", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState())
+                                ) {
+                                    visibleDiscoveredIcons.forEach { candidate ->
+                                        val selected = selectedIcon == candidate.url
+                                        Column(
+                                            modifier = Modifier.width(76.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(60.dp)
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(MaterialTheme.colorScheme.surface)
+                                                    .border(
+                                                        width = if (selected) 2.dp else 1.dp,
+                                                        color = if (selected) MaterialTheme.colorScheme.primary
+                                                            else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                                                        shape = RoundedCornerShape(12.dp)
+                                                    )
+                                                    .clickable { selectNetworkIcon(candidate.url) },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                NetworkWebIcon(
+                                                    url = candidate.url,
+                                                    contentDescription = candidate.label,
+                                                    referer = candidate.referer ?: urlInput,
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .padding(4.dp),
+                                                    contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                                                    onError = { markCandidateLoadFailed(candidate) }
+                                                )
+                                            }
+                                            Text(
+                                                text = candidate.sizeHint ?: candidate.source,
+                                                fontSize = 10.sp,
+                                                maxLines = 2,
+                                                textAlign = TextAlign.Center,
+                                                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(56.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.surface),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (customIconUrl.trim().isNotEmpty()) {
+                                        NetworkWebIcon(
+                                            url = customIconUrl.trim(),
+                                            contentDescription = "预览",
+                                            referer = urlInput,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.Star,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.outline
+                                        )
+                                    }
+                                }
+
+                                OutlinedTextField(
+                                    value = customIconUrl,
+                                    onValueChange = {
+                                        customIconUrl = it
+                                        selectedIcon = it.trim()
+                                    },
+                                    label = { Text("网站图标") },
+                                    shape = RoundedCornerShape(10.dp),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                                        disabledContainerColor = MaterialTheme.colorScheme.surface,
+                                        errorContainerColor = MaterialTheme.colorScheme.surface,
+                                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedButton(
                         onClick = onDismiss,
@@ -5210,13 +5298,22 @@ suspend fun fetchLatestRelease(): ReleaseInfo? = withContext(Dispatchers.IO) {
             
             val assets = jsonObj.optJSONArray("assets")
             var apkUrl = ""
+            var bestAssetScore = Int.MIN_VALUE
             if (assets != null && assets.length() > 0) {
                 for (i in 0 until assets.length()) {
                     val asset = assets.getJSONObject(i)
                     val name = asset.optString("name", "")
-                    if (name.endsWith(".apk")) {
-                        apkUrl = asset.optString("browser_download_url", "")
-                        break
+                    val assetUrl = asset.optString("browser_download_url", "")
+                    if (
+                        name.endsWith(".apk", ignoreCase = true) &&
+                        !name.contains("debug", ignoreCase = true) &&
+                        assetUrl.isNotBlank()
+                    ) {
+                        val score = releaseApkAssetScore(name)
+                        if (score > bestAssetScore) {
+                            bestAssetScore = score
+                            apkUrl = assetUrl
+                        }
                     }
                 }
             }
@@ -5236,6 +5333,16 @@ suspend fun fetchLatestRelease(): ReleaseInfo? = withContext(Dispatchers.IO) {
     }.getOrNull()
 }
 
+private fun releaseApkAssetScore(name: String): Int {
+    val lower = name.lowercase(Locale.US)
+    var score = 0
+    if (lower.endsWith(".apk")) score += 20
+    if ("release" in lower) score += 100
+    if ("debug" in lower) score -= 100
+    if ("unsigned" in lower) score -= 30
+    return score
+}
+
 fun isNewerVersion(current: String, latest: String): Boolean {
     val currentParts = current.split(".").mapNotNull { it.toIntOrNull() }
     val latestParts = latest.split(".").mapNotNull { it.toIntOrNull() }
@@ -5247,6 +5354,30 @@ fun isNewerVersion(current: String, latest: String): Boolean {
         if (latVal < currVal) return false
     }
     return false
+}
+
+private fun startApkDownload(context: Context, url: String): Boolean {
+    return runCatching {
+        val uri = Uri.parse(url)
+        if (!uri.lastPathSegment.orEmpty().endsWith(".apk", ignoreCase = true)) {
+            return@runCatching false
+        }
+        val fileName = URLUtil.guessFileName(url, null, "application/vnd.android.package-archive")
+            .takeIf { it.endsWith(".apk", ignoreCase = true) }
+            ?: "child-kiosk-browser-update.apk"
+        val request = DownloadManager.Request(uri).apply {
+            setMimeType("application/vnd.android.package-archive")
+            setTitle(fileName)
+            setDescription(uri.host ?: url)
+            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, fileName)
+            setAllowedOverMetered(true)
+            setAllowedOverRoaming(true)
+        }
+        val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        manager.enqueue(request)
+        true
+    }.getOrDefault(false)
 }
 
 @Composable
@@ -5652,25 +5783,27 @@ fun UpdateDialog(
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Text("稍后再说")
+                        Text("稍后")
                     }
 
                     Button(
                         onClick = {
                             clipboardManager.setText(AnnotatedString(releaseInfo.downloadUrl))
-                            Toast.makeText(context, "下载链接已复制到剪贴板！", Toast.LENGTH_SHORT).show()
-                            
-                            try {
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(releaseInfo.releasePageUrl))
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "无法打开浏览器，请手动粘贴链接下载", Toast.LENGTH_SHORT).show()
+                            if (KioskPrefs.isLimitDownloadEnabled(context)) {
+                                Toast.makeText(context, "下载链接已复制；当前已禁用下载能力", Toast.LENGTH_LONG).show()
+                                return@Button
                             }
+                            val started = startApkDownload(context, releaseInfo.downloadUrl)
+                            Toast.makeText(
+                                context,
+                                if (started) "下载链接已复制，已开始下载更新" else "下载链接已复制，无法自动下载",
+                                Toast.LENGTH_LONG
+                            ).show()
                         },
                         modifier = Modifier.weight(1.5f),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Text("去下载更新")
+                        Text("下载更新")
                     }
                 }
             }

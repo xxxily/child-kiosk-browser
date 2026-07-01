@@ -585,12 +585,12 @@ fun AppGridItem(
             contentAlignment = Alignment.Center
         ) {
             if (isNetworkIcon) {
-                coil.compose.AsyncImage(
-                    model = iconPath,
+                NetworkWebIcon(
+                    url = iconPath,
                     contentDescription = app.title,
+                    referer = app.url,
                     modifier = Modifier.fillMaxSize(),
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                    error = androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Default.Star)
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
                 )
             } else {
                 Icon(
