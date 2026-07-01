@@ -1,6 +1,5 @@
 package site.anzz.childkiosk.ui
 
-import android.app.DownloadManager
 import android.app.role.RoleManager
 import android.content.Context
 import android.webkit.URLUtil
@@ -40,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.FileProvider
 import site.anzz.childkiosk.data.AppDatabase
 import site.anzz.childkiosk.data.SystemConfigEntity
 import site.anzz.childkiosk.data.WebAppEntity
@@ -66,9 +66,14 @@ import site.anzz.childkiosk.util.filter.FilterSlowShouldBlockSample
 import site.anzz.childkiosk.util.filter.SiteFilterOverride
 import site.anzz.childkiosk.util.filter.normalizeHost
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import android.content.Intent
@@ -5686,28 +5691,143 @@ fun isNewerVersion(current: String, latest: String): Boolean {
     return false
 }
 
-private fun startApkDownload(context: Context, url: String): Boolean {
+private data class UpdateDownloadProgress(
+    val downloadedBytes: Long = 0L,
+    val totalBytes: Long = -1L,
+    val speedBytesPerSecond: Long = 0L
+) {
+    val fraction: Float
+        get() = if (totalBytes > 0L) {
+            (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+}
+
+private class UpdateDownloadCancelled : CancellationException("Update download cancelled")
+
+private suspend fun downloadUpdateApk(
+    context: Context,
+    url: String,
+    onProgress: (UpdateDownloadProgress) -> Unit
+): File = withContext(Dispatchers.IO) {
+    val uri = Uri.parse(url)
+    if (!uri.lastPathSegment.orEmpty().endsWith(".apk", ignoreCase = true)) {
+        throw IllegalArgumentException("未找到可直接下载的 APK 文件")
+    }
+    val fileName = URLUtil.guessFileName(url, null, "application/vnd.android.package-archive")
+        .takeIf { it.endsWith(".apk", ignoreCase = true) }
+        ?: "child-kiosk-browser-update.apk"
+    val updateDir = File(context.cacheDir, "updates").apply { mkdirs() }
+    updateDir.listFiles()?.forEach { file ->
+        if (file.extension.equals("apk", ignoreCase = true)) {
+            runCatching { file.delete() }
+        }
+    }
+    val outputFile = File(updateDir, fileName)
+    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+        instanceFollowRedirects = true
+        connectTimeout = 15_000
+        readTimeout = 20_000
+        requestMethod = "GET"
+        setRequestProperty("User-Agent", "child-kiosk-browser-updater")
+    }
+
+    try {
+        val responseCode = connection.responseCode
+        if (responseCode !in 200..299) {
+            throw IllegalStateException("下载失败：HTTP $responseCode")
+        }
+        val totalBytes = connection.contentLengthLong
+        var downloadedBytes = 0L
+        var lastProgressAt = System.currentTimeMillis()
+        var lastProgressBytes = 0L
+        connection.inputStream.use { input ->
+            outputFile.outputStream().use { output ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val read = input.read(buffer)
+                    if (read == -1) break
+                    output.write(buffer, 0, read)
+                    downloadedBytes += read
+                    val now = System.currentTimeMillis()
+                    if (now - lastProgressAt >= 250L || downloadedBytes == totalBytes) {
+                        val elapsedMs = (now - lastProgressAt).coerceAtLeast(1L)
+                        val speed = ((downloadedBytes - lastProgressBytes) * 1000L) / elapsedMs
+                        lastProgressAt = now
+                        lastProgressBytes = downloadedBytes
+                        withContext(Dispatchers.Main) {
+                            onProgress(
+                                UpdateDownloadProgress(
+                                    downloadedBytes = downloadedBytes,
+                                    totalBytes = totalBytes,
+                                    speedBytesPerSecond = speed
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        if (downloadedBytes <= 0L || !outputFile.exists()) {
+            throw IllegalStateException("下载文件为空")
+        }
+        withContext(Dispatchers.Main) {
+            onProgress(
+                UpdateDownloadProgress(
+                    downloadedBytes = downloadedBytes,
+                    totalBytes = totalBytes.takeIf { it > 0L } ?: downloadedBytes,
+                    speedBytesPerSecond = 0L
+                )
+            )
+        }
+        outputFile
+    } catch (e: CancellationException) {
+        runCatching { outputFile.delete() }
+        throw UpdateDownloadCancelled()
+    } catch (e: Exception) {
+        runCatching { outputFile.delete() }
+        throw e
+    } finally {
+        connection.disconnect()
+    }
+}
+
+private fun openApkInstaller(context: Context, apkFile: File): Boolean {
+    if (!apkFile.exists()) return false
     return runCatching {
-        val uri = Uri.parse(url)
-        if (!uri.lastPathSegment.orEmpty().endsWith(".apk", ignoreCase = true)) {
-            return@runCatching false
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            apkFile
+        )
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        val fileName = URLUtil.guessFileName(url, null, "application/vnd.android.package-archive")
-            .takeIf { it.endsWith(".apk", ignoreCase = true) }
-            ?: "child-kiosk-browser-update.apk"
-        val request = DownloadManager.Request(uri).apply {
-            setMimeType("application/vnd.android.package-archive")
-            setTitle(fileName)
-            setDescription(uri.host ?: url)
-            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, fileName)
-            setAllowedOverMetered(true)
-            setAllowedOverRoaming(true)
-        }
-        val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        manager.enqueue(request)
+        context.startActivity(intent)
         true
     }.getOrDefault(false)
+}
+
+private fun openInstallUnknownAppsSettings(context: Context) {
+    val uri = Uri.parse("package:${context.packageName}")
+    val intents = listOf(
+        Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, uri),
+        Intent(Settings.ACTION_SECURITY_SETTINGS),
+        Intent(Settings.ACTION_SETTINGS)
+    )
+    val opened = intents.any { intent ->
+        runCatching {
+            context.startActivity(intent)
+            true
+        }.getOrDefault(false)
+    }
+    if (!opened) {
+        Toast.makeText(context, "无法打开安装权限设置", Toast.LENGTH_SHORT).show()
+    }
 }
 
 @Composable
@@ -6120,8 +6240,60 @@ fun UpdateDialog(
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    var downloadJob by remember { mutableStateOf<Job?>(null) }
+    var downloadProgress by remember { mutableStateOf(UpdateDownloadProgress()) }
+    var downloadedApk by remember { mutableStateOf<File?>(null) }
+    var downloadError by remember { mutableStateOf<String?>(null) }
+    val isDownloading = downloadJob?.isActive == true
+    val canInstallPackages =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.packageManager.canRequestPackageInstalls()
+        } else {
+            true
+        }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            downloadJob?.cancel(UpdateDownloadCancelled())
+        }
+    }
+
+    fun startDownload() {
+        if (isDownloading) return
+        downloadError = null
+        downloadedApk = null
+        downloadProgress = UpdateDownloadProgress()
+        downloadJob = scope.launch {
+            try {
+                val apk = downloadUpdateApk(context, releaseInfo.downloadUrl) { progress ->
+                    downloadProgress = progress
+                }
+                downloadedApk = apk
+                downloadJob = null
+                val canInstallNow = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.packageManager.canRequestPackageInstalls()
+                } else {
+                    true
+                }
+                if (!canInstallNow) {
+                    Toast.makeText(context, "下载完成，请先允许本应用安装更新", Toast.LENGTH_LONG).show()
+                } else if (openApkInstaller(context, apk)) {
+                    Toast.makeText(context, "下载完成，已打开安装器", Toast.LENGTH_SHORT).show()
+                } else {
+                    downloadError = "下载完成，但无法自动打开安装器"
+                }
+            } catch (e: UpdateDownloadCancelled) {
+                downloadJob = null
+                downloadError = "下载已取消"
+            } catch (e: Exception) {
+                downloadJob = null
+                downloadError = e.message ?: "下载失败"
+            }
+        }
+    }
     
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = { if (!isDownloading) onDismiss() }) {
         Card(
             shape = RoundedCornerShape(20.dp),
             modifier = Modifier
@@ -6164,6 +6336,60 @@ fun UpdateDialog(
                     )
                 }
 
+                if (isDownloading || downloadProgress.downloadedBytes > 0L || downloadedApk != null || downloadError != null) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val totalText = if (downloadProgress.totalBytes > 0L) {
+                            " / ${formatBytes(downloadProgress.totalBytes)}"
+                        } else {
+                            ""
+                        }
+                        val statusText = when {
+                            isDownloading -> "正在下载：${formatBytes(downloadProgress.downloadedBytes)}$totalText"
+                            downloadedApk != null -> "下载完成：${downloadedApk?.name.orEmpty()}"
+                            downloadError != null -> downloadError.orEmpty()
+                            else -> ""
+                        }
+                        Text(
+                            text = statusText,
+                            fontSize = 12.sp,
+                            color = if (downloadError != null && !isDownloading && downloadedApk == null) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (isDownloading) {
+                            if (downloadProgress.totalBytes > 0L) {
+                                LinearProgressIndicator(
+                                    progress = downloadProgress.fraction,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            } else {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                            Text(
+                                text = "速度：${formatBytes(downloadProgress.speedBytesPerSecond)}/s",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (!canInstallPackages && downloadedApk != null) {
+                            Text(
+                                text = "系统未允许本应用安装未知来源应用，请授权后再安装。",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Row(
@@ -6171,31 +6397,46 @@ fun UpdateDialog(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     OutlinedButton(
-                        onClick = onDismiss,
+                        onClick = {
+                            if (isDownloading) {
+                                downloadJob?.cancel(UpdateDownloadCancelled())
+                            } else {
+                                onDismiss()
+                            }
+                        },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Text("稍后")
+                        Text(if (isDownloading) "取消下载" else "稍后")
                     }
 
                     Button(
                         onClick = {
                             clipboardManager.setText(AnnotatedString(releaseInfo.downloadUrl))
                             if (KioskPrefs.isLimitDownloadEnabled(context)) {
-                                Toast.makeText(context, "下载链接已复制；当前已禁用下载能力", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, "下载链接已复制；当前已禁用应用内下载能力", Toast.LENGTH_LONG).show()
                                 return@Button
                             }
-                            val started = startApkDownload(context, releaseInfo.downloadUrl)
-                            Toast.makeText(
-                                context,
-                                if (started) "下载链接已复制，已开始下载更新" else "下载链接已复制，无法自动下载",
-                                Toast.LENGTH_LONG
-                            ).show()
+                            val apk = downloadedApk
+                            when {
+                                apk != null && !canInstallPackages ->
+                                    openInstallUnknownAppsSettings(context)
+                                apk != null && !openApkInstaller(context, apk) ->
+                                    Toast.makeText(context, "无法打开安装器，请检查系统安装权限", Toast.LENGTH_LONG).show()
+                                !isDownloading -> startDownload()
+                            }
                         },
                         modifier = Modifier.weight(1.5f),
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = !isDownloading
                     ) {
-                        Text("下载更新")
+                        val text = when {
+                            downloadedApk != null && !canInstallPackages -> "授权并安装"
+                            downloadedApk != null -> "重新打开安装"
+                            downloadError != null -> "重新下载"
+                            else -> "下载并安装"
+                        }
+                        Text(text)
                     }
                 }
             }
