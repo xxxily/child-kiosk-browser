@@ -67,6 +67,25 @@
             android:configChanges="orientation|screenSize|keyboardHidden|locale|layoutDirection"
             android:exported="false" />
 
+        <!-- 浏览器外部打开入口：仅负责接收系统 http/https VIEW Intent，再转交隔离进程 WebViewActivity。 -->
+        <activity
+            android:name=".BrowserOpenActivity"
+            android:theme="@style/Theme.ChildKiosk.WebView"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <category android:name="android.intent.category.APP_BROWSER" />
+
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+            </intent-filter>
+        </activity>
+
         <!-- 接收设备管理器指令的广播接收器 -->
         <receiver
             android:name=".MyDeviceAdminReceiver"

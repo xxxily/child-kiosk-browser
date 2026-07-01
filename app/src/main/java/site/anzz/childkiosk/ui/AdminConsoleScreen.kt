@@ -1,6 +1,7 @@
 package site.anzz.childkiosk.ui
 
 import android.app.DownloadManager
+import android.app.role.RoleManager
 import android.content.Context
 import android.webkit.URLUtil
 import android.widget.Toast
@@ -72,6 +73,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -190,6 +192,31 @@ fun AdminConsoleScreen(
         }
         if (!opened) {
             Toast.makeText(context, "无法打开系统 WebView 设置", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun openDefaultBrowserSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val roleManager = context.getSystemService(RoleManager::class.java)
+            if (roleManager?.isRoleAvailable(RoleManager.ROLE_BROWSER) == true) {
+                runCatching {
+                    context.startActivity(roleManager.createRequestRoleIntent(RoleManager.ROLE_BROWSER))
+                    return
+                }
+            }
+        }
+        val intents = listOf(
+            Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS),
+            Intent(Settings.ACTION_SETTINGS)
+        )
+        val opened = intents.any { intent ->
+            runCatching {
+                context.startActivity(intent)
+                true
+            }.getOrDefault(false)
+        }
+        if (!opened) {
+            Toast.makeText(context, "无法打开默认浏览器设置，请在系统默认应用中选择本应用", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -2073,6 +2100,27 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
+                                        Text("注册并设置为默认浏览器", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("本应用已声明可打开 http/https 链接。点击后进入系统默认浏览器设置，系统会决定是否允许设为默认浏览器", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    OutlinedButton(
+                                        onClick = { openDefaultBrowserSettings() },
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Icon(imageVector = Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("去设置", fontSize = 12.sp)
+                                    }
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
                                         Text("网页悬浮球操作入口", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                         Text("正常模式默认开启。打开后网页内可通过悬浮球输入网址、查看当前 URL、后退、前进、刷新或停止加载", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
@@ -2096,7 +2144,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("页面顶部下拉刷新", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认开启。网页已经滑动到顶部时，再次大幅度下拉会触发刷新，贴近 Chrome 移动浏览器交互", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("默认开启。仅在页面顶部区域慢速大幅下拉并松手时刷新，避免全屏网页滑动交互误触发", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = pullToRefreshEnabled,

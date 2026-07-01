@@ -16,8 +16,10 @@ import android.os.Bundle
 import android.os.Environment
 import android.util.Log
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.VelocityTracker
 import android.webkit.*
 import android.widget.Button
 import android.widget.CheckBox
@@ -123,6 +125,7 @@ private object FilterBlockLogLimiter {
 private const val ACTION_SHOW_CURRENT_PAGE_FILTERS = "show_current_page_filter_events"
 private const val CURRENT_PAGE_FILTER_EVENT_LIMIT = 80
 private const val CURRENT_PAGE_COSMETIC_EVENT_LIMIT = 120
+private const val COSMETIC_HIT_TEST_LIMIT = 120
 
 private data class CurrentPageNetworkFilterEvent(
     val timestamp: Long,
@@ -147,11 +150,12 @@ private data class CurrentPageFilterSnapshot(
     val pageUrl: String,
     val networkTotalCount: Int,
     val networkEvents: List<CurrentPageNetworkFilterEvent>,
-    val cosmeticTotalCount: Int,
+    val cosmeticCandidateCount: Int,
+    val cosmeticMatchedCount: Int,
     val cosmeticEvents: List<CurrentPageCosmeticFilterEvent>
 ) {
     val networkCount: Int get() = networkTotalCount
-    val cosmeticCount: Int get() = cosmeticTotalCount
+    val cosmeticCount: Int get() = cosmeticMatchedCount
     val totalCount: Int get() = networkCount + cosmeticCount
 
     companion object {
@@ -159,7 +163,8 @@ private data class CurrentPageFilterSnapshot(
             pageUrl = "",
             networkTotalCount = 0,
             networkEvents = emptyList(),
-            cosmeticTotalCount = 0,
+            cosmeticCandidateCount = 0,
+            cosmeticMatchedCount = 0,
             cosmeticEvents = emptyList()
         )
     }
@@ -169,7 +174,8 @@ private class MutablePageFilterDiagnostics {
     private var pageUrl: String = ""
     private var networkTotalCount: Int = 0
     private val networkEvents = java.util.ArrayDeque<CurrentPageNetworkFilterEvent>()
-    private var cosmeticTotalCount: Int = 0
+    private var cosmeticCandidateCount: Int = 0
+    private var cosmeticMatchedCount: Int = 0
     private var cosmeticEvents: List<CurrentPageCosmeticFilterEvent> = emptyList()
 
     @Synchronized
@@ -177,7 +183,8 @@ private class MutablePageFilterDiagnostics {
         pageUrl = url
         networkTotalCount = 0
         networkEvents.clear()
-        cosmeticTotalCount = 0
+        cosmeticCandidateCount = 0
+        cosmeticMatchedCount = 0
         cosmeticEvents = emptyList()
     }
 
@@ -194,11 +201,21 @@ private class MutablePageFilterDiagnostics {
     }
 
     @Synchronized
-    fun setCosmeticMatches(pageUrl: String, matches: List<CosmeticFilterMatch>) {
+    fun setCosmeticCandidates(pageUrl: String, candidateCount: Int) {
         if (pageUrl.isNotBlank()) {
             this.pageUrl = pageUrl
         }
-        cosmeticTotalCount = matches.size
+        cosmeticCandidateCount = candidateCount
+        cosmeticMatchedCount = 0
+        cosmeticEvents = emptyList()
+    }
+
+    @Synchronized
+    fun setCosmeticHits(pageUrl: String, matches: List<CosmeticFilterMatch>) {
+        if (pageUrl.isNotBlank()) {
+            this.pageUrl = pageUrl
+        }
+        cosmeticMatchedCount = matches.size
         cosmeticEvents = matches
             .take(CURRENT_PAGE_COSMETIC_EVENT_LIMIT)
             .map { match ->
@@ -216,7 +233,8 @@ private class MutablePageFilterDiagnostics {
             pageUrl = pageUrl,
             networkTotalCount = networkTotalCount,
             networkEvents = networkEvents.toList(),
-            cosmeticTotalCount = cosmeticTotalCount,
+            cosmeticCandidateCount = cosmeticCandidateCount,
+            cosmeticMatchedCount = cosmeticMatchedCount,
             cosmeticEvents = cosmeticEvents
         )
     }
@@ -1249,40 +1267,90 @@ class WebViewActivity : ComponentActivity() {
 
     private fun installPullToRefreshGesture(webView: WebView) {
         val touchSlop = android.view.ViewConfiguration.get(this).scaledTouchSlop
-        val triggerDistance = (resources.displayMetrics.density * 96f).coerceAtLeast((touchSlop * 4).toFloat())
+        val density = resources.displayMetrics.density
+        val triggerDistance = (density * 156f).coerceAtLeast((touchSlop * 7).toFloat())
+        val maxStartY = density * 132f
+        val maxHorizontalDrift = density * 56f
+        val minDragDurationMs = 360L
+        val maxTriggerVelocityY = density * 1800f
+        var velocityTracker: VelocityTracker? = null
+        var downX = 0f
         var downY = 0f
+        var downAtMs = 0L
         var tracking = false
-        var triggered = false
+        var armed = false
         webView.setOnTouchListener { view, event ->
             when (event.actionMasked) {
-                android.view.MotionEvent.ACTION_DOWN -> {
+                MotionEvent.ACTION_DOWN -> {
+                    velocityTracker?.recycle()
+                    velocityTracker = VelocityTracker.obtain().apply { addMovement(event) }
+                    downX = event.x
                     downY = event.y
+                    downAtMs = event.eventTime
                     tracking = latestRuntimeConfig().pullToRefreshEnabled &&
                         fullscreenView == null &&
                         !currentPageLoading &&
+                        event.y <= maxStartY &&
                         !webView.canScrollVertically(-1)
-                    triggered = false
+                    armed = false
                     false
                 }
-                android.view.MotionEvent.ACTION_MOVE -> {
+                MotionEvent.ACTION_MOVE -> {
+                    velocityTracker?.addMovement(event)
+                    if (tracking) {
+                        val deltaX = kotlin.math.abs(event.x - downX)
+                        val deltaY = event.y - downY
+                        if (deltaX <= touchSlop && kotlin.math.abs(deltaY) <= touchSlop) {
+                            return@setOnTouchListener false
+                        }
+                        val mostlyVertical = deltaY > touchSlop && deltaY > deltaX * 2.2f
+                        if (
+                            deltaY < -touchSlop ||
+                            deltaX > maxHorizontalDrift ||
+                            !mostlyVertical ||
+                            webView.canScrollVertically(-1)
+                        ) {
+                            tracking = false
+                            armed = false
+                        } else if (deltaY >= triggerDistance) {
+                            armed = true
+                        }
+                    }
+                    false
+                }
+                MotionEvent.ACTION_UP -> {
+                    velocityTracker?.addMovement(event)
+                    velocityTracker?.computeCurrentVelocity(1000)
+                    val velocityY = velocityTracker?.yVelocity ?: 0f
+                    val deltaY = event.y - downY
+                    val deltaX = kotlin.math.abs(event.x - downX)
+                    val durationMs = event.eventTime - downAtMs
                     if (
                         tracking &&
-                        !triggered &&
-                        event.y - downY >= triggerDistance &&
+                        armed &&
+                        deltaY >= triggerDistance &&
+                        deltaY > deltaX * 2.2f &&
+                        durationMs >= minDragDurationMs &&
+                        velocityY in 0f..maxTriggerVelocityY &&
                         !webView.canScrollVertically(-1)
                     ) {
-                        triggered = true
-                        tracking = false
                         view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                         currentPageLoading = true
                         webView.reload()
                         updateFloatingControlsState(loading = true)
                     }
+                    tracking = false
+                    armed = false
+                    velocityTracker?.recycle()
+                    velocityTracker = null
                     false
                 }
-                android.view.MotionEvent.ACTION_UP,
-                android.view.MotionEvent.ACTION_CANCEL -> {
+                MotionEvent.ACTION_POINTER_DOWN,
+                MotionEvent.ACTION_CANCEL -> {
                     tracking = false
+                    armed = false
+                    velocityTracker?.recycle()
+                    velocityTracker = null
                     false
                 }
                 else -> false
@@ -1722,14 +1790,25 @@ class WebViewActivity : ComponentActivity() {
         scheduleFilterControlsUpdate()
     }
 
-    internal fun recordCurrentPageCosmeticFilters(
+    internal fun recordCurrentPageCosmeticFilterCandidates(
+        webView: WebView,
+        pageUrl: String,
+        candidateCount: Int
+    ) {
+        val tabId = webViewFilterTabIds[webView] ?: return
+        currentPageFilterDiagnostics.getOrPut(tabId) { MutablePageFilterDiagnostics() }
+            .setCosmeticCandidates(pageUrl, candidateCount)
+        scheduleFilterControlsUpdate()
+    }
+
+    internal fun recordCurrentPageCosmeticFilterHits(
         webView: WebView,
         pageUrl: String,
         matches: List<CosmeticFilterMatch>
     ) {
         val tabId = webViewFilterTabIds[webView] ?: return
         currentPageFilterDiagnostics.getOrPut(tabId) { MutablePageFilterDiagnostics() }
-            .setCosmeticMatches(pageUrl, matches)
+            .setCosmeticHits(pageUrl, matches)
         scheduleFilterControlsUpdate()
     }
 
@@ -1758,7 +1837,9 @@ class WebViewActivity : ComponentActivity() {
 
         val snapshot = activePageFilterSnapshot()
         val helperText = if (snapshot.totalCount > 0) {
-            "当前页：网络 ${snapshot.networkCount} 条，元素隐藏 ${snapshot.cosmeticCount} 条"
+            "当前页：网络 ${snapshot.networkCount} 条，元素命中 ${snapshot.cosmeticCount} 条"
+        } else if (snapshot.cosmeticCandidateCount > 0) {
+            "元素隐藏候选 ${snapshot.cosmeticCandidateCount} 条，暂无实际命中"
         } else {
             "当前页面暂无过滤拦截记录"
         }
@@ -3415,10 +3496,10 @@ private fun injectCosmeticCssIfNeeded(
     val siteOverride = FilterRepository.siteOverrideFor(config.filterSnapshot, host)
     val engine = FilterRepository.getCachedEngine(config.filterSnapshot) ?: return
     val cosmeticMatches = engine.cosmeticMatchesFor(host, siteOverride)
-    (webView.context as? WebViewActivity)?.recordCurrentPageCosmeticFilters(
+    (webView.context as? WebViewActivity)?.recordCurrentPageCosmeticFilterCandidates(
         webView = webView,
         pageUrl = pageUrl,
-        matches = cosmeticMatches
+        candidateCount = cosmeticMatches.size
     )
     val css = cosmeticMatches
         .joinToString(",\n") { it.selector }
@@ -3445,7 +3526,59 @@ private fun injectCosmeticCssIfNeeded(
             style.textContent = $cssJson;
         })();
     """.trimIndent()
-    webView.evaluateJavascript(js, null)
+    webView.evaluateJavascript(js) {
+        probeCosmeticFilterHits(webView, pageUrl, cosmeticMatches)
+    }
+}
+
+private fun probeCosmeticFilterHits(
+    webView: WebView,
+    pageUrl: String,
+    matches: List<CosmeticFilterMatch>
+) {
+    val activity = webView.context as? WebViewActivity ?: return
+    if (matches.isEmpty()) {
+        activity.recordCurrentPageCosmeticFilterHits(webView, pageUrl, emptyList())
+        return
+    }
+    val probedMatches = matches.take(COSMETIC_HIT_TEST_LIMIT)
+    val selectorsJson = org.json.JSONArray(probedMatches.map { it.selector }).toString()
+    val js = """
+        (function() {
+            var selectors = $selectorsJson;
+            var hits = [];
+            for (var i = 0; i < selectors.length; i++) {
+                try {
+                    if (document.querySelector(selectors[i])) hits.push(i);
+                } catch (e) {}
+            }
+            return JSON.stringify(hits);
+        })();
+    """.trimIndent()
+    webView.postDelayed({
+        if (webView.url != pageUrl) return@postDelayed
+        webView.evaluateJavascript(js) { rawResult ->
+            val hitIndexes = parseCosmeticHitIndexes(rawResult)
+            val hitMatches = hitIndexes.mapNotNull { index -> probedMatches.getOrNull(index) }
+            activity.recordCurrentPageCosmeticFilterHits(webView, pageUrl, hitMatches)
+        }
+    }, 350L)
+}
+
+private fun parseCosmeticHitIndexes(rawResult: String?): List<Int> {
+    if (rawResult.isNullOrBlank() || rawResult == "null") return emptyList()
+    val jsonText = runCatching {
+        org.json.JSONTokener(rawResult).nextValue() as? String
+    }.getOrNull() ?: rawResult
+    return runCatching {
+        val array = org.json.JSONArray(jsonText)
+        buildList {
+            for (i in 0 until array.length()) {
+                val index = array.optInt(i, -1)
+                if (index >= 0) add(index)
+            }
+        }
+    }.getOrDefault(emptyList())
 }
 
 private fun injectFilterScriptletsIfNeeded(
@@ -3740,7 +3873,7 @@ private fun CurrentPageFilterDiagnosticsDialog(
                         modifier = Modifier.weight(1f)
                     )
                     FilterCountChip(
-                        label = "元素隐藏",
+                        label = "元素命中",
                         count = snapshot.cosmeticCount,
                         modifier = Modifier.weight(1f)
                     )
@@ -3754,7 +3887,7 @@ private fun CurrentPageFilterDiagnosticsDialog(
                     snapshot.cosmeticCount > snapshot.cosmeticEvents.size
                 ) {
                     Text(
-                        text = "列表显示当前页面最近 ${snapshot.networkEvents.size} 条网络拦截和前 ${snapshot.cosmeticEvents.size} 条元素隐藏规则。",
+                        text = "列表显示当前页面最近 ${snapshot.networkEvents.size} 条网络拦截和前 ${snapshot.cosmeticEvents.size} 条元素隐藏命中。",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         lineHeight = 16.sp
@@ -3770,8 +3903,13 @@ private fun CurrentPageFilterDiagnosticsDialog(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     if (snapshot.totalCount == 0) {
+                        val message = if (snapshot.cosmeticCandidateCount > 0) {
+                            "当前页面暂无网络拦截，元素隐藏候选 ${snapshot.cosmeticCandidateCount} 条，但轻量探测未发现实际命中的页面元素。"
+                        } else {
+                            "当前页面暂无过滤拦截记录。"
+                        }
                         Text(
-                            text = "当前页面暂无过滤拦截记录。",
+                            text = message,
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier
@@ -3792,9 +3930,9 @@ private fun CurrentPageFilterDiagnosticsDialog(
                     }
 
                     if (snapshot.cosmeticEvents.isNotEmpty()) {
-                        FilterSectionTitle("元素隐藏规则")
+                        FilterSectionTitle("元素隐藏命中")
                         Text(
-                            text = "以下为本页已应用的隐藏选择器，实际命中的 DOM 元素由网页内容决定。",
+                            text = "以下为轻量探测确认在本页命中过 DOM 元素的隐藏选择器，最多探测前 $COSMETIC_HIT_TEST_LIMIT 条候选规则。",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 16.sp
