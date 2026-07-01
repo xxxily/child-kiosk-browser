@@ -104,6 +104,7 @@ class FilterEngine private constructor(
     private val decisionCache = ConcurrentHashMap<String, FilterDecision>(2048, 0.75f, 4)
     private val normalizedDecisionCache = ConcurrentHashMap<String, FilterDecision>(1024, 0.75f, 4)
     private val cosmeticCssCache = ConcurrentHashMap<String, String>(64)
+    private val cosmeticMatchesCache = ConcurrentHashMap<String, List<CosmeticFilterMatch>>(64)
     private val scriptletJsCache = ConcurrentHashMap<String, String>(64)
     private val maxCacheSize = 4096
     private val maxNormalizedCacheSize = 2048
@@ -136,6 +137,7 @@ class FilterEngine private constructor(
         decisionCache.clear()
         normalizedDecisionCache.clear()
         cosmeticCssCache.clear()
+        cosmeticMatchesCache.clear()
         scriptletJsCache.clear()
         perf.reset()
     }
@@ -215,13 +217,48 @@ class FilterEngine private constructor(
                 result = it
                 return result
             }
-            result = cosmeticIndex.cssFor(normalizedHost)
+            result = cosmeticCssFromMatches(cachedCosmeticMatchesFor(normalizedHost))
             if (cosmeticCssCache.size > maxHostCacheSize) cosmeticCssCache.clear()
             cosmeticCssCache[normalizedHost] = result
             return result
         } finally {
             perf.recordCosmetic(System.nanoTime() - startedAt, result.length)
         }
+    }
+
+    fun cosmeticMatchesFor(
+        host: String,
+        siteOverride: SiteFilterOverride? = null
+    ): List<CosmeticFilterMatch> {
+        val startedAt = System.nanoTime()
+        var result: List<CosmeticFilterMatch> = emptyList()
+        try {
+            if (siteOverride?.isTemporarilyAllowed() == true || siteOverride?.cosmeticDisabled == true) return result
+            val normalizedHost = host.normalizeHost()
+            if (normalizedHost.isBlank()) return result
+            cosmeticMatchesCache[normalizedHost]?.let {
+                result = it
+                return result
+            }
+            result = cachedCosmeticMatchesFor(normalizedHost)
+            return result
+        } finally {
+            perf.recordCosmetic(System.nanoTime() - startedAt, result.sumOf { it.selector.length })
+        }
+    }
+
+    private fun cachedCosmeticMatchesFor(normalizedHost: String): List<CosmeticFilterMatch> {
+        cosmeticMatchesCache[normalizedHost]?.let { return it }
+        val matches = cosmeticIndex.matchesFor(normalizedHost)
+        if (cosmeticMatchesCache.size > maxHostCacheSize) cosmeticMatchesCache.clear()
+        cosmeticMatchesCache[normalizedHost] = matches
+        return matches
+    }
+
+    private fun cosmeticCssFromMatches(matches: List<CosmeticFilterMatch>): String {
+        if (matches.isEmpty()) return ""
+        return matches.joinToString(",\n") { it.selector } +
+            " { display: none !important; visibility: hidden !important; }"
     }
 
     fun scriptletJsFor(host: String, siteOverride: SiteFilterOverride? = null): String {
@@ -514,18 +551,29 @@ private class CosmeticIndex(rules: List<CosmeticFilterRule>) {
     }
 
     fun cssFor(host: String): String {
+        val selectors = matchesFor(host).map { it.selector }
+        if (selectors.isEmpty()) return ""
+        return selectors.joinToString(",\n") + " { display: none !important; visibility: hidden !important; }"
+    }
+
+    fun matchesFor(host: String): List<CosmeticFilterMatch> {
         val exceptions = matchingRules(host, globalExceptions, domainExceptions)
             .map { it.selector }
             .toSet()
-        val selectors = matchingRules(host, globalRules, domainRules)
+        return matchingRules(host, globalRules, domainRules)
             .asSequence()
-            .map { it.selector }
-            .filterNot { it in exceptions }
-            .filter { isSafeCssSelector(it) }
+            .filterNot { it.selector in exceptions }
+            .filter { isSafeCssSelector(it.selector) }
             .take(800)
+            .map { rule ->
+                CosmeticFilterMatch(
+                    selector = rule.selector,
+                    rawText = rule.rawText,
+                    sourceId = rule.sourceId,
+                    sourceName = rule.sourceName
+                )
+            }
             .toList()
-        if (selectors.isEmpty()) return ""
-        return selectors.joinToString(",\n") + " { display: none !important; visibility: hidden !important; }"
     }
 
     private fun matchingRules(

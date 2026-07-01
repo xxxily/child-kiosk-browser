@@ -66,6 +66,9 @@ import site.anzz.childkiosk.data.SystemConfigEntity
 import site.anzz.childkiosk.data.WebAppEntity
 import site.anzz.childkiosk.ui.AddEditWebAppDialog
 import site.anzz.childkiosk.ui.browser.BrowserTab
+import site.anzz.childkiosk.ui.browser.FloatingControlAction
+import site.anzz.childkiosk.ui.browser.FloatingControlActionStyle
+import site.anzz.childkiosk.ui.browser.FloatingControlSection
 import site.anzz.childkiosk.ui.browser.TabStateInfo
 import site.anzz.childkiosk.ui.browser.TabMemoryCache
 import site.anzz.childkiosk.ui.browser.TabCacheItem
@@ -81,7 +84,9 @@ import site.anzz.childkiosk.util.WebViewRuntime
 import site.anzz.childkiosk.util.WebViewRuntimeConfig
 import site.anzz.childkiosk.util.WebViewPool
 import site.anzz.childkiosk.ui.theme.ChildKioskTheme
+import site.anzz.childkiosk.util.filter.CosmeticFilterMatch
 import site.anzz.childkiosk.util.filter.FilterAction
+import site.anzz.childkiosk.util.filter.FilterDecision
 import site.anzz.childkiosk.util.filter.FilterRepository
 import site.anzz.childkiosk.util.filter.FilterRequestContext
 import site.anzz.childkiosk.util.filter.FilterResourceType
@@ -93,6 +98,8 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.lang.ref.WeakReference
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -110,6 +117,108 @@ private object FilterBlockLogLimiter {
             windowCount.set(0)
         }
         return windowCount.incrementAndGet() <= MAX_LOGS_PER_SECOND
+    }
+}
+
+private const val ACTION_SHOW_CURRENT_PAGE_FILTERS = "show_current_page_filter_events"
+private const val CURRENT_PAGE_FILTER_EVENT_LIMIT = 80
+private const val CURRENT_PAGE_COSMETIC_EVENT_LIMIT = 120
+
+private data class CurrentPageNetworkFilterEvent(
+    val timestamp: Long,
+    val topLevelUrl: String,
+    val requestUrl: String,
+    val resourceType: String,
+    val ruleText: String,
+    val sourceName: String,
+    val reason: String,
+    val matchType: String,
+    val candidateCount: Int,
+    val cacheStatus: String
+)
+
+private data class CurrentPageCosmeticFilterEvent(
+    val selector: String,
+    val ruleText: String,
+    val sourceName: String
+)
+
+private data class CurrentPageFilterSnapshot(
+    val pageUrl: String,
+    val networkTotalCount: Int,
+    val networkEvents: List<CurrentPageNetworkFilterEvent>,
+    val cosmeticTotalCount: Int,
+    val cosmeticEvents: List<CurrentPageCosmeticFilterEvent>
+) {
+    val networkCount: Int get() = networkTotalCount
+    val cosmeticCount: Int get() = cosmeticTotalCount
+    val totalCount: Int get() = networkCount + cosmeticCount
+
+    companion object {
+        val EMPTY = CurrentPageFilterSnapshot(
+            pageUrl = "",
+            networkTotalCount = 0,
+            networkEvents = emptyList(),
+            cosmeticTotalCount = 0,
+            cosmeticEvents = emptyList()
+        )
+    }
+}
+
+private class MutablePageFilterDiagnostics {
+    private var pageUrl: String = ""
+    private var networkTotalCount: Int = 0
+    private val networkEvents = java.util.ArrayDeque<CurrentPageNetworkFilterEvent>()
+    private var cosmeticTotalCount: Int = 0
+    private var cosmeticEvents: List<CurrentPageCosmeticFilterEvent> = emptyList()
+
+    @Synchronized
+    fun reset(url: String) {
+        pageUrl = url
+        networkTotalCount = 0
+        networkEvents.clear()
+        cosmeticTotalCount = 0
+        cosmeticEvents = emptyList()
+    }
+
+    @Synchronized
+    fun addNetwork(event: CurrentPageNetworkFilterEvent) {
+        if (pageUrl.isBlank()) {
+            pageUrl = event.topLevelUrl
+        }
+        networkTotalCount += 1
+        networkEvents.addFirst(event)
+        while (networkEvents.size > CURRENT_PAGE_FILTER_EVENT_LIMIT) {
+            networkEvents.removeLast()
+        }
+    }
+
+    @Synchronized
+    fun setCosmeticMatches(pageUrl: String, matches: List<CosmeticFilterMatch>) {
+        if (pageUrl.isNotBlank()) {
+            this.pageUrl = pageUrl
+        }
+        cosmeticTotalCount = matches.size
+        cosmeticEvents = matches
+            .take(CURRENT_PAGE_COSMETIC_EVENT_LIMIT)
+            .map { match ->
+                CurrentPageCosmeticFilterEvent(
+                    selector = match.selector,
+                    ruleText = match.rawText,
+                    sourceName = match.sourceName
+                )
+            }
+    }
+
+    @Synchronized
+    fun snapshot(): CurrentPageFilterSnapshot {
+        return CurrentPageFilterSnapshot(
+            pageUrl = pageUrl,
+            networkTotalCount = networkTotalCount,
+            networkEvents = networkEvents.toList(),
+            cosmeticTotalCount = cosmeticTotalCount,
+            cosmeticEvents = cosmeticEvents
+        )
     }
 }
 
@@ -146,6 +255,9 @@ class WebViewActivity : ComponentActivity() {
     private var bookmarkEditorView: ComposeView? = null
     private var customDialogView: ComposeView? = null
     internal val lastAttemptedSchemeMap = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val currentPageFilterDiagnostics = ConcurrentHashMap<String, MutablePageFilterDiagnostics>()
+    private val webViewFilterTabIds = ConcurrentHashMap<WebView, String>()
+    private val filterControlsUpdateScheduled = AtomicBoolean(false)
 
     private fun showCustomComposeDialog(content: @Composable () -> Unit) {
         val root = webViewRoot ?: return
@@ -1277,6 +1389,7 @@ class WebViewActivity : ComponentActivity() {
             webView = webView
         )
         tabList.add(tab)
+        registerFilterDiagnosticsWebView(webView, tab.id)
         
         addWebViewToRoot(webView)
         
@@ -1336,9 +1449,11 @@ class WebViewActivity : ComponentActivity() {
         val targetTab = tabList.firstOrNull { it.id == tabId } ?: return
         
         tabList.remove(targetTab)
+        currentPageFilterDiagnostics.remove(tabId)
         
         val webView = targetTab.webView
         if (webView != null) {
+            unregisterFilterDiagnosticsWebView(webView)
             removeWebViewFromRoot(webView)
             runCatching {
                 webView.stopLoading()
@@ -1374,6 +1489,7 @@ class WebViewActivity : ComponentActivity() {
             webView.stopLoading()
             webView.destroy()
         }
+        unregisterFilterDiagnosticsWebView(webView)
         tab.webView = null
     }
 
@@ -1467,6 +1583,7 @@ class WebViewActivity : ComponentActivity() {
         webViewRef = webView
         
         tab.webView = webView
+        registerFilterDiagnosticsWebView(webView, tab.id)
         addWebViewToRoot(webView)
         
         val state = tab.savedState
@@ -1539,7 +1656,11 @@ class WebViewActivity : ComponentActivity() {
                     applySystemUiMode()
                 },
                 onActionSelected = { actionId ->
-                    Log.d("ChildKioskWebView", "Floating browser action: $actionId")
+                    if (actionId == ACTION_SHOW_CURRENT_PAGE_FILTERS) {
+                        showCurrentPageFilterDialog()
+                    } else {
+                        Log.d("ChildKioskWebView", "Floating browser action: $actionId")
+                    }
                 },
                 onNewTab = { createNewTab("about:blank", focus = true) },
                 onCloseTab = { id -> closeTab(id) },
@@ -1555,6 +1676,145 @@ class WebViewActivity : ComponentActivity() {
                 }
             )
         )
+        updateFloatingControlsExtraSections()
+    }
+
+    private fun registerFilterDiagnosticsWebView(webView: WebView, tabId: String) {
+        webViewFilterTabIds[webView] = tabId
+        currentPageFilterDiagnostics.getOrPut(tabId) { MutablePageFilterDiagnostics() }
+    }
+
+    private fun unregisterFilterDiagnosticsWebView(webView: WebView) {
+        webViewFilterTabIds.remove(webView)
+    }
+
+    internal fun resetCurrentPageFilterDiagnostics(webView: WebView?, pageUrl: String) {
+        val tabId = webView?.let { webViewFilterTabIds[it] } ?: return
+        currentPageFilterDiagnostics.getOrPut(tabId) { MutablePageFilterDiagnostics() }
+            .reset(pageUrl)
+        scheduleFilterControlsUpdate()
+    }
+
+    internal fun recordCurrentPageNetworkFilterBlock(
+        webView: WebView?,
+        topLevelUrl: String,
+        requestUrl: String,
+        resourceType: FilterResourceType,
+        decision: FilterDecision
+    ) {
+        val tabId = webView?.let { webViewFilterTabIds[it] } ?: return
+        val diagnostics = decision.diagnostics
+        currentPageFilterDiagnostics.getOrPut(tabId) { MutablePageFilterDiagnostics() }
+            .addNetwork(
+                CurrentPageNetworkFilterEvent(
+                    timestamp = System.currentTimeMillis(),
+                    topLevelUrl = topLevelUrl,
+                    requestUrl = requestUrl,
+                    resourceType = resourceType.optionName,
+                    ruleText = decision.rule?.rawText.orEmpty(),
+                    sourceName = decision.rule?.sourceName.orEmpty(),
+                    reason = decision.reason,
+                    matchType = diagnostics?.ruleMatchType.orEmpty(),
+                    candidateCount = diagnostics?.candidateCount ?: 0,
+                    cacheStatus = diagnostics?.cacheStatus.orEmpty()
+                )
+            )
+        scheduleFilterControlsUpdate()
+    }
+
+    internal fun recordCurrentPageCosmeticFilters(
+        webView: WebView,
+        pageUrl: String,
+        matches: List<CosmeticFilterMatch>
+    ) {
+        val tabId = webViewFilterTabIds[webView] ?: return
+        currentPageFilterDiagnostics.getOrPut(tabId) { MutablePageFilterDiagnostics() }
+            .setCosmeticMatches(pageUrl, matches)
+        scheduleFilterControlsUpdate()
+    }
+
+    private fun scheduleFilterControlsUpdate() {
+        if (!filterControlsUpdateScheduled.compareAndSet(false, true)) return
+        val update = Runnable {
+            filterControlsUpdateScheduled.set(false)
+            updateFloatingControlsExtraSections()
+        }
+        val root = webViewRoot
+        if (root != null) {
+            root.post(update)
+        } else {
+            runOnUiThread(update)
+        }
+    }
+
+    private fun updateFloatingControlsExtraSections() {
+        floatingControlsOverlay?.setExtraSections(currentFloatingControlExtraSections())
+    }
+
+    private fun currentFloatingControlExtraSections(): List<FloatingControlSection> {
+        if (!runtimeConfig.limitAdBlock || !runtimeConfig.filterSnapshot.enabled) return emptyList()
+        val currentUrl = rootWebView?.url.orEmpty()
+        if (!WebViewRuntime.isWebUrl(currentUrl)) return emptyList()
+
+        val snapshot = activePageFilterSnapshot()
+        val helperText = if (snapshot.totalCount > 0) {
+            "当前页：网络 ${snapshot.networkCount} 条，元素隐藏 ${snapshot.cosmeticCount} 条"
+        } else {
+            "当前页面暂无过滤拦截记录"
+        }
+        return listOf(
+            FloatingControlSection(
+                id = "filter",
+                title = "过滤",
+                helperText = helperText,
+                actions = listOf(
+                    FloatingControlAction(
+                        id = ACTION_SHOW_CURRENT_PAGE_FILTERS,
+                        title = "拦截 ${formatCompactCount(snapshot.totalCount)}",
+                        iconRes = if (snapshot.totalCount > 0) {
+                            R.drawable.ic_browser_warning_24
+                        } else {
+                            R.drawable.ic_browser_info_24
+                        },
+                        enabled = true,
+                        highlighted = snapshot.totalCount > 0,
+                        style = if (snapshot.totalCount > 0) {
+                            FloatingControlActionStyle.PRIMARY
+                        } else {
+                            FloatingControlActionStyle.NORMAL
+                        }
+                    )
+                )
+            )
+        )
+    }
+
+    private fun activePageFilterSnapshot(): CurrentPageFilterSnapshot {
+        val tabId = activeTabId ?: return CurrentPageFilterSnapshot.EMPTY
+        val snapshot = currentPageFilterDiagnostics[tabId]?.snapshot()
+            ?: CurrentPageFilterSnapshot.EMPTY
+        val currentUrl = rootWebView?.url.orEmpty()
+            .ifBlank { tabList.firstOrNull { it.id == tabId }?.url.orEmpty() }
+        return if (snapshot.pageUrl.isBlank() && currentUrl.isNotBlank()) {
+            snapshot.copy(pageUrl = currentUrl)
+        } else {
+            snapshot
+        }
+    }
+
+    private fun formatCompactCount(count: Int): String {
+        return if (count > 99) "99+" else count.toString()
+    }
+
+    private fun showCurrentPageFilterDialog() {
+        floatingControlsOverlay?.collapsePanel()
+        val snapshot = activePageFilterSnapshot()
+        showCustomComposeDialog {
+            CurrentPageFilterDiagnosticsDialog(
+                snapshot = snapshot,
+                onDismiss = { dismissCustomComposeDialog() }
+            )
+        }
     }
 
     private fun showSiteInfoPanel(url: String) {
@@ -1901,6 +2161,7 @@ class WebViewActivity : ComponentActivity() {
         }
         
         floatingControlsOverlay?.updateState(currentFloatingControlsState())
+        updateFloatingControlsExtraSections()
     }
 
     private fun currentFloatingControlsState(): FloatingBrowserControlsState {
@@ -2603,6 +2864,7 @@ private fun createSecureWebView(
                 if (!url.isNullOrBlank()) {
                     currentTopUrl.set(url)
                 }
+                (ctx as? WebViewActivity)?.resetCurrentPageFilterDiagnostics(view, url.orEmpty())
                 Log.d("ChildKioskWebView", "Page started: $url")
                 onProgressUpdate(0)
                 view?.setBackgroundColor(android.graphics.Color.parseColor("#FFF8E1"))
@@ -2766,6 +3028,13 @@ private fun createSecureWebView(
                             url = requestUrl,
                             acceptHeader = request?.requestHeaders?.get("Accept"),
                             isMainFrame = request?.isForMainFrame == true
+                        )
+                        (ctx as? WebViewActivity)?.recordCurrentPageNetworkFilterBlock(
+                            webView = view,
+                            topLevelUrl = topLevelUrl,
+                            requestUrl = requestUrl,
+                            resourceType = resourceType,
+                            decision = decision
                         )
                         return AdBlocker.emptyResponse(resourceType)
                     }
@@ -3145,7 +3414,22 @@ private fun injectCosmeticCssIfNeeded(
     if (host.isBlank()) return
     val siteOverride = FilterRepository.siteOverrideFor(config.filterSnapshot, host)
     val engine = FilterRepository.getCachedEngine(config.filterSnapshot) ?: return
-    val css = engine.cosmeticCssFor(host, siteOverride).take(256 * 1024)
+    val cosmeticMatches = engine.cosmeticMatchesFor(host, siteOverride)
+    (webView.context as? WebViewActivity)?.recordCurrentPageCosmeticFilters(
+        webView = webView,
+        pageUrl = pageUrl,
+        matches = cosmeticMatches
+    )
+    val css = cosmeticMatches
+        .joinToString(",\n") { it.selector }
+        .let { selectors ->
+            if (selectors.isBlank()) {
+                ""
+            } else {
+                "$selectors { display: none !important; visibility: hidden !important; }"
+            }
+        }
+        .take(256 * 1024)
     FilterRepository.maybeRecordPerfSnapshot(webView.context, config.filterSnapshot, engine)
     if (css.isBlank()) return
     val cssJson = JSONObject.quote(css)
@@ -3377,6 +3661,294 @@ private fun injectRawExternalScript(webView: WebView, rawJs: String, guardKey: S
 
 private val externalScriptCache = ConcurrentHashMap<String, String>()
 private val debugFallbackCallbacks = ConcurrentHashMap<String, DebugFallbackRequest>()
+
+@Composable
+private fun CurrentPageFilterDiagnosticsDialog(
+    snapshot: CurrentPageFilterSnapshot,
+    onDismiss: () -> Unit
+) {
+    val host = WebViewRuntime.hostOf(snapshot.pageUrl).ifBlank { "当前页面" }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.5f))
+            .clickable(enabled = true, onClick = onDismiss),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .heightIn(max = 560.dp)
+                .padding(12.dp)
+                .clickable(enabled = false, onClick = {}),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(18.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = if (snapshot.totalCount > 0) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.size(26.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "当前页过滤记录",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = host,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "关闭")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterCountChip(
+                        label = "网络",
+                        count = snapshot.networkCount,
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterCountChip(
+                        label = "元素隐藏",
+                        count = snapshot.cosmeticCount,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+                Spacer(modifier = Modifier.height(12.dp))
+                if (
+                    snapshot.networkCount > snapshot.networkEvents.size ||
+                    snapshot.cosmeticCount > snapshot.cosmeticEvents.size
+                ) {
+                    Text(
+                        text = "列表显示当前页面最近 ${snapshot.networkEvents.size} 条网络拦截和前 ${snapshot.cosmeticEvents.size} 条元素隐藏规则。",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 16.sp
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (snapshot.totalCount == 0) {
+                        Text(
+                            text = "当前页面暂无过滤拦截记录。",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    RoundedCornerShape(10.dp)
+                                )
+                                .padding(12.dp)
+                        )
+                    }
+
+                    if (snapshot.networkEvents.isNotEmpty()) {
+                        FilterSectionTitle("网络请求拦截")
+                        snapshot.networkEvents.forEach { event ->
+                            NetworkFilterEventRow(event)
+                        }
+                    }
+
+                    if (snapshot.cosmeticEvents.isNotEmpty()) {
+                        FilterSectionTitle("元素隐藏规则")
+                        Text(
+                            text = "以下为本页已应用的隐藏选择器，实际命中的 DOM 元素由网页内容决定。",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 16.sp
+                        )
+                        snapshot.cosmeticEvents.forEach { event ->
+                            CosmeticFilterEventRow(event)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("关闭")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterCountChip(label: String, count: Int, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+    ) {
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = count.toString(),
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary
+        )
+    }
+}
+
+@Composable
+private fun FilterSectionTitle(title: String) {
+    Text(
+        text = title,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.onSurface
+    )
+}
+
+@Composable
+private fun NetworkFilterEventRow(event: CurrentPageNetworkFilterEvent) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f), RoundedCornerShape(10.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(10.dp))
+            .padding(10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = event.resourceType.ifBlank { "other" },
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 6.dp, vertical = 3.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = formatFilterEventTime(event.timestamp),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = event.requestUrl,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            lineHeight = 17.sp,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
+        )
+        FilterEventMetaLine("规则", event.ruleText.ifBlank { "未知规则" })
+        if (event.sourceName.isNotBlank()) {
+            FilterEventMetaLine("来源", event.sourceName)
+        }
+        if (event.reason.isNotBlank()) {
+            FilterEventMetaLine("原因", event.reason)
+        }
+        val diagnostics = buildList {
+            if (event.matchType.isNotBlank()) add("匹配: ${event.matchType}")
+            if (event.cacheStatus.isNotBlank()) add("缓存: ${event.cacheStatus}")
+            if (event.candidateCount > 0) add("候选: ${event.candidateCount}")
+        }.joinToString(" | ")
+        if (diagnostics.isNotBlank()) {
+            FilterEventMetaLine("诊断", diagnostics)
+        }
+    }
+}
+
+@Composable
+private fun CosmeticFilterEventRow(event: CurrentPageCosmeticFilterEvent) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(10.dp))
+            .padding(10.dp)
+    ) {
+        Text(
+            text = event.selector,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+            lineHeight = 17.sp,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
+        )
+        FilterEventMetaLine("规则", event.ruleText.ifBlank { event.selector })
+        if (event.sourceName.isNotBlank()) {
+            FilterEventMetaLine("来源", event.sourceName)
+        }
+    }
+}
+
+@Composable
+private fun FilterEventMetaLine(label: String, value: String) {
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(
+        text = "$label：$value",
+        fontSize = 11.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        lineHeight = 15.sp,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis
+    )
+}
+
+private fun formatFilterEventTime(timestamp: Long): String {
+    if (timestamp <= 0L) return ""
+    return runCatching {
+        SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
+    }.getOrDefault("")
+}
 
 @Composable
 private fun BeautifulConfirmDialog(

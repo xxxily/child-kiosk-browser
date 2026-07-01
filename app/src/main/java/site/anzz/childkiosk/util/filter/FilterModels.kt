@@ -174,6 +174,13 @@ data class FilterSettings(
     }
 }
 
+data class CosmeticFilterMatch(
+    val selector: String,
+    val rawText: String,
+    val sourceId: String,
+    val sourceName: String
+)
+
 data class FilterRuntimeSnapshot(
     val enabled: Boolean,
     val preset: String,
