@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+## [0.2.28] - 2026-07-01
+
+### Added — 新增
+
+- **当前页面元素拦截与化妆过滤诊断展示**（对应 commit `1d02bf`）：
+  - 网页过滤诊断页面新增对当前页面被拦截事件的现场展示列表。
+  - 新增 `CurrentPageCosmeticFilterEvent`、`CosmeticFilterEventRow` 与 `FilterEventMetaLine` 等 Composable 元素，清晰显示具体的隐藏元素（Cosmetic Filter）选择器、规则详情、订阅来源以及匹配触发时刻。
+  - 在匹配引擎中增加针对化妆过滤规则匹配结果的缓存体系（`cosmeticMatchesCache`），极大降低了相同主机域名在重复页面请求时的广告元素隐藏解析耗时。
+
+- **站点多维度敏感权限控制提升**（对应 commit `1f615d`）：
+  - 增强了站点权限管理方案。在原有的地理定位（Geolocation）与自定义 Scheme 跳转控制基础上，对摄像头、麦克风和文件选择/上传功能实现 Origin 维度的站点黑名单控制。
+  - 对这几类敏感资源类型的拦截动作实施三态决策：允许、拒绝（当前请求拒绝，下次可再询问）、彻底禁止且不再提示（自动拉入 Origin 黑名单）。
+  - 后台与 Site Info Panel 中均全面支持对摄像头、麦克风等新增站点黑名单的高效管控。
+
 ## [0.2.27] - 2026-07-01
 
 ### Added — 新增
