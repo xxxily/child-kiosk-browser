@@ -220,6 +220,8 @@ object KioskPrefs {
     private const val KEY_HIDE_MAIN_TITLE = "hide_main_title"
     private const val KEY_FLOATING_BROWSER_CONTROLS_ENABLED = "floating_browser_controls_enabled"
     private const val KEY_PULL_TO_REFRESH_ENABLED = "pull_to_refresh_enabled"
+    private const val KEY_PULL_TO_REFRESH_DEFAULT_DISABLED_MIGRATED =
+        "pull_to_refresh_default_disabled_migrated"
     private const val KEY_LIMIT_MEDIA_CAPTURE_LEGACY = "limit_media_capture"
     private const val KEY_LIMIT_CAMERA_CAPTURE = "limit_camera_capture"
     private const val KEY_LIMIT_MICROPHONE_CAPTURE = "limit_microphone_capture"
@@ -334,7 +336,7 @@ object KioskPrefs {
             .putBoolean(KEY_LIMIT_MICROPHONE_CAPTURE, false)
             .putBoolean(KEY_LIMIT_FILE_CHOOSER, false)
             .putBoolean(KEY_LIMIT_FULLSCREEN_VIDEO, false)
-            .putBoolean(KEY_PULL_TO_REFRESH_ENABLED, true)
+            .putBoolean(KEY_PULL_TO_REFRESH_ENABLED, false)
             .putBoolean("third_party_cookies_enabled", true)
             .putBoolean("strict_mixed_content", false)
             .putBoolean("use_browser_user_agent", true)
@@ -380,7 +382,7 @@ object KioskPrefs {
             .putBoolean(KEY_LIMIT_MICROPHONE_CAPTURE, true)
             .putBoolean(KEY_LIMIT_FILE_CHOOSER, true)
             .putBoolean(KEY_LIMIT_FULLSCREEN_VIDEO, true)
-            .putBoolean(KEY_PULL_TO_REFRESH_ENABLED, true)
+            .putBoolean(KEY_PULL_TO_REFRESH_ENABLED, false)
             .putBoolean("third_party_cookies_enabled", true)
             .putBoolean("strict_mixed_content", true)
             .putBoolean("use_browser_user_agent", true)
@@ -426,7 +428,7 @@ object KioskPrefs {
             .putBoolean(KEY_LIMIT_MICROPHONE_CAPTURE, false)
             .putBoolean(KEY_LIMIT_FILE_CHOOSER, false)
             .putBoolean(KEY_LIMIT_FULLSCREEN_VIDEO, false)
-            .putBoolean(KEY_PULL_TO_REFRESH_ENABLED, true)
+            .putBoolean(KEY_PULL_TO_REFRESH_ENABLED, false)
             .putBoolean("third_party_cookies_enabled", true)
             .putBoolean("strict_mixed_content", false)
             .putBoolean("use_browser_user_agent", true)
@@ -717,11 +719,22 @@ object KioskPrefs {
             .apply()
 
     fun isPullToRefreshEnabled(context: Context): Boolean {
-        return prefs(context).getBoolean(KEY_PULL_TO_REFRESH_ENABLED, true)
+        val storage = prefs(context)
+        if (!storage.getBoolean(KEY_PULL_TO_REFRESH_DEFAULT_DISABLED_MIGRATED, false)) {
+            storage.edit()
+                .putBoolean(KEY_PULL_TO_REFRESH_ENABLED, false)
+                .putBoolean(KEY_PULL_TO_REFRESH_DEFAULT_DISABLED_MIGRATED, true)
+                .apply()
+            return false
+        }
+        return storage.getBoolean(KEY_PULL_TO_REFRESH_ENABLED, false)
     }
 
     fun setPullToRefreshEnabled(context: Context, enabled: Boolean) =
-        customEditor(context).putBoolean(KEY_PULL_TO_REFRESH_ENABLED, enabled).apply()
+        customEditor(context)
+            .putBoolean(KEY_PULL_TO_REFRESH_ENABLED, enabled)
+            .putBoolean(KEY_PULL_TO_REFRESH_DEFAULT_DISABLED_MIGRATED, true)
+            .apply()
 
     fun getLastCacheClearTime(context: Context): Long {
         return prefs(context).getLong("last_cache_clear_time", 0L)

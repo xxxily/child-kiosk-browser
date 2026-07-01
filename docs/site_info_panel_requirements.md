@@ -80,10 +80,12 @@ Chrome 地址栏左侧的按钮（通常为“锁”图标、警告图标或 ℹ
 4. 对未知 `PermissionRequest` 资源默认拒绝，不做宽泛放行。
 
 ### 3.4 下拉刷新
-1. 增加“页面顶部大幅下拉刷新”设置，默认开启。
+1. 增加“页面顶部大幅下拉刷新”设置，默认关闭；只有用户主动开启后才启用。
 2. 实现必须保持真实网页仍走 `WebViewActivity -> FrameLayout -> WebView` 原生路径；可以在外层使用原生 ViewGroup 承载手势，但不能改成 Compose `AndroidView` 生产宿主。
 3. 仅当当前 WebView 已在页面顶部且没有全屏视频/权限弹窗等覆盖层时触发刷新。
 4. 设置通过 WebView 启动 Intent 快照传入 `:webview` 进程；切换后对新打开的网站生效。
+5. 触发模型应接近浏览器级 pull-to-refresh：触摸开始时页面已在顶部，向下拖动超过阈值，并在松手时触发刷新；不要要求手指从屏幕顶部小区域开始。
+6. 应尊重网页通过 `overscroll-behavior-y: contain/none` 表达的禁用浏览器下拉刷新意图，降低全屏 Web App 或自定义手势页面误触。
 
 ---
 

@@ -2149,7 +2149,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("页面顶部下拉刷新", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认开启。仅在页面顶部区域慢速大幅下拉并松手时刷新，避免全屏网页滑动交互误触发", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("默认关闭。开启后在网页已到顶部时继续下拉并松手刷新；全屏网页或复杂 Web 应用建议保持关闭", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = pullToRefreshEnabled,

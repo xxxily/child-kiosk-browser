@@ -14,12 +14,19 @@ import android.net.http.SslError
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RectF
 import android.util.Log
 import android.view.KeyEvent
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.VelocityTracker
+import android.view.animation.LinearInterpolator
 import android.webkit.*
 import android.widget.Button
 import android.widget.CheckBox
@@ -107,6 +114,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.cos
+import kotlin.math.sin
 
 private object FilterBlockLogLimiter {
     private const val MAX_LOGS_PER_SECOND = 8
@@ -126,6 +135,109 @@ private const val ACTION_SHOW_CURRENT_PAGE_FILTERS = "show_current_page_filter_e
 private const val CURRENT_PAGE_FILTER_EVENT_LIMIT = 80
 private const val CURRENT_PAGE_COSMETIC_EVENT_LIMIT = 120
 private const val COSMETIC_HIT_TEST_LIMIT = 120
+
+private class PullToRefreshIndicatorView(context: Context) : View(context) {
+    private val density = resources.displayMetrics.density
+    private val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.WHITE
+        style = Paint.Style.FILL
+    }
+    private val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.rgb(25, 103, 210)
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeWidth = 3f * density
+    }
+    private val arrowPaint = Paint(arcPaint)
+    private val arcBounds = RectF()
+    private var pullProgress = 0f
+    private var spinAnimator: ObjectAnimator? = null
+    var isRefreshing: Boolean = false
+        private set
+
+    init {
+        setWillNotDraw(false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            elevation = 8f * density
+        }
+    }
+
+    fun setPullProgress(progress: Float, armed: Boolean) {
+        if (isRefreshing) return
+        pullProgress = progress.coerceIn(0f, 1f)
+        arcPaint.color = if (armed) {
+            android.graphics.Color.rgb(15, 157, 88)
+        } else {
+            android.graphics.Color.rgb(25, 103, 210)
+        }
+        arrowPaint.color = arcPaint.color
+        rotation = pullProgress * 210f
+        invalidate()
+    }
+
+    fun startRefreshing() {
+        if (isRefreshing) return
+        isRefreshing = true
+        pullProgress = 1f
+        arcPaint.color = android.graphics.Color.rgb(25, 103, 210)
+        arrowPaint.color = arcPaint.color
+        spinAnimator?.cancel()
+        spinAnimator = ObjectAnimator.ofFloat(this, View.ROTATION, rotation, rotation + 360f).apply {
+            duration = 720L
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = LinearInterpolator()
+            start()
+        }
+        invalidate()
+    }
+
+    fun stopRefreshing() {
+        spinAnimator?.cancel()
+        spinAnimator = null
+        isRefreshing = false
+        pullProgress = 0f
+        rotation = 0f
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val cx = width / 2f
+        val cy = height / 2f
+        val circleRadius = width.coerceAtMost(height) * 0.42f
+        canvas.drawCircle(cx, cy, circleRadius, circlePaint)
+
+        val iconRadius = width.coerceAtMost(height) * 0.22f
+        arcBounds.set(cx - iconRadius, cy - iconRadius, cx + iconRadius, cy + iconRadius)
+        val sweep = if (isRefreshing) 285f else 44f + 246f * pullProgress
+        val startAngle = -90f + 120f * pullProgress
+        canvas.drawArc(arcBounds, startAngle, sweep, false, arcPaint)
+
+        if (isRefreshing || pullProgress > 0.18f) {
+            val endAngle = Math.toRadians((startAngle + sweep).toDouble())
+            val endX = cx + iconRadius * cos(endAngle).toFloat()
+            val endY = cy + iconRadius * sin(endAngle).toFloat()
+            val direction = endAngle + Math.PI / 2.0
+            val arrowSize = 5.5f * density
+            val backA = direction + Math.toRadians(148.0)
+            val backB = direction - Math.toRadians(148.0)
+            canvas.drawLine(
+                endX,
+                endY,
+                endX + arrowSize * cos(backA).toFloat(),
+                endY + arrowSize * sin(backA).toFloat(),
+                arrowPaint
+            )
+            canvas.drawLine(
+                endX,
+                endY,
+                endX + arrowSize * cos(backB).toFloat(),
+                endY + arrowSize * sin(backB).toFloat(),
+                arrowPaint
+            )
+        }
+    }
+}
 
 private data class CurrentPageNetworkFilterEvent(
     val timestamp: Long,
@@ -252,6 +364,7 @@ class WebViewActivity : ComponentActivity() {
     private val webViewStack = mutableListOf<WebView>()
     private var webViewRoot: FrameLayout? = null
     private var topProgress: ProgressBar? = null
+    private var pullToRefreshIndicator: PullToRefreshIndicatorView? = null
     private var floatingControlsOverlay: FloatingBrowserControlsOverlay? = null
     private var exitVerificationDialog: AlertDialog? = null
     private var timeoutDialog: AlertDialog? = null
@@ -275,6 +388,7 @@ class WebViewActivity : ComponentActivity() {
     internal val lastAttemptedSchemeMap = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val currentPageFilterDiagnostics = ConcurrentHashMap<String, MutablePageFilterDiagnostics>()
     private val webViewFilterTabIds = ConcurrentHashMap<WebView, String>()
+    private val pullToRefreshPageOptOut = ConcurrentHashMap<WebView, Boolean>()
     private val filterControlsUpdateScheduled = AtomicBoolean(false)
 
     private fun showCustomComposeDialog(content: @Composable () -> Unit) {
@@ -501,6 +615,8 @@ class WebViewActivity : ComponentActivity() {
         tabList.clear()
         webViewStack.clear()
         floatingControlsOverlay = null
+        pullToRefreshIndicator?.stopRefreshing()
+        pullToRefreshIndicator = null
         topProgress = null
         webViewRoot = null
         rootWebView = null
@@ -1167,6 +1283,7 @@ class WebViewActivity : ComponentActivity() {
         webViewRoot = root
         setContentView(root)
         installWebViewRootInsets(root)
+        installPullToRefreshIndicator(root)
         applySystemUiMode()
 
         val showTopProgress = runtimeConfig.webViewTopProgressEnabled
@@ -1265,14 +1382,88 @@ class WebViewActivity : ComponentActivity() {
         webView.visibility = if (visible) View.VISIBLE else View.GONE
     }
 
+    private fun installPullToRefreshIndicator(root: FrameLayout) {
+        val density = resources.displayMetrics.density
+        val size = (48f * density).toInt().coerceAtLeast(48)
+        pullToRefreshIndicator = PullToRefreshIndicatorView(this).apply {
+            visibility = View.GONE
+            alpha = 0f
+            isClickable = false
+            isFocusable = false
+            translationY = -size.toFloat()
+        }
+        root.addView(
+            pullToRefreshIndicator,
+            FrameLayout.LayoutParams(size, size, Gravity.TOP or Gravity.CENTER_HORIZONTAL)
+        )
+    }
+
+    private fun updatePullToRefreshIndicator(dragDistance: Float, triggerDistance: Float, armed: Boolean) {
+        val indicator = pullToRefreshIndicator ?: return
+        if (indicator.isRefreshing) return
+        val progress = (dragDistance / triggerDistance).coerceIn(0f, 1f)
+        val hiddenY = pullToRefreshIndicatorHiddenY(indicator)
+        val maxY = 44f * resources.displayMetrics.density
+        indicator.visibility = View.VISIBLE
+        indicator.alpha = (0.25f + progress * 0.75f).coerceIn(0f, 1f)
+        indicator.translationY = hiddenY + (maxY - hiddenY) * progress
+        indicator.setPullProgress(progress, armed)
+    }
+
+    private fun resetPullToRefreshIndicator(animated: Boolean = true) {
+        val indicator = pullToRefreshIndicator ?: return
+        if (indicator.isRefreshing) return
+        val hiddenY = pullToRefreshIndicatorHiddenY(indicator)
+        indicator.animate().cancel()
+        if (animated) {
+            indicator.animate()
+                .translationY(hiddenY)
+                .alpha(0f)
+                .setDuration(180L)
+                .withEndAction {
+                    if (!indicator.isRefreshing) {
+                        indicator.visibility = View.GONE
+                        indicator.setPullProgress(0f, false)
+                    }
+                }
+                .start()
+        } else {
+            indicator.translationY = hiddenY
+            indicator.alpha = 0f
+            indicator.visibility = View.GONE
+            indicator.setPullProgress(0f, false)
+        }
+    }
+
+    private fun pullToRefreshIndicatorHiddenY(indicator: View): Float {
+        val measuredHeight = indicator.height.takeIf { it > 0 }?.toFloat()
+            ?: (48f * resources.displayMetrics.density)
+        return -measuredHeight
+    }
+
+    private fun startPullToRefreshIndicator() {
+        val indicator = pullToRefreshIndicator ?: return
+        val refreshY = 44f * resources.displayMetrics.density
+        indicator.animate().cancel()
+        indicator.visibility = View.VISIBLE
+        indicator.alpha = 1f
+        indicator.translationY = refreshY
+        indicator.setPullProgress(1f, true)
+        indicator.startRefreshing()
+    }
+
+    private fun finishPullToRefreshIndicator() {
+        val indicator = pullToRefreshIndicator ?: return
+        indicator.stopRefreshing()
+        resetPullToRefreshIndicator(animated = true)
+    }
+
     private fun installPullToRefreshGesture(webView: WebView) {
         val touchSlop = android.view.ViewConfiguration.get(this).scaledTouchSlop
         val density = resources.displayMetrics.density
-        val triggerDistance = (density * 156f).coerceAtLeast((touchSlop * 7).toFloat())
-        val maxStartY = density * 132f
-        val maxHorizontalDrift = density * 56f
-        val minDragDurationMs = 360L
-        val maxTriggerVelocityY = density * 1800f
+        val triggerDistance = (density * 112f).coerceAtLeast((touchSlop * 5).toFloat())
+        val minDragDurationMs = 160L
+        val maxTriggerVelocityY = density * 4200f
         var velocityTracker: VelocityTracker? = null
         var downX = 0f
         var downY = 0f
@@ -1290,9 +1481,12 @@ class WebViewActivity : ComponentActivity() {
                     tracking = latestRuntimeConfig().pullToRefreshEnabled &&
                         fullscreenView == null &&
                         !currentPageLoading &&
-                        event.y <= maxStartY &&
+                        pullToRefreshPageOptOut[webView] != true &&
                         !webView.canScrollVertically(-1)
                     armed = false
+                    if (!tracking) {
+                        resetPullToRefreshIndicator(animated = false)
+                    }
                     false
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -1303,17 +1497,21 @@ class WebViewActivity : ComponentActivity() {
                         if (deltaX <= touchSlop && kotlin.math.abs(deltaY) <= touchSlop) {
                             return@setOnTouchListener false
                         }
-                        val mostlyVertical = deltaY > touchSlop && deltaY > deltaX * 2.2f
+                        val mostlyVertical = deltaY > touchSlop && deltaY > deltaX * 1.45f
                         if (
                             deltaY < -touchSlop ||
-                            deltaX > maxHorizontalDrift ||
                             !mostlyVertical ||
+                            fullscreenView != null ||
+                            currentPageLoading ||
+                            pullToRefreshPageOptOut[webView] == true ||
                             webView.canScrollVertically(-1)
                         ) {
                             tracking = false
                             armed = false
-                        } else if (deltaY >= triggerDistance) {
-                            armed = true
+                            resetPullToRefreshIndicator(animated = true)
+                        } else {
+                            armed = deltaY >= triggerDistance
+                            updatePullToRefreshIndicator(deltaY, triggerDistance, armed)
                         }
                     }
                     false
@@ -1329,15 +1527,21 @@ class WebViewActivity : ComponentActivity() {
                         tracking &&
                         armed &&
                         deltaY >= triggerDistance &&
-                        deltaY > deltaX * 2.2f &&
+                        deltaY > deltaX * 1.45f &&
                         durationMs >= minDragDurationMs &&
                         velocityY in 0f..maxTriggerVelocityY &&
+                        fullscreenView == null &&
+                        !currentPageLoading &&
+                        pullToRefreshPageOptOut[webView] != true &&
                         !webView.canScrollVertically(-1)
                     ) {
                         view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                        startPullToRefreshIndicator()
                         currentPageLoading = true
                         webView.reload()
                         updateFloatingControlsState(loading = true)
+                    } else {
+                        resetPullToRefreshIndicator(animated = true)
                     }
                     tracking = false
                     armed = false
@@ -1349,11 +1553,39 @@ class WebViewActivity : ComponentActivity() {
                 MotionEvent.ACTION_CANCEL -> {
                     tracking = false
                     armed = false
+                    resetPullToRefreshIndicator(animated = true)
                     velocityTracker?.recycle()
                     velocityTracker = null
                     false
                 }
                 else -> false
+            }
+        }
+    }
+
+    internal fun updatePullToRefreshPagePolicy(webView: WebView, pageUrl: String?) {
+        if (!WebViewRuntime.isWebUrl(pageUrl.orEmpty())) {
+            pullToRefreshPageOptOut[webView] = false
+            return
+        }
+        val targetUrl = pageUrl.orEmpty()
+        val js = """
+            (function() {
+                function readValue(el) {
+                    if (!el || !window.getComputedStyle) return '';
+                    var style = window.getComputedStyle(el);
+                    return (style.overscrollBehaviorY || style.overscrollBehavior || '').toLowerCase();
+                }
+                return JSON.stringify([readValue(document.documentElement), readValue(document.body)]);
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(js) { rawResult ->
+            if (webView.url != targetUrl) return@evaluateJavascript
+            val values = parseStringArrayJavascriptResult(rawResult)
+            pullToRefreshPageOptOut[webView] = values.any { value ->
+                value.split(Regex("\\s+")).any { token ->
+                    token == "contain" || token == "none"
+                }
             }
         }
     }
@@ -1421,6 +1653,12 @@ class WebViewActivity : ComponentActivity() {
             },
             onPageCommitted = { pageUrl, pageTitle ->
                 recordBrowserHistory(pageUrl, pageTitle)
+            },
+            onPageStartedInActivity = { webView, _ ->
+                pullToRefreshPageOptOut[webView] = false
+            },
+            onPageFinishedInActivity = { webView, pageUrl ->
+                updatePullToRefreshPagePolicy(webView, pageUrl)
             },
             onError = { error ->
                 Log.w("ChildKioskWebView", "Native WebView main frame error: $error")
@@ -1622,6 +1860,12 @@ class WebViewActivity : ComponentActivity() {
             onPageCommitted = { pageUrl, pageTitle ->
                 recordBrowserHistory(pageUrl, pageTitle)
             },
+            onPageStartedInActivity = { webView, _ ->
+                pullToRefreshPageOptOut[webView] = false
+            },
+            onPageFinishedInActivity = { webView, pageUrl ->
+                updatePullToRefreshPagePolicy(webView, pageUrl)
+            },
             onError = { error ->
                 Log.w("ChildKioskWebView", "Native WebView main frame error: $error")
                 Toast.makeText(this, "网页加载异常：$error", Toast.LENGTH_LONG).show()
@@ -1705,6 +1949,7 @@ class WebViewActivity : ComponentActivity() {
 
     private fun hideTopProgress() {
         topProgress?.visibility = View.GONE
+        finishPullToRefreshIndicator()
     }
 
     private fun attachFloatingControls(root: FrameLayout) {
@@ -1754,6 +1999,7 @@ class WebViewActivity : ComponentActivity() {
 
     private fun unregisterFilterDiagnosticsWebView(webView: WebView) {
         webViewFilterTabIds.remove(webView)
+        pullToRefreshPageOptOut.remove(webView)
     }
 
     internal fun resetCurrentPageFilterDiagnostics(webView: WebView?, pageUrl: String) {
@@ -2213,6 +2459,7 @@ class WebViewActivity : ComponentActivity() {
 
     private fun stopLoadingFromFloatingControls() {
         rootWebView?.stopLoading()
+        finishPullToRefreshIndicator()
         updateFloatingControlsState(loading = false)
     }
 
@@ -2221,6 +2468,9 @@ class WebViewActivity : ComponentActivity() {
         progress: Int? = null
     ) {
         loading?.let { currentPageLoading = it }
+        if (loading == false) {
+            finishPullToRefreshIndicator()
+        }
         progress?.let { currentPageProgress = it.coerceIn(0, 100) }
         
         KioskPrefs.saveTabsSnapshot(this, tabList, activeTabId)
@@ -2915,6 +3165,8 @@ private fun createSecureWebView(
     onProgressUpdate: (Int) -> Unit,
     onNavigationStateChanged: () -> Unit,
     onPageCommitted: (url: String, title: String?) -> Unit,
+    onPageStartedInActivity: (WebView, String?) -> Unit = { _, _ -> },
+    onPageFinishedInActivity: (WebView, String?) -> Unit = { _, _ -> },
     onError: (String) -> Unit,
     existingWebView: WebView? = null,
     runtimeConfig: WebViewRuntimeConfig,
@@ -2945,6 +3197,7 @@ private fun createSecureWebView(
                 if (!url.isNullOrBlank()) {
                     currentTopUrl.set(url)
                 }
+                view?.let { onPageStartedInActivity(it, url) }
                 (ctx as? WebViewActivity)?.resetCurrentPageFilterDiagnostics(view, url.orEmpty())
                 Log.d("ChildKioskWebView", "Page started: $url")
                 onProgressUpdate(0)
@@ -2978,6 +3231,7 @@ private fun createSecureWebView(
                         }
                     }
                     injectPageScripts(view, ctx, runtimeConfig, "PAGE_FINISHED")
+                    onPageFinishedInActivity(view, url)
                 }
 
                 onLoadingStateChanged(false)
@@ -3637,6 +3891,22 @@ private fun destroyWebViewSafely(webView: WebView) {
         webView.removeAllViews()
         webView.destroy()
     }
+}
+
+private fun parseStringArrayJavascriptResult(rawResult: String?): List<String> {
+    if (rawResult.isNullOrBlank() || rawResult == "null") return emptyList()
+    val jsonText = runCatching {
+        org.json.JSONTokener(rawResult).nextValue() as? String
+    }.getOrNull() ?: rawResult
+    return runCatching {
+        val array = org.json.JSONArray(jsonText)
+        buildList {
+            for (i in 0 until array.length()) {
+                val value = array.optString(i, "").trim().lowercase(Locale.US)
+                if (value.isNotBlank()) add(value)
+            }
+        }
+    }.getOrDefault(emptyList())
 }
 
 private fun injectCdnScript(webView: WebView, context: Context, cdnUrl: String, toolKey: String, initJs: String) {
