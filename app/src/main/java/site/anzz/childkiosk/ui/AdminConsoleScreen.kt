@@ -1415,6 +1415,7 @@ fun AdminConsoleScreen(
                     var limitDownload by remember { mutableStateOf(KioskPrefs.isLimitDownloadEnabled(context)) }
                     var limitLongClick by remember { mutableStateOf(KioskPrefs.isLimitLongClickEnabled(context)) }
                     var limitUrlRedirect by remember { mutableStateOf(KioskPrefs.isLimitUrlRedirectEnabled(context)) }
+                    var pullToRefreshEnabled by remember { mutableStateOf(KioskPrefs.isPullToRefreshEnabled(context)) }
                     var floatingBrowserControlsEnabled by remember {
                         mutableStateOf(KioskPrefs.isFloatingBrowserControlsEnabled(context))
                     }
@@ -1425,7 +1426,13 @@ fun AdminConsoleScreen(
                     var limitSslCheck by remember { mutableStateOf(KioskPrefs.isLimitSslCheckEnabled(context)) }
                     var limitMultiWindow by remember { mutableStateOf(KioskPrefs.isLimitMultiWindowEnabled(context)) }
                     var limitFileAccess by remember { mutableStateOf(KioskPrefs.isLimitFileAccessEnabled(context)) }
-                    var limitMediaCapture by remember { mutableStateOf(KioskPrefs.isLimitMediaCaptureEnabled(context)) }
+                    var limitCameraCapture by remember { mutableStateOf(KioskPrefs.isLimitCameraCaptureEnabled(context)) }
+                    var limitMicrophoneCapture by remember { mutableStateOf(KioskPrefs.isLimitMicrophoneCaptureEnabled(context)) }
+                    var limitFileChooser by remember { mutableStateOf(KioskPrefs.isLimitFileChooserEnabled(context)) }
+                    var limitFullscreenVideo by remember { mutableStateOf(KioskPrefs.isLimitFullscreenVideoEnabled(context)) }
+                    var cameraBlacklist by remember { mutableStateOf(KioskPrefs.getCameraBlacklist(context)) }
+                    var microphoneBlacklist by remember { mutableStateOf(KioskPrefs.getMicrophoneBlacklist(context)) }
+                    var fileChooserBlacklist by remember { mutableStateOf(KioskPrefs.getFileChooserBlacklist(context)) }
                     var thirdPartyCookies by remember { mutableStateOf(KioskPrefs.isThirdPartyCookiesEnabled(context)) }
                     var strictMixedContent by remember { mutableStateOf(KioskPrefs.isStrictMixedContentEnabled(context)) }
                     var useBrowserUserAgent by remember { mutableStateOf(KioskPrefs.isUseBrowserUserAgentEnabled(context)) }
@@ -2082,6 +2089,28 @@ fun AdminConsoleScreen(
 
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("页面顶部下拉刷新", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("默认开启。网页已经滑动到顶部时，再次大幅度下拉会触发刷新，贴近 Chrome 移动浏览器交互", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = pullToRefreshEnabled,
+                                        onCheckedChange = {
+                                            pullToRefreshEnabled = it
+                                            KioskPrefs.setPullToRefreshEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                            Toast.makeText(context, "新打开的网站生效", Toast.LENGTH_SHORT).show()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
                                 // 选项 1: 广告过滤
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -2333,21 +2362,129 @@ fun AdminConsoleScreen(
 
                                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
 
-                                // 选项 6: 摄像头/麦克风限制
+                                // 选项 6: 摄像头限制
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用网页摄像头与麦克风", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认允许网页按需申请媒体采集能力；开启后拒绝 WebRTC、拍照、录音、扫码等摄像头/麦克风请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用网页摄像头", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("默认允许可信网页在用户确认后申请摄像头；开启后拒绝 WebRTC 视频、拍照、扫码等摄像头请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
-                                        checked = limitMediaCapture,
+                                        checked = limitCameraCapture,
                                         onCheckedChange = {
-                                            limitMediaCapture = it
-                                            KioskPrefs.setLimitMediaCaptureEnabled(context, it)
+                                            limitCameraCapture = it
+                                            KioskPrefs.setLimitCameraCaptureEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                if (!limitCameraCapture && cameraBlacklist.isNotEmpty()) {
+                                    PermissionBlacklistChips(
+                                        title = "摄像头黑名单：",
+                                        items = cameraBlacklist,
+                                        columns = 2,
+                                        onRemove = { item ->
+                                            val newList = cameraBlacklist.toMutableSet()
+                                            newList.remove(item)
+                                            cameraBlacklist = newList
+                                            KioskPrefs.setCameraBlacklist(context, newList)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁用网页麦克风", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("默认允许可信网页在用户确认后申请麦克风；开启后拒绝 WebRTC 语音、录音、语音输入等请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitMicrophoneCapture,
+                                        onCheckedChange = {
+                                            limitMicrophoneCapture = it
+                                            KioskPrefs.setLimitMicrophoneCaptureEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                if (!limitMicrophoneCapture && microphoneBlacklist.isNotEmpty()) {
+                                    PermissionBlacklistChips(
+                                        title = "麦克风黑名单：",
+                                        items = microphoneBlacklist,
+                                        columns = 2,
+                                        onRemove = { item ->
+                                            val newList = microphoneBlacklist.toMutableSet()
+                                            newList.remove(item)
+                                            microphoneBlacklist = newList
+                                            KioskPrefs.setMicrophoneBlacklist(context, newList)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁用网页文件选择/上传", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("默认允许可信网页在用户确认后打开系统文件选择器；开启后拒绝图片、视频或文件上传入口", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitFileChooser,
+                                        onCheckedChange = {
+                                            limitFileChooser = it
+                                            KioskPrefs.setLimitFileChooserEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                if (!limitFileChooser && fileChooserBlacklist.isNotEmpty()) {
+                                    PermissionBlacklistChips(
+                                        title = "文件选择黑名单：",
+                                        items = fileChooserBlacklist,
+                                        columns = 2,
+                                        onRemove = { item ->
+                                            val newList = fileChooserBlacklist.toMutableSet()
+                                            newList.remove(item)
+                                            fileChooserBlacklist = newList
+                                            KioskPrefs.setFileChooserBlacklist(context, newList)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("禁用网页全屏视频", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("默认允许网页视频进入全屏播放；开启后拒绝网页自定义全屏视图，防止覆盖浏览控制", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitFullscreenVideo,
+                                        onCheckedChange = {
+                                            limitFullscreenVideo = it
+                                            KioskPrefs.setLimitFullscreenVideoEnabled(context, it)
                                             onSandboxLimitsChanged()
                                         }
                                     )
@@ -5837,6 +5974,68 @@ fun WebViewProviderScreen(
 }
 
 private fun enabledLabel(enabled: Boolean): String = if (enabled) "开启" else "关闭"
+
+@Composable
+private fun PermissionBlacklistChips(
+    title: String,
+    items: Set<String>,
+    columns: Int,
+    onRemove: (String) -> Unit
+) {
+    if (items.isEmpty()) return
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+        title,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.primary
+    )
+    Spacer(modifier = Modifier.height(6.dp))
+    Column(
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        items.chunked(columns).forEach { rowItems ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                rowItems.forEach { item ->
+                    Row(
+                        modifier = Modifier
+                            .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.28f), shape = RoundedCornerShape(8.dp))
+                            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                            .weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = item,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "移除",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clickable { onRemove(item) }
+                        )
+                    }
+                }
+                repeat(columns - rowItems.size) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun DiagnosticItem(label: String, value: String) {

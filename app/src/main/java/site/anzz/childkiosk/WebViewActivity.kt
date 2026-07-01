@@ -140,6 +140,7 @@ class WebViewActivity : ComponentActivity() {
     private lateinit var runtimeConfig: WebViewRuntimeConfig
     private var pendingGeolocationRequest: PendingGeolocationRequest? = null
     private var geolocationPermissionDialog: AlertDialog? = null
+    private var pendingMediaPermissionRequest: PendingMediaPermissionRequest? = null
     private var pendingDownloadRequest: PendingDownloadRequest? = null
     private var downloadPermissionDialog: AlertDialog? = null
     private var bookmarkEditorView: ComposeView? = null
@@ -179,6 +180,12 @@ class WebViewActivity : ComponentActivity() {
         val callback: GeolocationPermissions.Callback
     )
 
+    private data class PendingMediaPermissionRequest(
+        val request: PermissionRequest,
+        val origin: String,
+        val resources: Array<String>
+    )
+
     private data class PendingDownloadRequest(
         val url: String,
         val userAgent: String?,
@@ -211,6 +218,12 @@ class WebViewActivity : ComponentActivity() {
             finishPendingGeolocationRequest(allow = false, retain = false)
             Toast.makeText(this, "未获得系统定位权限，网页无法获取位置", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private val mediaPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        finishPendingMediaPermissionRequest(permissions)
     }
 
     private val downloadStoragePermissionLauncher = registerForActivityResult(
@@ -344,6 +357,7 @@ class WebViewActivity : ComponentActivity() {
         geolocationPermissionDialog?.dismiss()
         geolocationPermissionDialog = null
         finishPendingGeolocationRequest(allow = false, retain = false)
+        cancelPendingMediaPermissionRequest()
         downloadPermissionDialog?.dismiss()
         downloadPermissionDialog = null
         pendingDownloadRequest = null
@@ -367,9 +381,60 @@ class WebViewActivity : ComponentActivity() {
         callback: ValueCallback<Array<Uri>>,
         params: WebChromeClient.FileChooserParams?
     ): Boolean {
+        val origin = currentPageOrigin()
+        val latestConfig = latestRuntimeConfig()
+        if (latestConfig.limitFileChooser) {
+            callback.onReceiveValue(null)
+            Toast.makeText(this, "网页文件选择功能已受限制", Toast.LENGTH_SHORT).show()
+            return true
+        }
+        if (isOriginBlacklisted(latestConfig.fileChooserBlacklist, origin)) {
+            callback.onReceiveValue(null)
+            Toast.makeText(this, "已拒绝该网站选择文件", Toast.LENGTH_SHORT).show()
+            return true
+        }
+
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = callback
 
+        showCustomComposeDialog {
+            BeautifulConfirmDialog(
+                title = "允许网站选择文件？",
+                message = "${displayOrigin(origin)} 正在请求打开系统文件选择器，用于上传图片、视频或其他文件。",
+                icon = Icons.Default.Info,
+                blacklistText = "拒绝且不再提示（加入黑名单）",
+                onNegative = {
+                    dismissCustomComposeDialog()
+                    fileChooserCallback = null
+                    callback.onReceiveValue(null)
+                },
+                onPositive = {
+                    dismissCustomComposeDialog()
+                    launchFileChooserIntent(callback, params)
+                },
+                onBlacklist = {
+                    dismissCustomComposeDialog()
+                    fileChooserCallback = null
+                    callback.onReceiveValue(null)
+                    if (origin.isNotBlank()) {
+                        addFileChooserOriginToBlacklist(origin)
+                        Toast.makeText(this@WebViewActivity, "已将该网站加入文件选择黑名单", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onDismiss = {
+                    dismissCustomComposeDialog()
+                    fileChooserCallback = null
+                    callback.onReceiveValue(null)
+                }
+            )
+        }
+        return true
+    }
+
+    private fun launchFileChooserIntent(
+        callback: ValueCallback<Array<Uri>>,
+        params: WebChromeClient.FileChooserParams?
+    ): Boolean {
         val intent = runCatching {
             params?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
@@ -398,16 +463,18 @@ class WebViewActivity : ComponentActivity() {
         callback: GeolocationPermissions.Callback?
     ) {
         if (callback == null) return
-        val siteName = displayOrigin(origin)
+        val normalizedOrigin = normalizePermissionOrigin(origin)
+        val siteName = displayOrigin(normalizedOrigin.ifBlank { origin })
+        val latestConfig = latestRuntimeConfig()
 
-        if (runtimeConfig.limitGeolocation) {
+        if (latestConfig.limitGeolocation) {
             callback.invoke(origin, false, false)
             Toast.makeText(this, "网页定位功能已受限制", Toast.LENGTH_SHORT).show()
             return
         }
 
-        if (origin != null && runtimeConfig.geolocationBlacklist.contains(origin)) {
-            Log.d("ChildKioskWebView", "Geolocation origin is in blacklist: $origin")
+        if (isOriginBlacklisted(latestConfig.geolocationBlacklist, normalizedOrigin)) {
+            Log.d("ChildKioskWebView", "Geolocation origin is in blacklist: $normalizedOrigin")
             callback.invoke(origin, false, false)
             return
         }
@@ -439,11 +506,8 @@ class WebViewActivity : ComponentActivity() {
                 onBlacklist = {
                     dismissCustomComposeDialog()
                     finishPendingGeolocationRequest(allow = false, retain = false)
-                    if (origin != null) {
-                        KioskPrefs.addGeolocationToBlacklist(this@WebViewActivity, origin)
-                        val currentList = runtimeConfig.geolocationBlacklist.toMutableSet()
-                        currentList.add(origin)
-                        runtimeConfig = runtimeConfig.copy(geolocationBlacklist = currentList)
+                    if (normalizedOrigin.isNotBlank()) {
+                        addGeolocationOriginToBlacklist(normalizedOrigin)
                         Toast.makeText(this@WebViewActivity, "已将该网址加入定位黑名单", Toast.LENGTH_SHORT).show()
                     }
                 },
@@ -455,13 +519,90 @@ class WebViewActivity : ComponentActivity() {
         }
     }
 
+    fun requestMediaPermission(request: PermissionRequest?) {
+        request ?: return
+        val origin = normalizePermissionOrigin(request.origin?.toString()).ifBlank { currentPageOrigin() }
+        val resources = request.resources.orEmpty().filter { resource ->
+            resource == PermissionRequest.RESOURCE_VIDEO_CAPTURE ||
+                resource == PermissionRequest.RESOURCE_AUDIO_CAPTURE
+        }.distinct().toTypedArray()
+        if (resources.isEmpty()) {
+            request.deny()
+            return
+        }
+
+        val latestConfig = latestRuntimeConfig()
+        val blockedByGlobal = resources.any { resource ->
+            when (resource) {
+                PermissionRequest.RESOURCE_VIDEO_CAPTURE -> latestConfig.limitCameraCapture
+                PermissionRequest.RESOURCE_AUDIO_CAPTURE -> latestConfig.limitMicrophoneCapture
+                else -> true
+            }
+        }
+        if (blockedByGlobal) {
+            request.deny()
+            Toast.makeText(this, "网页摄像头或麦克风功能已受限制", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val blockedBySite = resources.any { resource ->
+            when (resource) {
+                PermissionRequest.RESOURCE_VIDEO_CAPTURE -> isOriginBlacklisted(latestConfig.cameraBlacklist, origin)
+                PermissionRequest.RESOURCE_AUDIO_CAPTURE -> isOriginBlacklisted(latestConfig.microphoneBlacklist, origin)
+                else -> true
+            }
+        }
+        if (blockedBySite) {
+            request.deny()
+            Toast.makeText(this, "已拒绝该网站使用摄像头或麦克风", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        cancelPendingMediaPermissionRequest()
+        dismissCustomComposeDialog()
+        pendingMediaPermissionRequest = PendingMediaPermissionRequest(request, origin, resources)
+        val permissionNames = mediaPermissionNames(resources)
+
+        showCustomComposeDialog {
+            BeautifulConfirmDialog(
+                title = "允许网站使用$permissionNames？",
+                message = "${displayOrigin(origin)} 正在请求使用$permissionNames。仅在确认站点可信时允许。",
+                icon = Icons.Default.Info,
+                blacklistText = "拒绝且不再提示（加入黑名单）",
+                onNegative = {
+                    dismissCustomComposeDialog()
+                    cancelPendingMediaPermissionRequest()
+                },
+                onPositive = {
+                    dismissCustomComposeDialog()
+                    val missing = missingAndroidMediaPermissions(resources)
+                    if (missing.isEmpty()) {
+                        grantPendingMediaPermissionRequest()
+                    } else {
+                        requestAndroidMediaPermissions(missing)
+                    }
+                },
+                onBlacklist = {
+                    dismissCustomComposeDialog()
+                    denyPendingMediaPermissionRequest(addToBlacklist = true)
+                },
+                onDismiss = {
+                    dismissCustomComposeDialog()
+                    cancelPendingMediaPermissionRequest()
+                }
+            )
+        }
+    }
+
     internal fun handleCustomSchemeRedirect(urlStr: String, scheme: String) {
         dismissCustomComposeDialog()
+        val normalizedScheme = scheme.trim().removeSuffix("://").removeSuffix(":").lowercase(Locale.US)
+        if (normalizedScheme.isBlank()) return
 
         showCustomComposeDialog {
             BeautifulConfirmDialog(
                 title = "允许网页唤起外部应用？",
-                message = "网页正在请求打开第三方应用 (协议: $scheme://)。\n这可能会跳转至其他软件，请确认是否安全。",
+                message = "网页正在请求打开第三方应用 (协议: $normalizedScheme://)。\n这可能会跳转至其他软件，请确认是否安全。",
                 icon = Icons.Default.Share,
                 blacklistText = "拒绝且不再提示（加入黑名单）",
                 onNegative = {
@@ -479,11 +620,11 @@ class WebViewActivity : ComponentActivity() {
                 },
                 onBlacklist = {
                     dismissCustomComposeDialog()
-                    KioskPrefs.addSchemeToBlacklist(this@WebViewActivity, scheme)
+                    KioskPrefs.addSchemeToBlacklist(this@WebViewActivity, normalizedScheme)
                     val currentList = runtimeConfig.schemeBlacklist.toMutableSet()
-                    currentList.add(scheme)
+                    currentList.add(normalizedScheme)
                     runtimeConfig = runtimeConfig.copy(schemeBlacklist = currentList)
-                    Toast.makeText(this@WebViewActivity, "已将协议 [$scheme] 加入 Scheme 黑名单", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@WebViewActivity, "已将协议 [$normalizedScheme] 加入 Scheme 黑名单", Toast.LENGTH_SHORT).show()
                 },
                 onDismiss = {
                     dismissCustomComposeDialog()
@@ -562,10 +703,100 @@ class WebViewActivity : ComponentActivity() {
         }
     }
 
+    private fun requestAndroidMediaPermissions(permissions: Array<String>) {
+        runCatching {
+            mediaPermissionLauncher.launch(permissions)
+        }.onFailure { e ->
+            Log.w("ChildKioskWebView", "Media permission request failed", e)
+            cancelPendingMediaPermissionRequest()
+            Toast.makeText(this, "无法请求系统摄像头或麦克风权限", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun finishPendingGeolocationRequest(allow: Boolean, retain: Boolean) {
         val pending = pendingGeolocationRequest ?: return
         pendingGeolocationRequest = null
         pending.callback.invoke(pending.origin, allow, retain)
+    }
+
+    private fun finishPendingMediaPermissionRequest(grantedPermissions: Map<String, Boolean>) {
+        val pending = pendingMediaPermissionRequest ?: return
+        val allGranted = pending.resources.all { resource ->
+            when (resource) {
+                PermissionRequest.RESOURCE_VIDEO_CAPTURE ->
+                    hasCameraPermission() || grantedPermissions[Manifest.permission.CAMERA] == true
+                PermissionRequest.RESOURCE_AUDIO_CAPTURE ->
+                    hasMicrophonePermission() || grantedPermissions[Manifest.permission.RECORD_AUDIO] == true
+                else -> false
+            }
+        }
+        pendingMediaPermissionRequest = null
+        if (allGranted) {
+            pending.request.grant(pending.resources)
+        } else {
+            pending.request.deny()
+            Toast.makeText(this, "未获得系统摄像头或麦克风权限，网页无法使用该功能", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun cancelPendingMediaPermissionRequest() {
+        val pending = pendingMediaPermissionRequest ?: return
+        pendingMediaPermissionRequest = null
+        pending.request.deny()
+    }
+
+    private fun grantPendingMediaPermissionRequest() {
+        val pending = pendingMediaPermissionRequest ?: return
+        pendingMediaPermissionRequest = null
+        pending.request.grant(pending.resources)
+    }
+
+    private fun denyPendingMediaPermissionRequest(addToBlacklist: Boolean) {
+        val pending = pendingMediaPermissionRequest ?: return
+        pendingMediaPermissionRequest = null
+        pending.request.deny()
+        if (addToBlacklist && pending.origin.isNotBlank()) {
+            if (pending.resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) {
+                addCameraOriginToBlacklist(pending.origin)
+            }
+            if (pending.resources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {
+                addMicrophoneOriginToBlacklist(pending.origin)
+            }
+            Toast.makeText(this, "已将该网站加入摄像头/麦克风黑名单", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun missingAndroidMediaPermissions(resources: Array<String>): Array<String> {
+        return buildList {
+            if (resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE) && !hasCameraPermission()) {
+                add(Manifest.permission.CAMERA)
+            }
+            if (resources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE) && !hasMicrophonePermission()) {
+                add(Manifest.permission.RECORD_AUDIO)
+            }
+        }.toTypedArray()
+    }
+
+    private fun hasCameraPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun hasMicrophonePermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun mediaPermissionNames(resources: Array<String>): String {
+        val names = buildList {
+            if (resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) add("摄像头")
+            if (resources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) add("麦克风")
+        }
+        return names.joinToString("和").ifBlank { "媒体设备" }
     }
 
     private fun displayOrigin(origin: String?): String {
@@ -573,6 +804,62 @@ class WebViewActivity : ComponentActivity() {
         return runCatching {
             Uri.parse(origin).host?.takeIf { it.isNotBlank() } ?: origin
         }.getOrDefault(origin)
+    }
+
+    internal fun latestRuntimeConfig(): WebViewRuntimeConfig {
+        return runtimeConfig
+    }
+
+    private fun normalizePermissionOrigin(origin: String?): String {
+        return KioskPrefs.normalizeOriginKey(origin.orEmpty())
+    }
+
+    private fun currentPageOrigin(): String {
+        return originForWebStorage(rootWebView?.url.orEmpty()).orEmpty()
+    }
+
+    private fun isOriginBlacklisted(blacklist: Set<String>, origin: String): Boolean {
+        val normalized = normalizePermissionOrigin(origin)
+        if (normalized.isBlank()) return false
+        if (blacklist.contains(normalized)) return true
+        val host = runCatching { Uri.parse(normalized).host?.lowercase(Locale.US) }.getOrNull()
+        return host != null && blacklist.contains(host)
+    }
+
+    private fun addGeolocationOriginToBlacklist(origin: String) {
+        val normalized = normalizePermissionOrigin(origin)
+        if (normalized.isBlank()) return
+        KioskPrefs.addGeolocationToBlacklist(this, normalized)
+        val currentList = runtimeConfig.geolocationBlacklist.toMutableSet()
+        currentList.add(normalized)
+        runtimeConfig = runtimeConfig.copy(geolocationBlacklist = currentList)
+    }
+
+    private fun addCameraOriginToBlacklist(origin: String) {
+        val normalized = normalizePermissionOrigin(origin)
+        if (normalized.isBlank()) return
+        KioskPrefs.addCameraToBlacklist(this, normalized)
+        val currentList = runtimeConfig.cameraBlacklist.toMutableSet()
+        currentList.add(normalized)
+        runtimeConfig = runtimeConfig.copy(cameraBlacklist = currentList)
+    }
+
+    private fun addMicrophoneOriginToBlacklist(origin: String) {
+        val normalized = normalizePermissionOrigin(origin)
+        if (normalized.isBlank()) return
+        KioskPrefs.addMicrophoneToBlacklist(this, normalized)
+        val currentList = runtimeConfig.microphoneBlacklist.toMutableSet()
+        currentList.add(normalized)
+        runtimeConfig = runtimeConfig.copy(microphoneBlacklist = currentList)
+    }
+
+    private fun addFileChooserOriginToBlacklist(origin: String) {
+        val normalized = normalizePermissionOrigin(origin)
+        if (normalized.isBlank()) return
+        KioskPrefs.addFileChooserToBlacklist(this, normalized)
+        val currentList = runtimeConfig.fileChooserBlacklist.toMutableSet()
+        currentList.add(normalized)
+        runtimeConfig = runtimeConfig.copy(fileChooserBlacklist = currentList)
     }
 
     private fun requiresLegacyDownloadStoragePermission(): Boolean {
@@ -620,6 +907,11 @@ class WebViewActivity : ComponentActivity() {
     }
 
     fun enterFullscreenView(view: View?, callback: WebChromeClient.CustomViewCallback?) {
+        if (latestRuntimeConfig().limitFullscreenVideo) {
+            callback?.onCustomViewHidden()
+            Toast.makeText(this, "网页全屏视频已受限制", Toast.LENGTH_SHORT).show()
+            return
+        }
         if (view == null) {
             callback?.onCustomViewHidden()
             return
@@ -641,7 +933,7 @@ class WebViewActivity : ComponentActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         )
-        rootWebView?.visibility = View.GONE
+        rootWebView?.let { setWebViewVisible(it, false) }
         SystemUiHelper.enterImmersive(this)
     }
 
@@ -651,7 +943,7 @@ class WebViewActivity : ComponentActivity() {
         fullscreenView = null
         fullscreenCallback?.onCustomViewHidden()
         fullscreenCallback = null
-        rootWebView?.visibility = View.VISIBLE
+        rootWebView?.let { setWebViewVisible(it, true) }
         if (runtimeConfig.floatingBrowserControlsEnabled) {
             floatingControlsOverlay?.visibility = View.VISIBLE
             updateFloatingControlsState()
@@ -820,6 +1112,72 @@ class WebViewActivity : ComponentActivity() {
         ViewCompat.requestApplyInsets(root)
     }
 
+    private fun addWebViewToRoot(webView: WebView) {
+        val root = webViewRoot ?: return
+        if (webView.parent == root) return
+        (webView.parent as? ViewGroup)?.removeView(webView)
+        installPullToRefreshGesture(webView)
+        root.addView(
+            webView,
+            0,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+    }
+
+    private fun removeWebViewFromRoot(webView: WebView) {
+        (webView.parent as? ViewGroup)?.removeView(webView)
+    }
+
+    private fun setWebViewVisible(webView: WebView, visible: Boolean) {
+        webView.visibility = if (visible) View.VISIBLE else View.GONE
+    }
+
+    private fun installPullToRefreshGesture(webView: WebView) {
+        val touchSlop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+        val triggerDistance = (resources.displayMetrics.density * 96f).coerceAtLeast((touchSlop * 4).toFloat())
+        var downY = 0f
+        var tracking = false
+        var triggered = false
+        webView.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    downY = event.y
+                    tracking = latestRuntimeConfig().pullToRefreshEnabled &&
+                        fullscreenView == null &&
+                        !currentPageLoading &&
+                        !webView.canScrollVertically(-1)
+                    triggered = false
+                    false
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    if (
+                        tracking &&
+                        !triggered &&
+                        event.y - downY >= triggerDistance &&
+                        !webView.canScrollVertically(-1)
+                    ) {
+                        triggered = true
+                        tracking = false
+                        view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                        currentPageLoading = true
+                        webView.reload()
+                        updateFloatingControlsState(loading = true)
+                    }
+                    false
+                }
+                android.view.MotionEvent.ACTION_UP,
+                android.view.MotionEvent.ACTION_CANCEL -> {
+                    tracking = false
+                    false
+                }
+                else -> false
+            }
+        }
+    }
+
     private fun createNewTab(
         url: String,
         focus: Boolean = true,
@@ -920,19 +1278,12 @@ class WebViewActivity : ComponentActivity() {
         )
         tabList.add(tab)
         
-        webViewRoot?.addView(
-            webView,
-            0,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        )
+        addWebViewToRoot(webView)
         
         if (focus) {
             switchToTab(tab.id)
         } else {
-            webView.visibility = View.GONE
+            setWebViewVisible(webView, false)
         }
         
         if (existingWebView == null) {
@@ -951,7 +1302,7 @@ class WebViewActivity : ComponentActivity() {
         
         tabList.forEach { tab ->
             if (tab.id != tabId) {
-                tab.webView?.visibility = View.GONE
+                tab.webView?.let { setWebViewVisible(it, false) }
             }
         }
         
@@ -961,13 +1312,12 @@ class WebViewActivity : ComponentActivity() {
         if (targetTab.webView == null) {
             restoreTab(targetTab)
         } else {
-            targetTab.webView?.visibility = View.VISIBLE
+            targetTab.webView?.let { setWebViewVisible(it, true) }
         }
         
         rootWebView = targetTab.webView
         webViewStack.clear()
         targetTab.webView?.let { webViewStack.add(it) }
-        
         currentPageProgress = targetTab.progress
         currentPageLoading = targetTab.isLoading
         
@@ -989,7 +1339,7 @@ class WebViewActivity : ComponentActivity() {
         
         val webView = targetTab.webView
         if (webView != null) {
-            webViewRoot?.removeView(webView)
+            removeWebViewFromRoot(webView)
             runCatching {
                 webView.stopLoading()
                 webView.destroy()
@@ -1019,7 +1369,7 @@ class WebViewActivity : ComponentActivity() {
         webView.saveState(stateBundle)
         tab.savedState = stateBundle
         
-        webViewRoot?.removeView(webView)
+        removeWebViewFromRoot(webView)
         runCatching {
             webView.stopLoading()
             webView.destroy()
@@ -1117,14 +1467,7 @@ class WebViewActivity : ComponentActivity() {
         webViewRef = webView
         
         tab.webView = webView
-        webViewRoot?.addView(
-            webView,
-            0,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        )
+        addWebViewToRoot(webView)
         
         val state = tab.savedState
         if (state != null) {
@@ -1158,7 +1501,7 @@ class WebViewActivity : ComponentActivity() {
             Log.d("ChildKioskWebView", "Native back: destroy child webview, url=${removed.url}")
             destroyWebViewSafely(removed)
             rootWebView = webViewStack.lastOrNull()
-            rootWebView?.visibility = View.VISIBLE
+            rootWebView?.let { setWebViewVisible(it, true) }
             updateFloatingControlsState()
             return
         }
@@ -2149,17 +2492,25 @@ class WebViewActivity : ComponentActivity() {
         } catch (e: Exception) {
             ""
         }
+        val pageOrigin = originForWebStorage(url).orEmpty()
         val activeTab = activeTabId
         val currentAttemptedScheme = activeTab?.let { lastAttemptedSchemeMap[it] }
 
         showCustomComposeDialog {
             SiteInfoContent(
                 host = host,
+                origin = pageOrigin,
                 url = url,
                 currentAttemptedScheme = currentAttemptedScheme,
                 initialLimitGeolocation = runtimeConfig.limitGeolocation,
+                initialLimitCameraCapture = runtimeConfig.limitCameraCapture,
+                initialLimitMicrophoneCapture = runtimeConfig.limitMicrophoneCapture,
+                initialLimitFileChooser = runtimeConfig.limitFileChooser,
                 initialLimitCustomScheme = runtimeConfig.limitCustomScheme,
                 initialGeoBlacklist = runtimeConfig.geolocationBlacklist,
+                initialCameraBlacklist = runtimeConfig.cameraBlacklist,
+                initialMicrophoneBlacklist = runtimeConfig.microphoneBlacklist,
+                initialFileChooserBlacklist = runtimeConfig.fileChooserBlacklist,
                 initialSchemeBlacklist = runtimeConfig.schemeBlacklist,
                 onDismiss = { dismissCustomComposeDialog() },
                 onClearData = {
@@ -2179,6 +2530,18 @@ class WebViewActivity : ComponentActivity() {
                 onUpdateGeoBlacklist = { newSet ->
                     KioskPrefs.setGeolocationBlacklist(this@WebViewActivity, newSet)
                     runtimeConfig = runtimeConfig.copy(geolocationBlacklist = newSet)
+                },
+                onUpdateCameraBlacklist = { newSet ->
+                    KioskPrefs.setCameraBlacklist(this@WebViewActivity, newSet)
+                    runtimeConfig = runtimeConfig.copy(cameraBlacklist = newSet)
+                },
+                onUpdateMicrophoneBlacklist = { newSet ->
+                    KioskPrefs.setMicrophoneBlacklist(this@WebViewActivity, newSet)
+                    runtimeConfig = runtimeConfig.copy(microphoneBlacklist = newSet)
+                },
+                onUpdateFileChooserBlacklist = { newSet ->
+                    KioskPrefs.setFileChooserBlacklist(this@WebViewActivity, newSet)
+                    runtimeConfig = runtimeConfig.copy(fileChooserBlacklist = newSet)
                 },
                 onUpdateSchemeBlacklist = { newSet ->
                     KioskPrefs.setSchemeBlacklist(this@WebViewActivity, newSet)
@@ -2344,17 +2707,18 @@ private fun createSecureWebView(
                             activity.lastAttemptedSchemeMap[tabId] = scheme
                         }
                     }
+                    val latestConfig = (ctx as? WebViewActivity)?.latestRuntimeConfig() ?: runtimeConfig
                     val isNormalMode = KioskPrefs.getProtectionMode(ctx) == KioskPrefs.MODE_NONE
                     if (!isNormalMode) {
                         onBlocked(urlStr)
                         return true
                     }
-                    if (runtimeConfig.limitCustomScheme) {
+                    if (latestConfig.limitCustomScheme) {
                         Log.d("ChildKioskWebView", "Custom scheme redirect is disabled globally")
                         onBlocked(urlStr)
                         return true
                     }
-                    if (runtimeConfig.schemeBlacklist.contains(scheme)) {
+                    if (latestConfig.schemeBlacklist.contains(scheme)) {
                         Log.d("ChildKioskWebView", "Custom scheme is in blacklist: $scheme")
                         onBlocked(urlStr)
                         return true
@@ -2455,17 +2819,22 @@ private fun createSecureWebView(
             override fun onPermissionRequest(request: PermissionRequest?) {
                 if (request == null) return
                 val requested = request.resources.orEmpty()
-                val allowed = requested.filter { resource ->
-                    when (resource) {
-                        PermissionRequest.RESOURCE_VIDEO_CAPTURE,
-                        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> !runtimeConfig.limitMediaCapture
-                        else -> true
-                    }
-                }.toTypedArray()
-                if (allowed.isEmpty()) {
+                val hasKnownMediaRequest = requested.any { resource ->
+                    resource == PermissionRequest.RESOURCE_VIDEO_CAPTURE ||
+                        resource == PermissionRequest.RESOURCE_AUDIO_CAPTURE
+                }
+                val hasUnknownRequest = requested.any { resource ->
+                    resource != PermissionRequest.RESOURCE_VIDEO_CAPTURE &&
+                        resource != PermissionRequest.RESOURCE_AUDIO_CAPTURE
+                }
+                if (hasUnknownRequest || !hasKnownMediaRequest) {
+                    Log.d(
+                        "ChildKioskWebView",
+                        "Denied unsupported WebView permission request: ${requested.joinToString()}"
+                    )
                     request.deny()
                 } else {
-                    request.grant(allowed)
+                    (ctx as? WebViewActivity)?.requestMediaPermission(request) ?: request.deny()
                 }
             }
 
@@ -3119,21 +3488,33 @@ private fun BeautifulConfirmDialog(
 @Composable
 private fun SiteInfoContent(
     host: String,
+    origin: String,
     url: String,
     currentAttemptedScheme: String?,
     initialLimitGeolocation: Boolean,
+    initialLimitCameraCapture: Boolean,
+    initialLimitMicrophoneCapture: Boolean,
+    initialLimitFileChooser: Boolean,
     initialLimitCustomScheme: Boolean,
     initialGeoBlacklist: Set<String>,
+    initialCameraBlacklist: Set<String>,
+    initialMicrophoneBlacklist: Set<String>,
+    initialFileChooserBlacklist: Set<String>,
     initialSchemeBlacklist: Set<String>,
     onDismiss: () -> Unit,
     onClearData: () -> Unit,
     onUpdateGeoBlacklist: (Set<String>) -> Unit,
+    onUpdateCameraBlacklist: (Set<String>) -> Unit,
+    onUpdateMicrophoneBlacklist: (Set<String>) -> Unit,
+    onUpdateFileChooserBlacklist: (Set<String>) -> Unit,
     onUpdateSchemeBlacklist: (Set<String>) -> Unit
 ) {
     var geoBlacklist by remember { mutableStateOf(initialGeoBlacklist) }
+    var cameraBlacklist by remember { mutableStateOf(initialCameraBlacklist) }
+    var microphoneBlacklist by remember { mutableStateOf(initialMicrophoneBlacklist) }
+    var fileChooserBlacklist by remember { mutableStateOf(initialFileChooserBlacklist) }
     var schemeBlacklist by remember { mutableStateOf(initialSchemeBlacklist) }
-
-    val isGeoBlacklisted = geoBlacklist.contains(host)
+    val permissionOrigin = origin.ifBlank { host }
 
     Box(
         modifier = Modifier
@@ -3208,50 +3589,67 @@ private fun SiteInfoContent(
                 Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
                 Spacer(modifier = Modifier.height(16.dp))
 
-                Text(
-                    text = "定位权限 (Geolocation)",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                if (initialLimitGeolocation) {
-                    Text(
-                        text = "⚠️ 已被管理员在沙箱中全局禁用定位功能",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.error,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                } else {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
-                            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = if (isGeoBlacklisted) "彻底禁止并拉黑" else "允许网页询问定位",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Switch(
-                            checked = !isGeoBlacklisted,
-                            onCheckedChange = {
-                                val newSet = geoBlacklist.toMutableSet()
-                                if (!it) {
-                                    newSet.add(host)
-                                } else {
-                                    newSet.remove(host)
-                                }
-                                geoBlacklist = newSet
-                                onUpdateGeoBlacklist(newSet)
-                            }
-                        )
+                SitePermissionSwitchRow(
+                    title = "定位权限 (Geolocation)",
+                    allowedText = "允许网页询问定位",
+                    blockedText = "彻底禁止并拉黑",
+                    globallyBlockedText = "已被管理员在沙箱中全局禁用定位功能",
+                    origin = permissionOrigin,
+                    isGloballyBlocked = initialLimitGeolocation,
+                    blacklist = geoBlacklist,
+                    onUpdateBlacklist = {
+                        geoBlacklist = it
+                        onUpdateGeoBlacklist(it)
                     }
-                }
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                SitePermissionSwitchRow(
+                    title = "摄像头权限",
+                    allowedText = "允许网页询问摄像头",
+                    blockedText = "彻底禁止摄像头",
+                    globallyBlockedText = "已被管理员在沙箱中全局禁用摄像头",
+                    origin = permissionOrigin,
+                    isGloballyBlocked = initialLimitCameraCapture,
+                    blacklist = cameraBlacklist,
+                    onUpdateBlacklist = {
+                        cameraBlacklist = it
+                        onUpdateCameraBlacklist(it)
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                SitePermissionSwitchRow(
+                    title = "麦克风权限",
+                    allowedText = "允许网页询问麦克风",
+                    blockedText = "彻底禁止麦克风",
+                    globallyBlockedText = "已被管理员在沙箱中全局禁用麦克风",
+                    origin = permissionOrigin,
+                    isGloballyBlocked = initialLimitMicrophoneCapture,
+                    blacklist = microphoneBlacklist,
+                    onUpdateBlacklist = {
+                        microphoneBlacklist = it
+                        onUpdateMicrophoneBlacklist(it)
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                SitePermissionSwitchRow(
+                    title = "文件选择/上传",
+                    allowedText = "允许网页询问文件选择",
+                    blockedText = "彻底禁止文件选择",
+                    globallyBlockedText = "已被管理员在沙箱中全局禁用文件选择",
+                    origin = permissionOrigin,
+                    isGloballyBlocked = initialLimitFileChooser,
+                    blacklist = fileChooserBlacklist,
+                    onUpdateBlacklist = {
+                        fileChooserBlacklist = it
+                        onUpdateFileChooserBlacklist(it)
+                    }
+                )
 
                 Spacer(modifier = Modifier.height(20.dp))
 
@@ -3407,6 +3805,70 @@ private fun SiteInfoContent(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SitePermissionSwitchRow(
+    title: String,
+    allowedText: String,
+    blockedText: String,
+    globallyBlockedText: String,
+    origin: String,
+    isGloballyBlocked: Boolean,
+    blacklist: Set<String>,
+    onUpdateBlacklist: (Set<String>) -> Unit
+) {
+    val normalizedOrigin = KioskPrefs.normalizeOriginKey(origin)
+    val host = runCatching { Uri.parse(normalizedOrigin).host?.lowercase(Locale.US) }.getOrNull()
+    val isBlacklisted = normalizedOrigin.isNotBlank() &&
+        (blacklist.contains(normalizedOrigin) || (host != null && blacklist.contains(host)))
+
+    Text(
+        text = title,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.onSurface
+    )
+    Spacer(modifier = Modifier.height(6.dp))
+    if (isGloballyBlocked) {
+        Text(
+            text = "⚠️ $globallyBlockedText",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.error,
+            fontWeight = FontWeight.SemiBold
+        )
+        return
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = if (isBlacklisted) blockedText else allowedText,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        Switch(
+            checked = !isBlacklisted,
+            enabled = normalizedOrigin.isNotBlank(),
+            onCheckedChange = { checked ->
+                val newSet = blacklist.toMutableSet()
+                if (!checked) {
+                    newSet.add(normalizedOrigin)
+                } else {
+                    newSet.remove(normalizedOrigin)
+                    host?.let { newSet.remove(it) }
+                }
+                onUpdateBlacklist(newSet)
+            }
+        )
     }
 }
 

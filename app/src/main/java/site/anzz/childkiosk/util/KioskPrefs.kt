@@ -35,8 +35,12 @@ data class WebViewRuntimeConfig(
     val limitAdBlock: Boolean,
     val filterSnapshot: FilterRuntimeSnapshot,
     val limitSslCheck: Boolean,
-    val limitMediaCapture: Boolean,
+    val limitCameraCapture: Boolean,
+    val limitMicrophoneCapture: Boolean,
+    val limitFileChooser: Boolean,
+    val limitFullscreenVideo: Boolean,
     val limitDownload: Boolean,
+    val pullToRefreshEnabled: Boolean,
     val webDebugTool: String,
     val injectTimingMode: String,
     val vConsoleCdnUrl: String,
@@ -47,7 +51,10 @@ data class WebViewRuntimeConfig(
     val customJsInjectCode: String,
     val limitCustomScheme: Boolean,
     val schemeBlacklist: Set<String>,
-    val geolocationBlacklist: Set<String>
+    val geolocationBlacklist: Set<String>,
+    val cameraBlacklist: Set<String>,
+    val microphoneBlacklist: Set<String>,
+    val fileChooserBlacklist: Set<String>
 ) {
     fun toJson(): JSONObject {
         return JSONObject()
@@ -74,8 +81,13 @@ data class WebViewRuntimeConfig(
             .put("limitAdBlock", limitAdBlock)
             .put("filterSnapshot", filterSnapshot.toJson())
             .put("limitSslCheck", limitSslCheck)
-            .put("limitMediaCapture", limitMediaCapture)
+            .put("limitMediaCapture", limitCameraCapture || limitMicrophoneCapture)
+            .put("limitCameraCapture", limitCameraCapture)
+            .put("limitMicrophoneCapture", limitMicrophoneCapture)
+            .put("limitFileChooser", limitFileChooser)
+            .put("limitFullscreenVideo", limitFullscreenVideo)
             .put("limitDownload", limitDownload)
+            .put("pullToRefreshEnabled", pullToRefreshEnabled)
             .put("webDebugTool", webDebugTool)
             .put("injectTimingMode", injectTimingMode)
             .put("vConsoleCdnUrl", vConsoleCdnUrl)
@@ -87,6 +99,9 @@ data class WebViewRuntimeConfig(
             .put("limitCustomScheme", limitCustomScheme)
             .put("schemeBlacklist", org.json.JSONArray(schemeBlacklist))
             .put("geolocationBlacklist", org.json.JSONArray(geolocationBlacklist))
+            .put("cameraBlacklist", org.json.JSONArray(cameraBlacklist))
+            .put("microphoneBlacklist", org.json.JSONArray(microphoneBlacklist))
+            .put("fileChooserBlacklist", org.json.JSONArray(fileChooserBlacklist))
     }
 
     companion object {
@@ -120,8 +135,18 @@ data class WebViewRuntimeConfig(
                     if (json.has("filterSnapshot")) it else fallback.filterSnapshot
                 },
                 limitSslCheck = json.optBoolean("limitSslCheck", fallback.limitSslCheck),
-                limitMediaCapture = json.optBoolean("limitMediaCapture", fallback.limitMediaCapture),
+                limitCameraCapture = json.optBoolean(
+                    "limitCameraCapture",
+                    json.optBoolean("limitMediaCapture", fallback.limitCameraCapture)
+                ),
+                limitMicrophoneCapture = json.optBoolean(
+                    "limitMicrophoneCapture",
+                    json.optBoolean("limitMediaCapture", fallback.limitMicrophoneCapture)
+                ),
+                limitFileChooser = json.optBoolean("limitFileChooser", fallback.limitFileChooser),
+                limitFullscreenVideo = json.optBoolean("limitFullscreenVideo", fallback.limitFullscreenVideo),
                 limitDownload = json.optBoolean("limitDownload", fallback.limitDownload),
+                pullToRefreshEnabled = json.optBoolean("pullToRefreshEnabled", fallback.pullToRefreshEnabled),
                 webDebugTool = json.optString("webDebugTool", fallback.webDebugTool),
                 injectTimingMode = json.optString("injectTimingMode", fallback.injectTimingMode),
                 vConsoleCdnUrl = json.optString("vConsoleCdnUrl", fallback.vConsoleCdnUrl),
@@ -144,7 +169,28 @@ data class WebViewRuntimeConfig(
                         set.add(array.getString(i))
                     }
                     set
-                } ?: fallback.geolocationBlacklist
+                } ?: fallback.geolocationBlacklist,
+                cameraBlacklist = json.optJSONArray("cameraBlacklist")?.let { array ->
+                    val set = mutableSetOf<String>()
+                    for (i in 0 until array.length()) {
+                        set.add(array.getString(i))
+                    }
+                    set
+                } ?: fallback.cameraBlacklist,
+                microphoneBlacklist = json.optJSONArray("microphoneBlacklist")?.let { array ->
+                    val set = mutableSetOf<String>()
+                    for (i in 0 until array.length()) {
+                        set.add(array.getString(i))
+                    }
+                    set
+                } ?: fallback.microphoneBlacklist,
+                fileChooserBlacklist = json.optJSONArray("fileChooserBlacklist")?.let { array ->
+                    val set = mutableSetOf<String>()
+                    for (i in 0 until array.length()) {
+                        set.add(array.getString(i))
+                    }
+                    set
+                } ?: fallback.fileChooserBlacklist
             )
         }
     }
@@ -173,6 +219,12 @@ object KioskPrefs {
     private const val KEY_MAIN_TITLE_TEXT = "main_title_text"
     private const val KEY_HIDE_MAIN_TITLE = "hide_main_title"
     private const val KEY_FLOATING_BROWSER_CONTROLS_ENABLED = "floating_browser_controls_enabled"
+    private const val KEY_PULL_TO_REFRESH_ENABLED = "pull_to_refresh_enabled"
+    private const val KEY_LIMIT_MEDIA_CAPTURE_LEGACY = "limit_media_capture"
+    private const val KEY_LIMIT_CAMERA_CAPTURE = "limit_camera_capture"
+    private const val KEY_LIMIT_MICROPHONE_CAPTURE = "limit_microphone_capture"
+    private const val KEY_LIMIT_FILE_CHOOSER = "limit_file_chooser"
+    private const val KEY_LIMIT_FULLSCREEN_VIDEO = "limit_fullscreen_video"
     /** 屏幕固定软锁：调用 startLockTask() 触发系统「屏幕固定」，拦截 Home/最近任务。 */
     const val MODE_SOFT_LOCK = "SOFT_LOCK"
 
@@ -277,7 +329,12 @@ object KioskPrefs {
             .putBoolean("limit_ssl_check", true)
             .putBoolean("limit_multi_window", false)
             .putBoolean("limit_file_access", false)
-            .putBoolean("limit_media_capture", false)
+            .putBoolean(KEY_LIMIT_MEDIA_CAPTURE_LEGACY, false)
+            .putBoolean(KEY_LIMIT_CAMERA_CAPTURE, false)
+            .putBoolean(KEY_LIMIT_MICROPHONE_CAPTURE, false)
+            .putBoolean(KEY_LIMIT_FILE_CHOOSER, false)
+            .putBoolean(KEY_LIMIT_FULLSCREEN_VIDEO, false)
+            .putBoolean(KEY_PULL_TO_REFRESH_ENABLED, true)
             .putBoolean("third_party_cookies_enabled", true)
             .putBoolean("strict_mixed_content", false)
             .putBoolean("use_browser_user_agent", true)
@@ -318,7 +375,12 @@ object KioskPrefs {
             .putBoolean("limit_ssl_check", true)
             .putBoolean("limit_multi_window", true)
             .putBoolean("limit_file_access", true)
-            .putBoolean("limit_media_capture", true)
+            .putBoolean(KEY_LIMIT_MEDIA_CAPTURE_LEGACY, true)
+            .putBoolean(KEY_LIMIT_CAMERA_CAPTURE, true)
+            .putBoolean(KEY_LIMIT_MICROPHONE_CAPTURE, true)
+            .putBoolean(KEY_LIMIT_FILE_CHOOSER, true)
+            .putBoolean(KEY_LIMIT_FULLSCREEN_VIDEO, true)
+            .putBoolean(KEY_PULL_TO_REFRESH_ENABLED, true)
             .putBoolean("third_party_cookies_enabled", true)
             .putBoolean("strict_mixed_content", true)
             .putBoolean("use_browser_user_agent", true)
@@ -359,7 +421,12 @@ object KioskPrefs {
             .putBoolean("limit_ssl_check", false)
             .putBoolean("limit_multi_window", false)
             .putBoolean("limit_file_access", false)
-            .putBoolean("limit_media_capture", false)
+            .putBoolean(KEY_LIMIT_MEDIA_CAPTURE_LEGACY, false)
+            .putBoolean(KEY_LIMIT_CAMERA_CAPTURE, false)
+            .putBoolean(KEY_LIMIT_MICROPHONE_CAPTURE, false)
+            .putBoolean(KEY_LIMIT_FILE_CHOOSER, false)
+            .putBoolean(KEY_LIMIT_FULLSCREEN_VIDEO, false)
+            .putBoolean(KEY_PULL_TO_REFRESH_ENABLED, true)
             .putBoolean("third_party_cookies_enabled", true)
             .putBoolean("strict_mixed_content", false)
             .putBoolean("use_browser_user_agent", true)
@@ -558,8 +625,12 @@ object KioskPrefs {
                 snapshot.copy(enabled = isLimitAdBlockEnabled(context))
             },
             limitSslCheck = isLimitSslCheckEnabled(context),
-            limitMediaCapture = isLimitMediaCaptureEnabled(context),
+            limitCameraCapture = isLimitCameraCaptureEnabled(context),
+            limitMicrophoneCapture = isLimitMicrophoneCaptureEnabled(context),
+            limitFileChooser = isLimitFileChooserEnabled(context),
+            limitFullscreenVideo = isLimitFullscreenVideoEnabled(context),
             limitDownload = isLimitDownloadEnabled(context),
+            pullToRefreshEnabled = isPullToRefreshEnabled(context),
             webDebugTool = getWebDebugTool(context),
             injectTimingMode = getInjectTimingMode(context),
             vConsoleCdnUrl = getVConsoleCdnUrl(context),
@@ -570,7 +641,10 @@ object KioskPrefs {
             customJsInjectCode = getCustomJsInjectCode(context),
             limitCustomScheme = isLimitCustomSchemeEnabled(context),
             schemeBlacklist = getSchemeBlacklist(context),
-            geolocationBlacklist = getGeolocationBlacklist(context)
+            geolocationBlacklist = getGeolocationBlacklist(context),
+            cameraBlacklist = getCameraBlacklist(context),
+            microphoneBlacklist = getMicrophoneBlacklist(context),
+            fileChooserBlacklist = getFileChooserBlacklist(context)
         )
     }
 
@@ -641,6 +715,13 @@ object KioskPrefs {
             .putBoolean(KEY_WEBVIEW_TOP_PROGRESS_ENABLED, enabled)
             .remove(KEY_LEGACY_LIGHTWEIGHT_NATIVE_LOADING_INDICATOR_ENABLED)
             .apply()
+
+    fun isPullToRefreshEnabled(context: Context): Boolean {
+        return prefs(context).getBoolean(KEY_PULL_TO_REFRESH_ENABLED, true)
+    }
+
+    fun setPullToRefreshEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean(KEY_PULL_TO_REFRESH_ENABLED, enabled).apply()
 
     fun getLastCacheClearTime(context: Context): Long {
         return prefs(context).getLong("last_cache_clear_time", 0L)
@@ -728,36 +809,46 @@ object KioskPrefs {
         customEditor(context).putBoolean("limit_custom_scheme", enabled).apply()
 
     fun getSchemeBlacklist(context: Context): Set<String> {
-        return prefs(context).getStringSet("scheme_blacklist", emptySet()) ?: emptySet()
+        return normalizeStringSet(
+            prefs(context).getStringSet("scheme_blacklist", emptySet()) ?: emptySet(),
+            ::normalizeSchemeKey
+        )
     }
     fun setSchemeBlacklist(context: Context, list: Set<String>) {
-        prefs(context).edit().putStringSet("scheme_blacklist", list).apply()
+        prefs(context).edit()
+            .putStringSet("scheme_blacklist", normalizeStringSet(list, ::normalizeSchemeKey))
+            .apply()
     }
     fun addSchemeToBlacklist(context: Context, scheme: String) {
         val current = getSchemeBlacklist(context).toMutableSet()
-        current.add(scheme)
+        normalizeSchemeKey(scheme).takeIf { it.isNotBlank() }?.let { current.add(it) }
         setSchemeBlacklist(context, current)
     }
     fun removeSchemeFromBlacklist(context: Context, scheme: String) {
         val current = getSchemeBlacklist(context).toMutableSet()
-        current.remove(scheme)
+        current.remove(normalizeSchemeKey(scheme))
         setSchemeBlacklist(context, current)
     }
 
     fun getGeolocationBlacklist(context: Context): Set<String> {
-        return prefs(context).getStringSet("geolocation_blacklist", emptySet()) ?: emptySet()
+        return normalizeStringSet(
+            prefs(context).getStringSet("geolocation_blacklist", emptySet()) ?: emptySet(),
+            ::normalizeOriginKey
+        )
     }
     fun setGeolocationBlacklist(context: Context, list: Set<String>) {
-        prefs(context).edit().putStringSet("geolocation_blacklist", list).apply()
+        prefs(context).edit()
+            .putStringSet("geolocation_blacklist", normalizeStringSet(list, ::normalizeOriginKey))
+            .apply()
     }
     fun addGeolocationToBlacklist(context: Context, origin: String) {
         val current = getGeolocationBlacklist(context).toMutableSet()
-        current.add(origin)
+        normalizeOriginKey(origin).takeIf { it.isNotBlank() }?.let { current.add(it) }
         setGeolocationBlacklist(context, current)
     }
     fun removeGeolocationFromBlacklist(context: Context, origin: String) {
         val current = getGeolocationBlacklist(context).toMutableSet()
-        current.remove(origin)
+        current.remove(normalizeOriginKey(origin))
         setGeolocationBlacklist(context, current)
     }
 
@@ -773,9 +864,74 @@ object KioskPrefs {
     fun setLimitFileAccessEnabled(context: Context, enabled: Boolean) =
         customEditor(context).putBoolean("limit_file_access", enabled).apply()
 
-    fun isLimitMediaCaptureEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_media_capture", false)
+    fun isLimitMediaCaptureEnabled(context: Context): Boolean =
+        isLimitCameraCaptureEnabled(context) || isLimitMicrophoneCaptureEnabled(context)
+
     fun setLimitMediaCaptureEnabled(context: Context, enabled: Boolean) =
-        customEditor(context).putBoolean("limit_media_capture", enabled).apply()
+        customEditor(context)
+            .putBoolean(KEY_LIMIT_MEDIA_CAPTURE_LEGACY, enabled)
+            .putBoolean(KEY_LIMIT_CAMERA_CAPTURE, enabled)
+            .putBoolean(KEY_LIMIT_MICROPHONE_CAPTURE, enabled)
+            .apply()
+
+    fun isLimitCameraCaptureEnabled(context: Context): Boolean {
+        val storage = prefs(context)
+        return if (storage.contains(KEY_LIMIT_CAMERA_CAPTURE)) {
+            storage.getBoolean(KEY_LIMIT_CAMERA_CAPTURE, false)
+        } else {
+            storage.getBoolean(KEY_LIMIT_MEDIA_CAPTURE_LEGACY, false)
+        }
+    }
+    fun setLimitCameraCaptureEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean(KEY_LIMIT_CAMERA_CAPTURE, enabled).apply()
+
+    fun isLimitMicrophoneCaptureEnabled(context: Context): Boolean {
+        val storage = prefs(context)
+        return if (storage.contains(KEY_LIMIT_MICROPHONE_CAPTURE)) {
+            storage.getBoolean(KEY_LIMIT_MICROPHONE_CAPTURE, false)
+        } else {
+            storage.getBoolean(KEY_LIMIT_MEDIA_CAPTURE_LEGACY, false)
+        }
+    }
+    fun setLimitMicrophoneCaptureEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean(KEY_LIMIT_MICROPHONE_CAPTURE, enabled).apply()
+
+    fun isLimitFileChooserEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_LIMIT_FILE_CHOOSER, false)
+    fun setLimitFileChooserEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean(KEY_LIMIT_FILE_CHOOSER, enabled).apply()
+
+    fun isLimitFullscreenVideoEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_LIMIT_FULLSCREEN_VIDEO, false)
+    fun setLimitFullscreenVideoEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean(KEY_LIMIT_FULLSCREEN_VIDEO, enabled).apply()
+
+    fun getCameraBlacklist(context: Context): Set<String> =
+        getOriginBlacklist(context, "camera_blacklist")
+    fun setCameraBlacklist(context: Context, list: Set<String>) =
+        setOriginBlacklist(context, "camera_blacklist", list)
+    fun addCameraToBlacklist(context: Context, origin: String) =
+        addToOriginBlacklist(context, "camera_blacklist", origin)
+    fun removeCameraFromBlacklist(context: Context, origin: String) =
+        removeFromOriginBlacklist(context, "camera_blacklist", origin)
+
+    fun getMicrophoneBlacklist(context: Context): Set<String> =
+        getOriginBlacklist(context, "microphone_blacklist")
+    fun setMicrophoneBlacklist(context: Context, list: Set<String>) =
+        setOriginBlacklist(context, "microphone_blacklist", list)
+    fun addMicrophoneToBlacklist(context: Context, origin: String) =
+        addToOriginBlacklist(context, "microphone_blacklist", origin)
+    fun removeMicrophoneFromBlacklist(context: Context, origin: String) =
+        removeFromOriginBlacklist(context, "microphone_blacklist", origin)
+
+    fun getFileChooserBlacklist(context: Context): Set<String> =
+        getOriginBlacklist(context, "file_chooser_blacklist")
+    fun setFileChooserBlacklist(context: Context, list: Set<String>) =
+        setOriginBlacklist(context, "file_chooser_blacklist", list)
+    fun addFileChooserToBlacklist(context: Context, origin: String) =
+        addToOriginBlacklist(context, "file_chooser_blacklist", origin)
+    fun removeFileChooserFromBlacklist(context: Context, origin: String) =
+        removeFromOriginBlacklist(context, "file_chooser_blacklist", origin)
 
     fun isThirdPartyCookiesEnabled(context: Context): Boolean = prefs(context).getBoolean("third_party_cookies_enabled", true)
     fun setThirdPartyCookiesEnabled(context: Context, enabled: Boolean) =
@@ -883,6 +1039,65 @@ object KioskPrefs {
 
     fun setWhitelistSubscriptionLastError(context: Context, error: String) =
         prefs(context).edit().putString("whitelist_subscription_last_error", error).apply()
+
+    private fun getOriginBlacklist(context: Context, key: String): Set<String> {
+        return normalizeStringSet(
+            prefs(context).getStringSet(key, emptySet()) ?: emptySet(),
+            ::normalizeOriginKey
+        )
+    }
+
+    private fun setOriginBlacklist(context: Context, key: String, list: Set<String>) {
+        prefs(context).edit()
+            .putStringSet(key, normalizeStringSet(list, ::normalizeOriginKey))
+            .apply()
+    }
+
+    private fun addToOriginBlacklist(context: Context, key: String, origin: String) {
+        val normalized = normalizeOriginKey(origin)
+        if (normalized.isBlank()) return
+        val current = getOriginBlacklist(context, key).toMutableSet()
+        current.add(normalized)
+        setOriginBlacklist(context, key, current)
+    }
+
+    private fun removeFromOriginBlacklist(context: Context, key: String, origin: String) {
+        val current = getOriginBlacklist(context, key).toMutableSet()
+        current.remove(normalizeOriginKey(origin))
+        setOriginBlacklist(context, key, current)
+    }
+
+    private fun normalizeStringSet(
+        values: Set<String>,
+        normalizer: (String) -> String
+    ): Set<String> {
+        return values.mapNotNull { value ->
+            normalizer(value).takeIf { it.isNotBlank() }
+        }.toSet()
+    }
+
+    private fun normalizeSchemeKey(raw: String): String {
+        return raw.trim()
+            .removeSuffix("://")
+            .removeSuffix(":")
+            .lowercase()
+    }
+
+    fun normalizeOriginKey(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.isBlank()) return ""
+        return runCatching {
+            val uri = android.net.Uri.parse(trimmed)
+            val scheme = uri.scheme?.lowercase()?.takeIf { it == "http" || it == "https" }
+            val host = uri.host?.lowercase()
+            if (scheme != null && !host.isNullOrBlank()) {
+                val port = if (uri.port >= 0) ":${uri.port}" else ""
+                "$scheme://$host$port"
+            } else {
+                trimmed.lowercase()
+            }
+        }.getOrDefault(trimmed.lowercase())
+    }
 
     private fun customEditor(context: Context): SharedPreferences.Editor =
         prefs(context).edit().putString(KEY_QUICK_MODE, QUICK_MODE_CUSTOM)
