@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [0.2.31] - 2026-07-03
+
 ### Added — 新增
 
 - **系统 LocationManager 网页定位优化**：

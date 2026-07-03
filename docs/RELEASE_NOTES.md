@@ -1,6 +1,8 @@
-## Child Kiosk Browser Next
+## Child Kiosk Browser v0.2.31
 
 本轮新增的是系统 `LocationManager` 定位优化能力：功能默认关闭，由管理员在后台选择是否启用。它不接入高德、百度、腾讯、Google Play Services 等第三方定位 SDK，不新增后台定位权限，也不改变当前单版本 APK 构建方式。实际定位效果取决于设备、系统定位 provider、室内/户外环境和用户授权的是精确位置还是近似位置。
+
+> **说明**：本 APK 使用 debug 签名，仅供调试与家庭内部部署。生产/商用请自行用正式 keystore 重新签名。
 
 ### 本轮核心变化
 
