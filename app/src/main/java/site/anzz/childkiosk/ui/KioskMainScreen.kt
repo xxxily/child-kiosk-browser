@@ -50,7 +50,10 @@ import site.anzz.childkiosk.data.AppDatabase
 import site.anzz.childkiosk.data.SystemConfigEntity
 import site.anzz.childkiosk.data.WebAppEntity
 import site.anzz.childkiosk.util.KioskPrefs
+import site.anzz.childkiosk.util.WebAppIconCache
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.border
 
 data class WallpaperModel(
@@ -96,6 +99,7 @@ fun KioskMainScreen(
     
     var webApps by remember { mutableStateOf<List<WebAppEntity>>(emptyList()) }
     var selectedCategory by remember { mutableStateOf("ALL") }
+    val attemptedIconFreezes = remember { mutableSetOf<String>() }
 
     val isPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
     val screenHorizontalPadding = if (isPortrait) 10.dp else 24.dp
@@ -150,6 +154,25 @@ fun KioskMainScreen(
                 }
             }
             false
+        }
+    }
+
+    LaunchedEffect(webApps) {
+        val targets = webApps.mapNotNull { app ->
+            val iconPath = app.iconPath.orEmpty()
+            if (!WebAppIconCache.isNetworkIconUrl(iconPath)) return@mapNotNull null
+            val key = "${app.id}:$iconPath"
+            if (!attemptedIconFreezes.add(key)) return@mapNotNull null
+            app to iconPath
+        }
+        if (targets.isEmpty()) return@LaunchedEffect
+        withContext(Dispatchers.IO) {
+            targets.forEach { (app, iconPath) ->
+                val frozenIcon = WebAppIconCache.freezeNetworkIcon(context, iconPath, app.url)
+                if (frozenIcon != iconPath) {
+                    db.webAppDao().updateWebApp(app.copy(iconPath = frozenIcon))
+                }
+            }
         }
     }
 
@@ -565,16 +588,16 @@ fun AppGridItem(
         verticalArrangement = Arrangement.Center
     ) {
         val iconPath = app.iconPath ?: ""
-        val isNetworkIcon = iconPath.startsWith("http://", ignoreCase = true) || 
-                            iconPath.startsWith("https://", ignoreCase = true)
+        val isImageIcon = WebAppIconCache.isNetworkIconUrl(iconPath) ||
+            WebAppIconCache.isCachedIconPath(iconPath)
         
         Box(
             modifier = Modifier
                 .size(iconBoxSize)
                 .clip(RoundedCornerShape(iconBoxCornerRadius))
-                .background(if (isNetworkIcon) Color.Transparent else Color.White)
+                .background(if (isImageIcon) Color.Transparent else Color.White)
                 .run {
-                    if (!isNetworkIcon) {
+                    if (!isImageIcon) {
                         this.background(gradientBrush)
                     } else this
                 }
@@ -584,13 +607,14 @@ fun AppGridItem(
                 },
             contentAlignment = Alignment.Center
         ) {
-            if (isNetworkIcon) {
+            if (isImageIcon) {
                 NetworkWebIcon(
                     url = iconPath,
                     contentDescription = app.title,
                     referer = app.url,
                     modifier = Modifier.fillMaxSize(),
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    allowNetwork = !WebAppIconCache.isNetworkIconUrl(iconPath)
                 )
             } else {
                 Icon(

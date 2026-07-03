@@ -95,6 +95,7 @@ import site.anzz.childkiosk.util.NativeLocationManager
 import site.anzz.childkiosk.util.NativeLocationResult
 import site.anzz.childkiosk.util.SystemUiHelper
 import site.anzz.childkiosk.util.TimeLimiter
+import site.anzz.childkiosk.util.WebAppIconCache
 import site.anzz.childkiosk.util.WebViewRuntime
 import site.anzz.childkiosk.util.WebViewRuntimeConfig
 import site.anzz.childkiosk.util.WebViewPool
@@ -2663,6 +2664,7 @@ class WebViewActivity : ComponentActivity() {
                         onDismiss = { dismissBookmarkEditor() },
                         onSave = { savedTitle, savedUrl, icon, category ->
                             lifecycleScope.launch(Dispatchers.IO) {
+                                val frozenIcon = WebAppIconCache.freezeNetworkIcon(this@WebViewActivity, icon, savedUrl)
                                 val db = AppDatabase.getInstance(this@WebViewActivity)
                                 val existing = db.webAppDao().getAllWebApps().firstOrNull { app ->
                                     normalizeWhitelistWebUrl(app.url) == normalizeWhitelistWebUrl(savedUrl)
@@ -2672,7 +2674,7 @@ class WebViewActivity : ComponentActivity() {
                                         WebAppEntity(
                                             title = savedTitle,
                                             url = savedUrl,
-                                            iconPath = icon,
+                                            iconPath = frozenIcon,
                                             isPreset = false,
                                             isEnabled = true,
                                             category = category,
@@ -2684,7 +2686,7 @@ class WebViewActivity : ComponentActivity() {
                                         existing.copy(
                                             title = savedTitle,
                                             url = savedUrl,
-                                            iconPath = icon,
+                                            iconPath = frozenIcon,
                                             category = category,
                                             isEnabled = true
                                         )

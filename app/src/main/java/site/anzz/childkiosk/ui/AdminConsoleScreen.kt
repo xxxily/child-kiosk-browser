@@ -53,6 +53,7 @@ import site.anzz.childkiosk.util.HashUtils
 import site.anzz.childkiosk.util.KioskPrefs
 import site.anzz.childkiosk.util.NativeLocationManager
 import site.anzz.childkiosk.util.NativeLocationResult
+import site.anzz.childkiosk.util.WebAppIconCache
 import site.anzz.childkiosk.util.WebDataManager
 import site.anzz.childkiosk.util.WebDataStats
 import site.anzz.childkiosk.util.WebViewProviderDiagnostics
@@ -3380,13 +3381,14 @@ fun AdminConsoleScreen(
             },
             onSave = { title, url, icon, category ->
                 scope.launch(Dispatchers.IO) {
+                    val frozenIcon = WebAppIconCache.freezeNetworkIcon(context, icon, url)
                     if (appToEdit == null) {
                         db.webAppDao().insertWebApp(
-                            WebAppEntity(title = title, url = url, iconPath = icon, isPreset = false, category = category)
+                            WebAppEntity(title = title, url = url, iconPath = frozenIcon, isPreset = false, category = category)
                         )
                     } else {
                         db.webAppDao().updateWebApp(
-                            appToEdit.copy(title = title, url = url, iconPath = icon, category = category)
+                            appToEdit.copy(title = title, url = url, iconPath = frozenIcon, category = category)
                         )
                     }
                 }
@@ -5047,8 +5049,8 @@ fun WebAppCard(
         ) {
             // 左边显示图标
             val iconPath = app.iconPath ?: ""
-            val isNetworkIcon = iconPath.startsWith("http://", ignoreCase = true) || 
-                                iconPath.startsWith("https://", ignoreCase = true)
+            val isImageIcon = WebAppIconCache.isNetworkIconUrl(iconPath) ||
+                WebAppIconCache.isCachedIconPath(iconPath)
             Box(
                 modifier = Modifier
                     .size(48.dp)
@@ -5056,13 +5058,14 @@ fun WebAppCard(
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
-                if (isNetworkIcon) {
+                if (isImageIcon) {
                     NetworkWebIcon(
                         url = iconPath,
                         contentDescription = app.title,
                         referer = app.url,
                         modifier = Modifier.fillMaxSize(),
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        allowNetwork = !WebAppIconCache.isNetworkIconUrl(iconPath)
                     )
                 } else {
                     val iconVector = getIconVector(iconPath)
@@ -5426,16 +5429,17 @@ fun AddEditWebAppDialog(
     var urlInput by remember { mutableStateOf(app?.url ?: initialUrl) }
     var category by remember { mutableStateOf(app?.category ?: initialCategory) }
     
-    // 如果已有应用且 iconPath 是网络地址，初始化 customIconUrl，否则为空
-    var customIconUrl by remember { 
-        mutableStateOf(if (app?.iconPath?.startsWith("http", ignoreCase = true) == true) app.iconPath else "") 
+    val initialIconPath = app?.iconPath.orEmpty()
+    // 已冻结到本地的自定义图标不暴露内部缓存路径，仍保留 selectedIcon 作为真实保存值。
+    var customIconUrl by remember {
+        mutableStateOf(if (WebAppIconCache.isNetworkIconUrl(initialIconPath)) initialIconPath else "")
     }
     var selectedIcon by remember { mutableStateOf(app?.iconPath ?: "icon_gamepad") }
     var discoveredIcons by remember { mutableStateOf<List<WebIconCandidate>>(emptyList()) }
     var failedIconUrls by remember { mutableStateOf<Set<String>>(emptySet()) }
     var isDiscoveringIcons by remember { mutableStateOf(false) }
     var iconDiscoveryMessage by remember { mutableStateOf<String?>(null) }
-    var lastAutoIconUrl by remember { mutableStateOf(if (WebIconDiscovery.isNetworkIconUrl(app?.iconPath)) app?.iconPath.orEmpty() else "") }
+    var lastAutoIconUrl by remember { mutableStateOf(if (WebAppIconCache.isNetworkIconUrl(app?.iconPath)) app?.iconPath.orEmpty() else "") }
     
     var isCheckingUrl by remember { mutableStateOf(false) }
     var urlError by remember { mutableStateOf<String?>(null) }
@@ -5453,7 +5457,7 @@ fun AddEditWebAppDialog(
     fun markCandidateLoadFailed(candidate: WebIconCandidate) {
         val newFailed = failedIconUrls + candidate.url
         failedIconUrls = newFailed
-        if (selectedIcon == candidate.url) {
+        if (app == null && selectedIcon == candidate.url) {
             val replacement = discoveredIcons.firstOrNull { it.url !in newFailed }
             if (replacement != null) {
                 selectNetworkIcon(replacement.url)
@@ -5475,9 +5479,8 @@ fun AddEditWebAppDialog(
         delay(350)
         val formatted = formatUrl(trimmed)
         val previousAutoIconUrl = lastAutoIconUrl
-        val canAutoReplace = app == null ||
-            customIconUrl == previousAutoIconUrl ||
-            selectedIcon == previousAutoIconUrl
+        val canAutoReplace = app == null &&
+            (customIconUrl == previousAutoIconUrl || selectedIcon == previousAutoIconUrl)
 
         isDiscoveringIcons = true
         val candidates = WebIconDiscovery.discover(context, formatted)
@@ -5489,9 +5492,6 @@ fun AddEditWebAppDialog(
             iconDiscoveryMessage = "已找到 ${candidates.size} 个网站图标"
             if (canAutoReplace) {
                 selectNetworkIcon(best.url)
-                if (selectedIcon == "icon_gamepad" || selectedIcon == previousAutoIconUrl || WebIconDiscovery.isNetworkIconUrl(selectedIcon)) {
-                    selectedIcon = best.url
-                }
             }
         } else {
             iconDiscoveryMessage = "未找到可用网站图标，可手动填写图标地址"
@@ -5512,7 +5512,11 @@ fun AddEditWebAppDialog(
     }
 
     val visibleDiscoveredIcons = discoveredIcons.filterNot { it.url in failedIconUrls }
-    val isCustomSelected = WebIconDiscovery.isNetworkIconUrl(selectedIcon)
+    val isCustomSelected = WebAppIconCache.isNetworkIconUrl(selectedIcon) ||
+        WebAppIconCache.isCachedIconPath(selectedIcon)
+    val previewIconPath = customIconUrl.trim().ifBlank {
+        selectedIcon.takeIf { WebAppIconCache.isCachedIconPath(it) }.orEmpty()
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -5696,6 +5700,8 @@ fun AddEditWebAppDialog(
                                     .clickable {
                                         if (customIconUrl.trim().isNotEmpty()) {
                                             selectedIcon = customIconUrl.trim()
+                                        } else if (WebAppIconCache.isCachedIconPath(selectedIcon)) {
+                                            selectedIcon = selectedIcon
                                         } else {
                                             val fallbackIcon = WebIconDiscovery.defaultFaviconUrl(urlInput)
                                                 ?: "https://assets.anzz.site/favicon.ico"
@@ -5709,6 +5715,8 @@ fun AddEditWebAppDialog(
                                     onClick = {
                                         if (customIconUrl.trim().isNotEmpty()) {
                                             selectedIcon = customIconUrl.trim()
+                                        } else if (WebAppIconCache.isCachedIconPath(selectedIcon)) {
+                                            selectedIcon = selectedIcon
                                         } else {
                                             val fallbackIcon = WebIconDiscovery.defaultFaviconUrl(urlInput)
                                                 ?: "https://assets.anzz.site/favicon.ico"
@@ -5841,9 +5849,9 @@ fun AddEditWebAppDialog(
                                         .background(MaterialTheme.colorScheme.surface),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    if (customIconUrl.trim().isNotEmpty()) {
+                                    if (previewIconPath.isNotEmpty()) {
                                         NetworkWebIcon(
-                                            url = customIconUrl.trim(),
+                                            url = previewIconPath,
                                             contentDescription = "预览",
                                             referer = urlInput,
                                             modifier = Modifier.fillMaxSize(),

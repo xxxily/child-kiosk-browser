@@ -35,6 +35,7 @@ import site.anzz.childkiosk.ui.KioskMainScreen
 import site.anzz.childkiosk.ui.theme.ChildKioskTheme
 import site.anzz.childkiosk.util.KioskPrefs
 import site.anzz.childkiosk.util.SystemUiHelper
+import site.anzz.childkiosk.util.WebAppIconCache
 import site.anzz.childkiosk.util.WebViewPool
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.platform.LocalContext
@@ -250,6 +251,7 @@ class MainActivity : ComponentActivity() {
                             onSave = { title, url, icon, category ->
                                 val existingApp = request.app
                                 scope.launch(Dispatchers.IO) {
+                                    val frozenIcon = WebAppIconCache.freezeNetworkIcon(this@MainActivity, icon, url)
                                     if (existingApp == null) {
                                         val existing = db.webAppDao().getAllWebApps().firstOrNull { app ->
                                             normalizeWebUrlForCompare(app.url) == normalizeWebUrlForCompare(url)
@@ -259,7 +261,7 @@ class MainActivity : ComponentActivity() {
                                                 WebAppEntity(
                                                     title = title,
                                                     url = url,
-                                                    iconPath = icon,
+                                                    iconPath = frozenIcon,
                                                     isPreset = false,
                                                     isEnabled = true,
                                                     category = category,
@@ -271,7 +273,7 @@ class MainActivity : ComponentActivity() {
                                                 existing.copy(
                                                     title = title,
                                                     url = url,
-                                                    iconPath = icon,
+                                                    iconPath = frozenIcon,
                                                     category = category,
                                                     isEnabled = true
                                                 )
@@ -279,7 +281,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     } else {
                                         db.webAppDao().updateWebApp(
-                                            existingApp.copy(title = title, url = url, iconPath = icon, category = category)
+                                            existingApp.copy(title = title, url = url, iconPath = frozenIcon, category = category)
                                         )
                                     }
                                 }
