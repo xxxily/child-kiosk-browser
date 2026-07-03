@@ -69,6 +69,9 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.webkit.ScriptHandler
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import site.anzz.childkiosk.data.AppDatabase
 import site.anzz.childkiosk.data.BrowserHistoryEntity
 import site.anzz.childkiosk.data.SystemConfigEntity
@@ -87,6 +90,9 @@ import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsState
 import site.anzz.childkiosk.util.AdBlocker
 import site.anzz.childkiosk.util.HashUtils
 import site.anzz.childkiosk.util.KioskPrefs
+import site.anzz.childkiosk.util.NativeLocationError
+import site.anzz.childkiosk.util.NativeLocationManager
+import site.anzz.childkiosk.util.NativeLocationResult
 import site.anzz.childkiosk.util.SystemUiHelper
 import site.anzz.childkiosk.util.TimeLimiter
 import site.anzz.childkiosk.util.WebViewRuntime
@@ -105,12 +111,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.json.JSONTokener
 import java.lang.ref.WeakReference
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
+import java.util.WeakHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -134,6 +143,9 @@ private object FilterBlockLogLimiter {
 private const val ACTION_SHOW_CURRENT_PAGE_FILTERS = "show_current_page_filter_events"
 private const val CURRENT_PAGE_FILTER_EVENT_LIMIT = 80
 private const val CURRENT_PAGE_COSMETIC_EVENT_LIMIT = 120
+private const val MAX_NATIVE_LOCATION_WATCHES_PER_WEBVIEW = 3
+private val nativeLocationDocumentScripts =
+    Collections.synchronizedMap(WeakHashMap<WebView, ScriptHandler>())
 private const val COSMETIC_HIT_TEST_LIMIT = 120
 
 private class PullToRefreshIndicatorView(context: Context) : View(context) {
@@ -379,6 +391,7 @@ class WebViewActivity : ComponentActivity() {
     private var lastRecordedHistoryAtMs: Long = 0L
     private lateinit var runtimeConfig: WebViewRuntimeConfig
     private var pendingGeolocationRequest: PendingGeolocationRequest? = null
+    private var pendingNativeLocationPermissionRequest: PendingNativeLocationPermissionRequest? = null
     private var geolocationPermissionDialog: AlertDialog? = null
     private var pendingMediaPermissionRequest: PendingMediaPermissionRequest? = null
     private var pendingDownloadRequest: PendingDownloadRequest? = null
@@ -389,7 +402,11 @@ class WebViewActivity : ComponentActivity() {
     private val currentPageFilterDiagnostics = ConcurrentHashMap<String, MutablePageFilterDiagnostics>()
     private val webViewFilterTabIds = ConcurrentHashMap<WebView, String>()
     private val pullToRefreshPageOptOut = ConcurrentHashMap<WebView, Boolean>()
+    private val nativeLocationBridgeWatchIds = ConcurrentHashMap<String, String>()
+    private val nativeLocationBridgeNativeRequestIds = ConcurrentHashMap<String, String>()
+    private val nativeLocationBridgeWebViewRequests = ConcurrentHashMap<WebView, MutableSet<String>>()
     private val filterControlsUpdateScheduled = AtomicBoolean(false)
+    private val nativeLocationManager by lazy { NativeLocationManager(this) }
 
     private fun showCustomComposeDialog(content: @Composable () -> Unit) {
         val root = webViewRoot ?: return
@@ -422,6 +439,11 @@ class WebViewActivity : ComponentActivity() {
     private data class PendingGeolocationRequest(
         val origin: String?,
         val callback: GeolocationPermissions.Callback
+    )
+
+    private data class PendingNativeLocationPermissionRequest(
+        val onGranted: () -> Unit,
+        val onDenied: () -> Unit
     )
 
     private data class PendingMediaPermissionRequest(
@@ -458,8 +480,14 @@ class WebViewActivity : ComponentActivity() {
             permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
         if (granted) {
             finishPendingGeolocationRequest(allow = true, retain = true)
+            val pendingNative = pendingNativeLocationPermissionRequest
+            pendingNativeLocationPermissionRequest = null
+            pendingNative?.onGranted?.invoke()
         } else {
             finishPendingGeolocationRequest(allow = false, retain = false)
+            val pendingNative = pendingNativeLocationPermissionRequest
+            pendingNativeLocationPermissionRequest = null
+            pendingNative?.onDenied?.invoke()
             Toast.makeText(this, "未获得系统定位权限，网页无法获取位置", Toast.LENGTH_SHORT).show()
         }
     }
@@ -589,6 +617,11 @@ class WebViewActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+    override fun onStop() {
+        stopAllNativeLocationRequests("activity_stop")
+        super.onStop()
+    }
+
     override fun onDestroy() {
         timeLimitJob?.cancel()
         timeLimitJob = null
@@ -601,6 +634,8 @@ class WebViewActivity : ComponentActivity() {
         geolocationPermissionDialog?.dismiss()
         geolocationPermissionDialog = null
         finishPendingGeolocationRequest(allow = false, retain = false)
+        pendingNativeLocationPermissionRequest?.onDenied?.invoke()
+        pendingNativeLocationPermissionRequest = null
         cancelPendingMediaPermissionRequest()
         downloadPermissionDialog?.dismiss()
         downloadPermissionDialog = null
@@ -612,6 +647,10 @@ class WebViewActivity : ComponentActivity() {
         tabList.forEach { tab ->
             tab.webView?.let { destroyWebViewSafely(it) }
         }
+        nativeLocationManager.stopAll()
+        nativeLocationBridgeWatchIds.clear()
+        nativeLocationBridgeNativeRequestIds.clear()
+        nativeLocationBridgeWebViewRequests.clear()
         tabList.clear()
         webViewStack.clear()
         floatingControlsOverlay = null
@@ -949,6 +988,28 @@ class WebViewActivity : ComponentActivity() {
         }
     }
 
+    private fun requestAndroidLocationPermissionForNativeLocation(
+        onGranted: () -> Unit,
+        onDenied: () -> Unit
+    ) {
+        pendingNativeLocationPermissionRequest?.onDenied?.invoke()
+        pendingNativeLocationPermissionRequest = PendingNativeLocationPermissionRequest(onGranted, onDenied)
+        runCatching {
+            locationPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        }.onFailure { e ->
+            Log.w("ChildKioskLocation", "Native location permission request failed", e)
+            val pending = pendingNativeLocationPermissionRequest
+            pendingNativeLocationPermissionRequest = null
+            pending?.onDenied?.invoke()
+            Toast.makeText(this, "无法请求系统定位权限", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun requestAndroidMediaPermissions(permissions: Array<String>) {
         runCatching {
             mediaPermissionLauncher.launch(permissions)
@@ -1106,6 +1167,416 @@ class WebViewActivity : ComponentActivity() {
         val currentList = runtimeConfig.fileChooserBlacklist.toMutableSet()
         currentList.add(normalized)
         runtimeConfig = runtimeConfig.copy(fileChooserBlacklist = currentList)
+    }
+
+    private fun addNativeLocationBridgeAllowedOrigin(origin: String) {
+        val normalized = normalizePermissionOrigin(origin)
+        if (normalized.isBlank()) return
+        KioskPrefs.addNativeLocationBridgeAllowedOrigin(this, normalized)
+        val currentList = runtimeConfig.nativeLocationBridgeAllowedOrigins.toMutableSet()
+        currentList.add(normalized)
+        runtimeConfig = runtimeConfig.copy(nativeLocationBridgeAllowedOrigins = currentList)
+    }
+
+    fun nativeLocationDiagnosticSummary(): String = nativeLocationManager.diagnosticSummary()
+
+    fun requestNativeLocationForAdmin(callback: (NativeLocationResult) -> Unit) {
+        val runRequest: () -> Unit = {
+            nativeLocationManager.requestSingleLocation(
+                config = runtimeConfig.copy(nativeLocationOptimizationEnabled = true),
+                timeoutMs = runtimeConfig.nativeLocationRequestTimeoutMs,
+                allowCached = true,
+                purpose = "admin_test",
+                callback = callback
+            )
+        }
+        if (hasLocationPermission()) {
+            runRequest()
+        } else {
+            requestAndroidLocationPermissionForNativeLocation(
+                onGranted = { runRequest() },
+                onDenied = {
+                    callback(
+                        NativeLocationResult(
+                            success = false,
+                            error = NativeLocationError.PERMISSION_DENIED,
+                            message = "未获得系统定位权限"
+                        )
+                    )
+                }
+            )
+        }
+    }
+
+    private fun maybeWarmupNativeLocation(url: String?) {
+        val latestConfig = latestRuntimeConfig()
+        if (!latestConfig.nativeLocationOptimizationEnabled || !latestConfig.nativeLocationWarmupEnabled) return
+        if (latestConfig.limitGeolocation) return
+        val origin = normalizePermissionOrigin(originForWebStorage(url.orEmpty()).orEmpty())
+        if (origin.isBlank()) return
+        if (isOriginBlacklisted(latestConfig.geolocationBlacklist, origin)) return
+        if (!hasLocationPermission()) return
+        nativeLocationManager.warmup(latestConfig, origin) { result ->
+            Log.d("ChildKioskLocation", "Warmup result: ${result.toDiagnosticLine(redactCoordinates = true)}")
+        }
+    }
+
+    private fun stopAllNativeLocationRequests(reason: String) {
+        nativeLocationBridgeWebViewRequests.keys.toList().forEach { webView ->
+            clearNativeLocationBridgeRequests(webView)
+        }
+        nativeLocationBridgeWatchIds.clear()
+        nativeLocationBridgeNativeRequestIds.clear()
+        nativeLocationManager.stopAll()
+        Log.d("ChildKioskLocation", "Stopped native location requests: $reason")
+    }
+
+    private fun requestNativeLocationBridgePermission(
+        webView: WebView,
+        origin: String,
+        onAllowed: () -> Unit,
+        onDenied: (NativeLocationError, String) -> Unit
+    ) {
+        val normalizedOrigin = normalizePermissionOrigin(origin)
+        val latestConfig = latestRuntimeConfig()
+        if (!latestConfig.nativeLocationOptimizationEnabled || !latestConfig.nativeLocationBridgeEnabled) {
+            onDenied(NativeLocationError.PERMISSION_DENIED, "原生定位托管未开启")
+            return
+        }
+        if (latestConfig.limitGeolocation) {
+            onDenied(NativeLocationError.PERMISSION_DENIED, "网页定位功能已受限制")
+            return
+        }
+        val currentOrigin = normalizePermissionOrigin(originForWebStorage(webView.url.orEmpty()).orEmpty())
+        if (currentOrigin.isBlank() || currentOrigin != normalizedOrigin) {
+            onDenied(NativeLocationError.PERMISSION_DENIED, "定位请求来源与当前页面不一致")
+            return
+        }
+        if (normalizedOrigin.isBlank() || isOriginBlacklisted(latestConfig.geolocationBlacklist, normalizedOrigin)) {
+            onDenied(NativeLocationError.PERMISSION_DENIED, "该网站已被禁止获取位置")
+            return
+        }
+        if (latestConfig.nativeLocationBridgeAllowedOrigins.contains(normalizedOrigin)) {
+            onAllowed()
+            return
+        }
+
+        finishPendingGeolocationRequest(allow = false, retain = false)
+        geolocationPermissionDialog?.dismiss()
+        dismissCustomComposeDialog()
+
+        val siteName = displayOrigin(normalizedOrigin)
+        showCustomComposeDialog {
+            BeautifulConfirmDialog(
+                title = "允许原生定位托管？",
+                message = "$siteName 正在通过系统 LocationManager 请求位置。仅在确认站点可信时允许；允许后会加入原生定位托管允许列表。",
+                icon = Icons.Default.LocationOn,
+                blacklistText = "拒绝且不再提示（加入黑名单）",
+                onNegative = {
+                    dismissCustomComposeDialog()
+                    onDenied(NativeLocationError.PERMISSION_DENIED, "用户拒绝原生定位托管")
+                },
+                onPositive = {
+                    dismissCustomComposeDialog()
+                    addNativeLocationBridgeAllowedOrigin(normalizedOrigin)
+                    onAllowed()
+                },
+                onBlacklist = {
+                    dismissCustomComposeDialog()
+                    addGeolocationOriginToBlacklist(normalizedOrigin)
+                    Toast.makeText(this@WebViewActivity, "已将该网址加入定位黑名单", Toast.LENGTH_SHORT).show()
+                    onDenied(NativeLocationError.PERMISSION_DENIED, "该网站已加入定位黑名单")
+                },
+                onDismiss = {
+                    dismissCustomComposeDialog()
+                    onDenied(NativeLocationError.PERMISSION_DENIED, "用户取消原生定位托管")
+                }
+            )
+        }
+    }
+
+    internal fun nativeLocationBridgeGetCurrentPosition(
+        webView: WebView,
+        requestId: String,
+        origin: String,
+        timeoutMs: Long?,
+        maximumAgeMs: Long?
+    ) {
+        if (requestId.isBlank()) return
+        registerNativeLocationBridgeRequest(webView, requestId)
+        val runRequest: () -> Unit = runRequest@{
+            if (!isNativeLocationBridgeRequestActive(webView, requestId)) return@runRequest
+            val latestConfig = latestRuntimeConfig()
+            val requestConfig = latestConfig.copy(
+                nativeLocationRequestTimeoutMs = timeoutMs?.coerceIn(1_000L, 60_000L)
+                    ?: latestConfig.nativeLocationRequestTimeoutMs,
+                nativeLocationMaxCacheAgeMs = maximumAgeMs?.coerceIn(0L, 10 * 60_000L)
+                    ?: latestConfig.nativeLocationMaxCacheAgeMs
+            )
+            val nativeRequestId = nativeLocationManager.requestSingleLocation(
+                config = requestConfig,
+                timeoutMs = requestConfig.nativeLocationRequestTimeoutMs,
+                allowCached = true,
+                purpose = "bridge_get:$origin"
+            ) { result ->
+                nativeLocationBridgeNativeRequestIds.remove(requestId)
+                dispatchNativeLocationBridgeResult(webView, requestId, result)
+                unregisterNativeLocationBridgeRequest(webView, requestId)
+            }
+            if (nativeRequestId.isNotBlank()) {
+                nativeLocationBridgeNativeRequestIds[requestId] = nativeRequestId
+            }
+        }
+        requestNativeLocationBridgePermission(
+            webView = webView,
+            origin = origin,
+            onAllowed = {
+                if (hasLocationPermission()) {
+                    runRequest()
+                } else {
+                    requestAndroidLocationPermissionForNativeLocation(
+                        onGranted = runRequest,
+                        onDenied = {
+                            dispatchNativeLocationBridgeResult(
+                                webView,
+                                requestId,
+                                NativeLocationResult(
+                                    success = false,
+                                    error = NativeLocationError.PERMISSION_DENIED,
+                                    message = "未获得系统定位权限"
+                                )
+                            )
+                            unregisterNativeLocationBridgeRequest(webView, requestId)
+                        }
+                    )
+                }
+            },
+            onDenied = { error, message ->
+                dispatchNativeLocationBridgeResult(
+                    webView,
+                    requestId,
+                    NativeLocationResult(success = false, error = error, message = message)
+                )
+                unregisterNativeLocationBridgeRequest(webView, requestId)
+            }
+        )
+    }
+
+    internal fun nativeLocationBridgeStartWatch(
+        webView: WebView,
+        requestId: String,
+        origin: String
+    ) {
+        if (requestId.isBlank()) return
+        val currentWatchCount = nativeLocationBridgeWebViewRequests[webView]
+            ?.count { nativeLocationBridgeWatchIds.containsKey(it) }
+            ?: 0
+        if (currentWatchCount >= MAX_NATIVE_LOCATION_WATCHES_PER_WEBVIEW) {
+            dispatchNativeLocationBridgeResult(
+                webView = webView,
+                requestId = requestId,
+                result = NativeLocationResult(
+                    success = false,
+                    error = NativeLocationError.PROVIDER_UNAVAILABLE,
+                    message = "watchPosition 数量已达到上限"
+                ),
+                isWatch = true,
+                requireActive = false
+            )
+            return
+        }
+        registerNativeLocationBridgeRequest(webView, requestId)
+        val runRequest: () -> Unit = runRequest@{
+            if (!isNativeLocationBridgeRequestActive(webView, requestId)) return@runRequest
+            val watchId = nativeLocationManager.startWatch(latestRuntimeConfig()) { result ->
+                dispatchNativeLocationBridgeResult(webView, requestId, result, isWatch = true)
+                if (!result.success) {
+                    nativeLocationBridgeWatchIds.remove(requestId)?.let { nativeId ->
+                        nativeLocationManager.cancelRequest(nativeId)
+                    }
+                    unregisterNativeLocationBridgeRequest(webView, requestId)
+                }
+            }
+            if (watchId.isNotBlank()) {
+                nativeLocationBridgeWatchIds[requestId] = watchId
+            } else {
+                unregisterNativeLocationBridgeRequest(webView, requestId)
+            }
+        }
+        requestNativeLocationBridgePermission(
+            webView = webView,
+            origin = origin,
+            onAllowed = {
+                if (hasLocationPermission()) {
+                    runRequest()
+                } else {
+                    requestAndroidLocationPermissionForNativeLocation(
+                        onGranted = runRequest,
+                        onDenied = {
+                            dispatchNativeLocationBridgeResult(
+                                webView,
+                                requestId,
+                                NativeLocationResult(
+                                    success = false,
+                                    error = NativeLocationError.PERMISSION_DENIED,
+                                    message = "未获得系统定位权限"
+                                ),
+                                isWatch = true
+                            )
+                            unregisterNativeLocationBridgeRequest(webView, requestId)
+                        }
+                    )
+                }
+            },
+            onDenied = { error, message ->
+                dispatchNativeLocationBridgeResult(
+                    webView,
+                    requestId,
+                    NativeLocationResult(success = false, error = error, message = message),
+                    isWatch = true
+                )
+                unregisterNativeLocationBridgeRequest(webView, requestId)
+            }
+        )
+    }
+
+    internal fun nativeLocationBridgeClearWatch(webView: WebView, requestId: String) {
+        if (requestId.isBlank()) return
+        unregisterNativeLocationBridgeRequest(webView, requestId)
+        nativeLocationBridgeNativeRequestIds.remove(requestId)?.let { nativeId ->
+            nativeLocationManager.cancelRequest(nativeId)
+        }
+        nativeLocationBridgeWatchIds.remove(requestId)?.let { nativeId ->
+            nativeLocationManager.cancelRequest(nativeId)
+        }
+    }
+
+    internal fun handleNativeLocationBridgeMessage(
+        webView: WebView,
+        rawMessage: String?,
+        sourceOrigin: Uri,
+        isMainFrame: Boolean
+    ) {
+        if (!isMainFrame) {
+            Log.w("ChildKioskLocation", "Rejected native location request from iframe: $sourceOrigin")
+            return
+        }
+        val request = parseNativeLocationBridgeRequest(rawMessage) ?: return
+        val normalizedSourceOrigin = normalizePermissionOrigin(sourceOrigin.toString())
+        if (normalizedSourceOrigin.isBlank() || normalizedSourceOrigin != request.origin) {
+            dispatchNativeLocationBridgeResult(
+                webView = webView,
+                requestId = request.id,
+                result = NativeLocationResult(
+                    success = false,
+                    error = NativeLocationError.PERMISSION_DENIED,
+                    message = "定位请求来源不可信"
+                ),
+                isWatch = request.type == "watchPosition",
+                requireActive = false
+            )
+            return
+        }
+        when (request.type) {
+            "getCurrentPosition" -> nativeLocationBridgeGetCurrentPosition(
+                webView = webView,
+                requestId = request.id,
+                origin = request.origin,
+                timeoutMs = request.timeoutMs,
+                maximumAgeMs = request.maximumAgeMs
+            )
+            "watchPosition" -> nativeLocationBridgeStartWatch(
+                webView = webView,
+                requestId = request.id,
+                origin = request.origin
+            )
+            "clearWatch" -> nativeLocationBridgeClearWatch(webView, request.id)
+        }
+    }
+
+    private fun parseNativeLocationBridgeRequest(rawMessage: String?): NativeLocationBridgeRequest? {
+        return runCatching {
+            val obj = JSONObject(rawMessage.orEmpty())
+            val id = obj.optString("id", "").take(80)
+            if (id.isBlank()) return@runCatching null
+            NativeLocationBridgeRequest(
+                type = obj.optString("type", ""),
+                id = id,
+                origin = normalizePermissionOrigin(obj.optString("origin", "")),
+                timeoutMs = obj.optLongOrNull("timeout"),
+                maximumAgeMs = obj.optLongOrNull("maximumAge")
+            )
+        }.getOrNull()
+    }
+
+    private fun registerNativeLocationBridgeRequest(webView: WebView, requestId: String) {
+        nativeLocationBridgeWebViewRequests.getOrPut(webView) { mutableSetOf() }.add(requestId)
+    }
+
+    private fun unregisterNativeLocationBridgeRequest(webView: WebView, requestId: String) {
+        nativeLocationBridgeWebViewRequests[webView]?.remove(requestId)
+    }
+
+    private fun isNativeLocationBridgeRequestActive(webView: WebView, requestId: String): Boolean {
+        return nativeLocationBridgeWebViewRequests[webView]?.contains(requestId) == true
+    }
+
+    internal fun clearNativeLocationBridgeRequests(webView: WebView) {
+        nativeLocationBridgeWebViewRequests.remove(webView)?.forEach { requestId ->
+            nativeLocationBridgeNativeRequestIds.remove(requestId)?.let { nativeId ->
+                nativeLocationManager.cancelRequest(nativeId)
+            }
+            nativeLocationBridgeWatchIds.remove(requestId)?.let { nativeId ->
+                nativeLocationManager.cancelRequest(nativeId)
+            }
+        }
+    }
+
+    private fun dispatchNativeLocationBridgeResult(
+        webView: WebView,
+        requestId: String,
+        result: NativeLocationResult,
+        isWatch: Boolean = false,
+        requireActive: Boolean = true
+    ) {
+        if (requireActive && nativeLocationBridgeWebViewRequests[webView]?.contains(requestId) != true) return
+        val payload = nativeLocationBridgePayload(requestId, result, isWatch)
+        val js = "window.__ChildKioskNativeLocation && window.__ChildKioskNativeLocation.dispatch($payload);"
+        webView.post {
+            if (webView.url.isNullOrBlank()) return@post
+            webView.evaluateJavascript(js, null)
+        }
+    }
+
+    private fun nativeLocationBridgePayload(
+        requestId: String,
+        result: NativeLocationResult,
+        isWatch: Boolean
+    ): String {
+        val obj = JSONObject()
+            .put("id", requestId)
+            .put("watch", isWatch)
+            .put("success", result.success)
+        if (result.success) {
+            val coords = JSONObject()
+                .put("latitude", result.latitude)
+                .put("longitude", result.longitude)
+                .put("accuracy", result.accuracyMeters ?: 0.0)
+                .put("altitude", result.altitude ?: JSONObject.NULL)
+                .put("altitudeAccuracy", JSONObject.NULL)
+                .put("heading", result.bearing ?: JSONObject.NULL)
+                .put("speed", result.speed ?: JSONObject.NULL)
+            obj.put("coords", coords)
+            obj.put("timestamp", result.wallTimeMillis ?: System.currentTimeMillis())
+        } else {
+            obj.put("errorCode", when (result.error) {
+                NativeLocationError.PERMISSION_DENIED -> 1
+                NativeLocationError.TIMEOUT -> 3
+                else -> 2
+            })
+            obj.put("message", result.message.ifBlank { result.error?.name ?: "定位失败" })
+        }
+        return obj.toString()
     }
 
     private fun requiresLegacyDownloadStoragePermission(): Boolean {
@@ -1654,8 +2125,9 @@ class WebViewActivity : ComponentActivity() {
             onPageCommitted = { pageUrl, pageTitle ->
                 recordBrowserHistory(pageUrl, pageTitle)
             },
-            onPageStartedInActivity = { webView, _ ->
+            onPageStartedInActivity = { webView, pageUrl ->
                 pullToRefreshPageOptOut[webView] = false
+                maybeWarmupNativeLocation(pageUrl)
             },
             onPageFinishedInActivity = { webView, pageUrl ->
                 updatePullToRefreshPagePolicy(webView, pageUrl)
@@ -1759,6 +2231,7 @@ class WebViewActivity : ComponentActivity() {
         
         val webView = targetTab.webView
         if (webView != null) {
+            clearNativeLocationBridgeRequests(webView)
             unregisterFilterDiagnosticsWebView(webView)
             removeWebViewFromRoot(webView)
             runCatching {
@@ -1792,6 +2265,7 @@ class WebViewActivity : ComponentActivity() {
         
         removeWebViewFromRoot(webView)
         runCatching {
+            clearNativeLocationBridgeRequests(webView)
             webView.stopLoading()
             webView.destroy()
         }
@@ -1860,8 +2334,9 @@ class WebViewActivity : ComponentActivity() {
             onPageCommitted = { pageUrl, pageTitle ->
                 recordBrowserHistory(pageUrl, pageTitle)
             },
-            onPageStartedInActivity = { webView, _ ->
+            onPageStartedInActivity = { webView, pageUrl ->
                 pullToRefreshPageOptOut[webView] = false
+                maybeWarmupNativeLocation(pageUrl)
             },
             onPageFinishedInActivity = { webView, pageUrl ->
                 updatePullToRefreshPagePolicy(webView, pageUrl)
@@ -1928,6 +2403,7 @@ class WebViewActivity : ComponentActivity() {
         if (webViewStack.size > 1) {
             val removed = webViewStack.removeLast()
             Log.d("ChildKioskWebView", "Native back: destroy child webview, url=${removed.url}")
+            clearNativeLocationBridgeRequests(removed)
             destroyWebViewSafely(removed)
             rootWebView = webViewStack.lastOrNull()
             rootWebView?.let { setWebViewVisible(it, true) }
@@ -3099,7 +3575,10 @@ class WebViewActivity : ComponentActivity() {
                 initialLimitMicrophoneCapture = runtimeConfig.limitMicrophoneCapture,
                 initialLimitFileChooser = runtimeConfig.limitFileChooser,
                 initialLimitCustomScheme = runtimeConfig.limitCustomScheme,
+                initialNativeLocationBridgeEnabled = runtimeConfig.nativeLocationOptimizationEnabled &&
+                    runtimeConfig.nativeLocationBridgeEnabled,
                 initialGeoBlacklist = runtimeConfig.geolocationBlacklist,
+                initialNativeLocationAllowedOrigins = runtimeConfig.nativeLocationBridgeAllowedOrigins,
                 initialCameraBlacklist = runtimeConfig.cameraBlacklist,
                 initialMicrophoneBlacklist = runtimeConfig.microphoneBlacklist,
                 initialFileChooserBlacklist = runtimeConfig.fileChooserBlacklist,
@@ -3122,6 +3601,10 @@ class WebViewActivity : ComponentActivity() {
                 onUpdateGeoBlacklist = { newSet ->
                     KioskPrefs.setGeolocationBlacklist(this@WebViewActivity, newSet)
                     runtimeConfig = runtimeConfig.copy(geolocationBlacklist = newSet)
+                },
+                onUpdateNativeLocationAllowedOrigins = { newSet ->
+                    KioskPrefs.setNativeLocationBridgeAllowedOrigins(this@WebViewActivity, newSet)
+                    runtimeConfig = runtimeConfig.copy(nativeLocationBridgeAllowedOrigins = newSet)
                 },
                 onUpdateCameraBlacklist = { newSet ->
                     KioskPrefs.setCameraBlacklist(this@WebViewActivity, newSet)
@@ -3182,6 +3665,7 @@ private fun createSecureWebView(
         WebViewRuntime.applySettings(this, ctx, targetUrl, runtimeConfig)
         WebViewRuntime.logWebViewDiagnostics(ctx, "create_secure_webview", targetUrl, runtimeConfig)
         logWebViewSurfaceState(this, "created_after_settings")
+        installNativeLocationBridgeIfNeeded(this, ctx, runtimeConfig)
 
         // 仅在网页未加载完成时设置暖色底色以防止白屏；已加载完的实例直接使用白色底色
         val initialBgColor = if (existingWebView != null && existingWebView.progress == 100) {
@@ -3207,6 +3691,8 @@ private fun createSecureWebView(
                 }
                 onNavigationStateChanged()
                 if (view != null) {
+                    (ctx as? WebViewActivity)?.clearNativeLocationBridgeRequests(view)
+                    injectNativeLocationBridgeIfNeeded(view, runtimeConfig)
                     injectPageScripts(view, ctx, runtimeConfig, "PAGE_STARTED")
                 }
             }
@@ -3230,6 +3716,7 @@ private fun createSecureWebView(
                             clearInitialBlankHistory(view, url)
                         }
                     }
+                    injectNativeLocationBridgeIfNeeded(view, runtimeConfig)
                     injectPageScripts(view, ctx, runtimeConfig, "PAGE_FINISHED")
                     onPageFinishedInActivity(view, url)
                 }
@@ -3399,6 +3886,7 @@ private fun createSecureWebView(
             ): Boolean {
                 Log.e("ChildKioskWebView", "Renderer process gone! Did crash: ${detail?.didCrash()}")
                 view?.let {
+                    (ctx as? WebViewActivity)?.clearNativeLocationBridgeRequests(it)
                     destroyWebViewSafely(it)
                 }
                 Toast.makeText(ctx, "网页渲染进程异常退出，正在尝试重构页面", Toast.LENGTH_SHORT).show()
@@ -3413,6 +3901,7 @@ private fun createSecureWebView(
                 onNavigationStateChanged()
                 if (newProgress >= 100) {
                     view?.postDelayed({
+                        injectNativeLocationBridgeIfNeeded(view, runtimeConfig)
                         injectPageScripts(view, ctx, runtimeConfig, "BOTH")
                         onLoadingStateChanged(false)
                         onNavigationStateChanged()
@@ -3738,6 +4227,229 @@ private fun injectPageScripts(
     injectCustomScriptIfNeeded(webView, config, currentTiming)
 }
 
+private fun installNativeLocationBridgeIfNeeded(
+    webView: WebView,
+    context: Context,
+    config: WebViewRuntimeConfig
+) {
+    if (!config.nativeLocationOptimizationEnabled || !config.nativeLocationBridgeEnabled || config.limitGeolocation) {
+        runCatching { WebViewCompat.removeWebMessageListener(webView, "ChildKioskNativeLocation") }
+        removeNativeLocationDocumentScript(webView)
+        return
+    }
+    val activity = context as? WebViewActivity ?: return
+    if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+        Log.w("ChildKioskLocation", "Native location bridge disabled: WebMessage listener unsupported")
+        return
+    }
+    runCatching {
+        WebViewCompat.removeWebMessageListener(webView, "ChildKioskNativeLocation")
+        WebViewCompat.addWebMessageListener(
+            webView,
+            "ChildKioskNativeLocation",
+            setOf("*")
+        ) { sourceWebView, message, sourceOrigin, isMainFrame, _ ->
+            activity.handleNativeLocationBridgeMessage(
+                webView = sourceWebView,
+                rawMessage = message.data,
+                sourceOrigin = sourceOrigin,
+                isMainFrame = isMainFrame
+            )
+        }
+    }.onFailure { e ->
+        Log.w("ChildKioskLocation", "Install native location bridge failed", e)
+        return
+    }
+    installNativeLocationDocumentScriptIfSupported(webView)
+}
+
+private fun injectNativeLocationBridgeIfNeeded(
+    webView: WebView,
+    config: WebViewRuntimeConfig
+) {
+    if (!config.nativeLocationOptimizationEnabled || !config.nativeLocationBridgeEnabled || config.limitGeolocation) {
+        return
+    }
+    val pageUrl = webView.url.orEmpty()
+    if (!WebViewRuntime.isWebUrl(pageUrl)) return
+    webView.evaluateJavascript(nativeLocationBridgeScript(), null)
+}
+
+private fun installNativeLocationDocumentScriptIfSupported(webView: WebView) {
+    if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
+    if (nativeLocationDocumentScripts.containsKey(webView)) return
+    runCatching {
+        WebViewCompat.addDocumentStartJavaScript(
+            webView,
+            nativeLocationBridgeScript(),
+            setOf("*")
+        )
+    }.onSuccess { handler ->
+        nativeLocationDocumentScripts[webView] = handler
+    }.onFailure { e ->
+        Log.w("ChildKioskLocation", "Install document-start native location script failed", e)
+    }
+}
+
+private fun removeNativeLocationDocumentScript(webView: WebView) {
+    nativeLocationDocumentScripts.remove(webView)?.let { handler ->
+        runCatching { handler.remove() }
+    }
+}
+
+private fun nativeLocationBridgeScript(): String {
+    val js = """
+        (function() {
+            if (window.__ChildKioskNativeLocation && window.__ChildKioskNativeLocation.installed) return 'already';
+            var bridge = window.ChildKioskNativeLocation;
+            if (!bridge || !bridge.postMessage) return 'missing_bridge';
+            var original = navigator.geolocation || {};
+            var callbacks = {};
+            var watches = {};
+            var seq = 1;
+
+            function post(type, payload) {
+                payload = payload || {};
+                payload.type = type;
+                bridge.postMessage(JSON.stringify(payload));
+            }
+
+            function normalizeOptions(options) {
+                options = options || {};
+                var timeout = Number(options.timeout);
+                var maximumAge = Number(options.maximumAge);
+                return {
+                    timeout: isFinite(timeout) && timeout > 0 ? Math.floor(timeout) : null,
+                    maximumAge: isFinite(maximumAge) && maximumAge >= 0 ? Math.floor(maximumAge) : null
+                };
+            }
+
+            function makePosition(data) {
+                var coords = data.coords || {};
+                return {
+                    coords: {
+                        latitude: Number(coords.latitude),
+                        longitude: Number(coords.longitude),
+                        accuracy: Number(coords.accuracy || 0),
+                        altitude: coords.altitude === null || typeof coords.altitude === 'undefined' ? null : Number(coords.altitude),
+                        altitudeAccuracy: coords.altitudeAccuracy === null || typeof coords.altitudeAccuracy === 'undefined' ? null : Number(coords.altitudeAccuracy),
+                        heading: coords.heading === null || typeof coords.heading === 'undefined' ? null : Number(coords.heading),
+                        speed: coords.speed === null || typeof coords.speed === 'undefined' ? null : Number(coords.speed)
+                    },
+                    timestamp: Number(data.timestamp || Date.now())
+                };
+            }
+
+            function makeError(data) {
+                var err = {
+                    code: Number(data.errorCode || 2),
+                    message: String(data.message || '定位失败')
+                };
+                err.PERMISSION_DENIED = 1;
+                err.POSITION_UNAVAILABLE = 2;
+                err.TIMEOUT = 3;
+                return err;
+            }
+
+            window.__ChildKioskNativeLocation = {
+                installed: true,
+                dispatch: function(payload) {
+                    try {
+                        var data = typeof payload === 'string' ? JSON.parse(payload) : payload;
+                        if (!data || !data.id) return;
+                        var store = data.watch ? watches : callbacks;
+                        var entry = store[data.id];
+                        if (!entry) return;
+                        if (!data.watch) delete store[data.id];
+                        if (data.success) {
+                            entry.success(makePosition(data));
+                        } else {
+                            entry.error(makeError(data));
+                        }
+                    } catch (e) {
+                        if (window.console && console.warn) console.warn('Native location dispatch failed', e);
+                    }
+                },
+                fallback: original
+            };
+
+            var geolocation = {
+                getCurrentPosition: function(success, error, options) {
+                    var id = 'g' + (seq++);
+                    callbacks[id] = {
+                        success: typeof success === 'function' ? success : function() {},
+                        error: typeof error === 'function' ? error : function() {}
+                    };
+                    var opts = normalizeOptions(options);
+                    post('getCurrentPosition', {
+                        id: id,
+                        origin: String(location.origin || ''),
+                        timeout: opts.timeout,
+                        maximumAge: opts.maximumAge
+                    });
+                },
+                watchPosition: function(success, error, options) {
+                    var id = 'w' + (seq++);
+                    watches[id] = {
+                        success: typeof success === 'function' ? success : function() {},
+                        error: typeof error === 'function' ? error : function() {}
+                    };
+                    post('watchPosition', {
+                        id: id,
+                        origin: String(location.origin || '')
+                    });
+                    return id;
+                },
+                clearWatch: function(id) {
+                    id = String(id || '');
+                    if (!id) return;
+                    delete watches[id];
+                    post('clearWatch', {
+                        id: id,
+                        origin: String(location.origin || '')
+                    });
+                }
+            };
+            try {
+                Object.defineProperty(navigator, 'geolocation', {
+                    configurable: true,
+                    enumerable: true,
+                    get: function() { return geolocation; }
+                });
+            } catch (defineError) {
+                try {
+                    if (navigator.geolocation) {
+                        navigator.geolocation.getCurrentPosition = geolocation.getCurrentPosition;
+                        navigator.geolocation.watchPosition = geolocation.watchPosition;
+                        navigator.geolocation.clearWatch = geolocation.clearWatch;
+                    } else {
+                        navigator.geolocation = geolocation;
+                    }
+                } catch (patchError) {
+                    if (window.console && console.warn) console.warn('Native location patch failed', patchError);
+                    return 'patch_failed';
+                }
+            }
+            return 'installed';
+        })();
+    """.trimIndent()
+    return js
+}
+
+private data class NativeLocationBridgeRequest(
+    val type: String,
+    val id: String,
+    val origin: String,
+    val timeoutMs: Long?,
+    val maximumAgeMs: Long?
+)
+
+private fun JSONObject.optLongOrNull(name: String): Long? {
+    if (!has(name) || isNull(name)) return null
+    val value = optLong(name, Long.MIN_VALUE)
+    return value.takeIf { it != Long.MIN_VALUE }
+}
+
 private fun injectCosmeticCssIfNeeded(
     webView: WebView,
     config: WebViewRuntimeConfig
@@ -3885,6 +4597,9 @@ private fun destroyWebViewSafely(webView: WebView) {
         webView.webChromeClient = null
         webView.webViewClient = WebViewClient()
         runCatching { webView.removeJavascriptInterface("ChildKioskDebugBridge") }
+        runCatching { webView.removeJavascriptInterface("ChildKioskNativeLocationBridge") }
+        runCatching { WebViewCompat.removeWebMessageListener(webView, "ChildKioskNativeLocation") }
+        removeNativeLocationDocumentScript(webView)
         webView.loadUrl("about:blank")
         webView.clearHistory()
         (webView.parent as? ViewGroup)?.removeView(webView)
@@ -4476,7 +5191,9 @@ private fun SiteInfoContent(
     initialLimitMicrophoneCapture: Boolean,
     initialLimitFileChooser: Boolean,
     initialLimitCustomScheme: Boolean,
+    initialNativeLocationBridgeEnabled: Boolean,
     initialGeoBlacklist: Set<String>,
+    initialNativeLocationAllowedOrigins: Set<String>,
     initialCameraBlacklist: Set<String>,
     initialMicrophoneBlacklist: Set<String>,
     initialFileChooserBlacklist: Set<String>,
@@ -4484,12 +5201,14 @@ private fun SiteInfoContent(
     onDismiss: () -> Unit,
     onClearData: () -> Unit,
     onUpdateGeoBlacklist: (Set<String>) -> Unit,
+    onUpdateNativeLocationAllowedOrigins: (Set<String>) -> Unit,
     onUpdateCameraBlacklist: (Set<String>) -> Unit,
     onUpdateMicrophoneBlacklist: (Set<String>) -> Unit,
     onUpdateFileChooserBlacklist: (Set<String>) -> Unit,
     onUpdateSchemeBlacklist: (Set<String>) -> Unit
 ) {
     var geoBlacklist by remember { mutableStateOf(initialGeoBlacklist) }
+    var nativeLocationAllowedOrigins by remember { mutableStateOf(initialNativeLocationAllowedOrigins) }
     var cameraBlacklist by remember { mutableStateOf(initialCameraBlacklist) }
     var microphoneBlacklist by remember { mutableStateOf(initialMicrophoneBlacklist) }
     var fileChooserBlacklist by remember { mutableStateOf(initialFileChooserBlacklist) }
@@ -4580,6 +5299,22 @@ private fun SiteInfoContent(
                     onUpdateBlacklist = {
                         geoBlacklist = it
                         onUpdateGeoBlacklist(it)
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                SiteAllowlistSwitchRow(
+                    title = "原生定位托管",
+                    allowedText = "允许本站使用 LocationManager 托管定位",
+                    blockedText = "未加入托管允许列表",
+                    globallyBlockedText = "原生定位托管未在后台启用",
+                    origin = permissionOrigin,
+                    isGloballyBlocked = !initialNativeLocationBridgeEnabled || initialLimitGeolocation,
+                    allowlist = nativeLocationAllowedOrigins,
+                    onUpdateAllowlist = {
+                        nativeLocationAllowedOrigins = it
+                        onUpdateNativeLocationAllowedOrigins(it)
                     }
                 )
 
@@ -4813,7 +5548,7 @@ private fun SitePermissionSwitchRow(
     Spacer(modifier = Modifier.height(6.dp))
     if (isGloballyBlocked) {
         Text(
-            text = "⚠️ $globallyBlockedText",
+            text = globallyBlockedText,
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.error,
             fontWeight = FontWeight.SemiBold
@@ -4847,6 +5582,67 @@ private fun SitePermissionSwitchRow(
                     host?.let { newSet.remove(it) }
                 }
                 onUpdateBlacklist(newSet)
+            }
+        )
+    }
+}
+
+@Composable
+private fun SiteAllowlistSwitchRow(
+    title: String,
+    allowedText: String,
+    blockedText: String,
+    globallyBlockedText: String,
+    origin: String,
+    isGloballyBlocked: Boolean,
+    allowlist: Set<String>,
+    onUpdateAllowlist: (Set<String>) -> Unit
+) {
+    val normalizedOrigin = KioskPrefs.normalizeOriginKey(origin)
+    val isAllowed = normalizedOrigin.isNotBlank() && allowlist.contains(normalizedOrigin)
+
+    Text(
+        text = title,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.onSurface
+    )
+    Spacer(modifier = Modifier.height(6.dp))
+    if (isGloballyBlocked) {
+        Text(
+            text = "⚠️ $globallyBlockedText",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.error,
+            fontWeight = FontWeight.SemiBold
+        )
+        return
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = if (isAllowed) allowedText else blockedText,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        Switch(
+            checked = isAllowed,
+            enabled = normalizedOrigin.isNotBlank(),
+            onCheckedChange = { checked ->
+                val newSet = allowlist.toMutableSet()
+                if (checked) {
+                    newSet.add(normalizedOrigin)
+                } else {
+                    newSet.remove(normalizedOrigin)
+                }
+                onUpdateAllowlist(newSet)
             }
         )
     }

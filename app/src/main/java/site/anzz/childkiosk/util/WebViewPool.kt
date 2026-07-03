@@ -6,6 +6,7 @@ import android.net.http.SslError
 import android.os.Handler
 import android.os.Looper
 import android.webkit.*
+import androidx.webkit.WebViewCompat
 import site.anzz.childkiosk.util.filter.FilterAction
 import site.anzz.childkiosk.util.filter.FilterRepository
 import site.anzz.childkiosk.util.filter.FilterResourceType
@@ -295,6 +296,8 @@ object WebViewPool {
         webView.webChromeClient = null
         webView.webViewClient = WebViewClient()
         runCatching { webView.removeJavascriptInterface("ChildKioskDebugBridge") }
+        runCatching { webView.removeJavascriptInterface("ChildKioskNativeLocationBridge") }
+        runCatching { WebViewCompat.removeWebMessageListener(webView, "ChildKioskNativeLocation") }
         (webView.parent as? android.view.ViewGroup)?.removeView(webView)
         webView.removeAllViews()
         webView.loadUrl("about:blank")

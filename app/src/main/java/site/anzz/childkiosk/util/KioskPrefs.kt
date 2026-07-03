@@ -54,7 +54,16 @@ data class WebViewRuntimeConfig(
     val geolocationBlacklist: Set<String>,
     val cameraBlacklist: Set<String>,
     val microphoneBlacklist: Set<String>,
-    val fileChooserBlacklist: Set<String>
+    val fileChooserBlacklist: Set<String>,
+    val nativeLocationOptimizationEnabled: Boolean,
+    val nativeLocationWarmupEnabled: Boolean,
+    val nativeLocationBridgeEnabled: Boolean,
+    val nativeLocationBridgeAllowedOrigins: Set<String>,
+    val nativeLocationWarmupTimeoutMs: Long,
+    val nativeLocationRequestTimeoutMs: Long,
+    val nativeLocationMaxCacheAgeMs: Long,
+    val nativeLocationMode: String,
+    val nativeLocationWatchMaxDurationMs: Long
 ) {
     fun toJson(): JSONObject {
         return JSONObject()
@@ -102,6 +111,15 @@ data class WebViewRuntimeConfig(
             .put("cameraBlacklist", org.json.JSONArray(cameraBlacklist))
             .put("microphoneBlacklist", org.json.JSONArray(microphoneBlacklist))
             .put("fileChooserBlacklist", org.json.JSONArray(fileChooserBlacklist))
+            .put("nativeLocationOptimizationEnabled", nativeLocationOptimizationEnabled)
+            .put("nativeLocationWarmupEnabled", nativeLocationWarmupEnabled)
+            .put("nativeLocationBridgeEnabled", nativeLocationBridgeEnabled)
+            .put("nativeLocationBridgeAllowedOrigins", org.json.JSONArray(nativeLocationBridgeAllowedOrigins))
+            .put("nativeLocationWarmupTimeoutMs", nativeLocationWarmupTimeoutMs)
+            .put("nativeLocationRequestTimeoutMs", nativeLocationRequestTimeoutMs)
+            .put("nativeLocationMaxCacheAgeMs", nativeLocationMaxCacheAgeMs)
+            .put("nativeLocationMode", nativeLocationMode)
+            .put("nativeLocationWatchMaxDurationMs", nativeLocationWatchMaxDurationMs)
     }
 
     companion object {
@@ -190,7 +208,43 @@ data class WebViewRuntimeConfig(
                         set.add(array.getString(i))
                     }
                     set
-                } ?: fallback.fileChooserBlacklist
+                } ?: fallback.fileChooserBlacklist,
+                nativeLocationOptimizationEnabled = json.optBoolean(
+                    "nativeLocationOptimizationEnabled",
+                    fallback.nativeLocationOptimizationEnabled
+                ),
+                nativeLocationWarmupEnabled = json.optBoolean(
+                    "nativeLocationWarmupEnabled",
+                    fallback.nativeLocationWarmupEnabled
+                ),
+                nativeLocationBridgeEnabled = json.optBoolean(
+                    "nativeLocationBridgeEnabled",
+                    fallback.nativeLocationBridgeEnabled
+                ),
+                nativeLocationBridgeAllowedOrigins = json.optJSONArray("nativeLocationBridgeAllowedOrigins")?.let { array ->
+                    val set = mutableSetOf<String>()
+                    for (i in 0 until array.length()) {
+                        set.add(array.getString(i))
+                    }
+                    set
+                } ?: fallback.nativeLocationBridgeAllowedOrigins,
+                nativeLocationWarmupTimeoutMs = json.optLong(
+                    "nativeLocationWarmupTimeoutMs",
+                    fallback.nativeLocationWarmupTimeoutMs
+                ),
+                nativeLocationRequestTimeoutMs = json.optLong(
+                    "nativeLocationRequestTimeoutMs",
+                    fallback.nativeLocationRequestTimeoutMs
+                ),
+                nativeLocationMaxCacheAgeMs = json.optLong(
+                    "nativeLocationMaxCacheAgeMs",
+                    fallback.nativeLocationMaxCacheAgeMs
+                ),
+                nativeLocationMode = json.optString("nativeLocationMode", fallback.nativeLocationMode),
+                nativeLocationWatchMaxDurationMs = json.optLong(
+                    "nativeLocationWatchMaxDurationMs",
+                    fallback.nativeLocationWatchMaxDurationMs
+                )
             )
         }
     }
@@ -253,6 +307,20 @@ object KioskPrefs {
     const val WEBVIEW_RENDER_MODE_AUTO = "AUTO"
     const val WEBVIEW_RENDER_MODE_HARDWARE = "HARDWARE"
     const val WEBVIEW_RENDER_MODE_SOFTWARE = "SOFTWARE"
+
+    const val NATIVE_LOCATION_MODE_COMPAT = "COMPAT"
+    const val NATIVE_LOCATION_MODE_HIGH_ACCURACY = "HIGH_ACCURACY"
+    const val NATIVE_LOCATION_MODE_LOW_POWER = "LOW_POWER"
+
+    private const val KEY_NATIVE_LOCATION_OPTIMIZATION_ENABLED = "native_location_optimization_enabled"
+    private const val KEY_NATIVE_LOCATION_WARMUP_ENABLED = "native_location_warmup_enabled"
+    private const val KEY_NATIVE_LOCATION_BRIDGE_ENABLED = "native_location_bridge_enabled"
+    private const val KEY_NATIVE_LOCATION_BRIDGE_ALLOWED_ORIGINS = "native_location_bridge_allowed_origins"
+    private const val KEY_NATIVE_LOCATION_WARMUP_TIMEOUT_MS = "native_location_warmup_timeout_ms"
+    private const val KEY_NATIVE_LOCATION_REQUEST_TIMEOUT_MS = "native_location_request_timeout_ms"
+    private const val KEY_NATIVE_LOCATION_MAX_CACHE_AGE_MS = "native_location_max_cache_age_ms"
+    private const val KEY_NATIVE_LOCATION_MODE = "native_location_mode"
+    private const val KEY_NATIVE_LOCATION_WATCH_MAX_DURATION_MS = "native_location_watch_max_duration_ms"
 
     private const val KEY_WEBVIEW_TOP_PROGRESS_ENABLED = "webview_top_progress_enabled"
     private const val KEY_LEGACY_LIGHTWEIGHT_NATIVE_LOADING_INDICATOR_ENABLED =
@@ -646,7 +714,16 @@ object KioskPrefs {
             geolocationBlacklist = getGeolocationBlacklist(context),
             cameraBlacklist = getCameraBlacklist(context),
             microphoneBlacklist = getMicrophoneBlacklist(context),
-            fileChooserBlacklist = getFileChooserBlacklist(context)
+            fileChooserBlacklist = getFileChooserBlacklist(context),
+            nativeLocationOptimizationEnabled = isNativeLocationOptimizationEnabled(context),
+            nativeLocationWarmupEnabled = isNativeLocationWarmupEnabled(context),
+            nativeLocationBridgeEnabled = isNativeLocationBridgeEnabled(context),
+            nativeLocationBridgeAllowedOrigins = getNativeLocationBridgeAllowedOrigins(context),
+            nativeLocationWarmupTimeoutMs = getNativeLocationWarmupTimeoutMs(context),
+            nativeLocationRequestTimeoutMs = getNativeLocationRequestTimeoutMs(context),
+            nativeLocationMaxCacheAgeMs = getNativeLocationMaxCacheAgeMs(context),
+            nativeLocationMode = getNativeLocationMode(context),
+            nativeLocationWatchMaxDurationMs = getNativeLocationWatchMaxDurationMs(context)
         )
     }
 
@@ -864,6 +941,106 @@ object KioskPrefs {
         current.remove(normalizeOriginKey(origin))
         setGeolocationBlacklist(context, current)
     }
+
+    fun isNativeLocationOptimizationEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_NATIVE_LOCATION_OPTIMIZATION_ENABLED, false)
+
+    fun setNativeLocationOptimizationEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean(KEY_NATIVE_LOCATION_OPTIMIZATION_ENABLED, enabled).apply()
+
+    fun isNativeLocationWarmupEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_NATIVE_LOCATION_WARMUP_ENABLED, false)
+
+    fun setNativeLocationWarmupEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean(KEY_NATIVE_LOCATION_WARMUP_ENABLED, enabled).apply()
+
+    fun isNativeLocationBridgeEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_NATIVE_LOCATION_BRIDGE_ENABLED, false)
+
+    fun setNativeLocationBridgeEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean(KEY_NATIVE_LOCATION_BRIDGE_ENABLED, enabled).apply()
+
+    fun getNativeLocationBridgeAllowedOrigins(context: Context): Set<String> {
+        return normalizeStringSet(
+            prefs(context).getStringSet(KEY_NATIVE_LOCATION_BRIDGE_ALLOWED_ORIGINS, emptySet()) ?: emptySet(),
+            ::normalizeOriginKey
+        )
+    }
+
+    fun setNativeLocationBridgeAllowedOrigins(context: Context, origins: Set<String>) {
+        prefs(context).edit()
+            .putStringSet(KEY_NATIVE_LOCATION_BRIDGE_ALLOWED_ORIGINS, normalizeStringSet(origins, ::normalizeOriginKey))
+            .apply()
+    }
+
+    fun addNativeLocationBridgeAllowedOrigin(context: Context, origin: String) {
+        val current = getNativeLocationBridgeAllowedOrigins(context).toMutableSet()
+        normalizeOriginKey(origin).takeIf { it.isNotBlank() }?.let { current.add(it) }
+        setNativeLocationBridgeAllowedOrigins(context, current)
+    }
+
+    fun removeNativeLocationBridgeAllowedOrigin(context: Context, origin: String) {
+        val current = getNativeLocationBridgeAllowedOrigins(context).toMutableSet()
+        current.remove(normalizeOriginKey(origin))
+        setNativeLocationBridgeAllowedOrigins(context, current)
+    }
+
+    fun getNativeLocationWarmupTimeoutMs(context: Context): Long =
+        prefs(context)
+            .getLong(KEY_NATIVE_LOCATION_WARMUP_TIMEOUT_MS, 5_000L)
+            .coerceIn(3_000L, 15_000L)
+
+    fun setNativeLocationWarmupTimeoutMs(context: Context, timeoutMs: Long) =
+        customEditor(context)
+            .putLong(KEY_NATIVE_LOCATION_WARMUP_TIMEOUT_MS, timeoutMs.coerceIn(3_000L, 15_000L))
+            .apply()
+
+    fun getNativeLocationRequestTimeoutMs(context: Context): Long =
+        prefs(context)
+            .getLong(KEY_NATIVE_LOCATION_REQUEST_TIMEOUT_MS, 10_000L)
+            .coerceIn(3_000L, 30_000L)
+
+    fun setNativeLocationRequestTimeoutMs(context: Context, timeoutMs: Long) =
+        customEditor(context)
+            .putLong(KEY_NATIVE_LOCATION_REQUEST_TIMEOUT_MS, timeoutMs.coerceIn(3_000L, 30_000L))
+            .apply()
+
+    fun getNativeLocationMaxCacheAgeMs(context: Context): Long =
+        prefs(context)
+            .getLong(KEY_NATIVE_LOCATION_MAX_CACHE_AGE_MS, 30_000L)
+            .coerceIn(0L, 10 * 60_000L)
+
+    fun setNativeLocationMaxCacheAgeMs(context: Context, maxAgeMs: Long) =
+        customEditor(context)
+            .putLong(KEY_NATIVE_LOCATION_MAX_CACHE_AGE_MS, maxAgeMs.coerceIn(0L, 10 * 60_000L))
+            .apply()
+
+    fun getNativeLocationMode(context: Context): String {
+        return when (prefs(context).getString(KEY_NATIVE_LOCATION_MODE, NATIVE_LOCATION_MODE_COMPAT)) {
+            NATIVE_LOCATION_MODE_HIGH_ACCURACY -> NATIVE_LOCATION_MODE_HIGH_ACCURACY
+            NATIVE_LOCATION_MODE_LOW_POWER -> NATIVE_LOCATION_MODE_LOW_POWER
+            else -> NATIVE_LOCATION_MODE_COMPAT
+        }
+    }
+
+    fun setNativeLocationMode(context: Context, mode: String) {
+        val normalized = when (mode) {
+            NATIVE_LOCATION_MODE_HIGH_ACCURACY -> NATIVE_LOCATION_MODE_HIGH_ACCURACY
+            NATIVE_LOCATION_MODE_LOW_POWER -> NATIVE_LOCATION_MODE_LOW_POWER
+            else -> NATIVE_LOCATION_MODE_COMPAT
+        }
+        customEditor(context).putString(KEY_NATIVE_LOCATION_MODE, normalized).apply()
+    }
+
+    fun getNativeLocationWatchMaxDurationMs(context: Context): Long =
+        prefs(context)
+            .getLong(KEY_NATIVE_LOCATION_WATCH_MAX_DURATION_MS, 10 * 60_000L)
+            .coerceIn(60_000L, 60 * 60_000L)
+
+    fun setNativeLocationWatchMaxDurationMs(context: Context, durationMs: Long) =
+        customEditor(context)
+            .putLong(KEY_NATIVE_LOCATION_WATCH_MAX_DURATION_MS, durationMs.coerceIn(60_000L, 60 * 60_000L))
+            .apply()
 
     fun isLimitSslCheckEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_ssl_check", true)
     fun setLimitSslCheckEnabled(context: Context, enabled: Boolean) =

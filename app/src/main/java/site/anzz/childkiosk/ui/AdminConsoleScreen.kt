@@ -1,7 +1,9 @@
 package site.anzz.childkiosk.ui
 
+import android.Manifest
 import android.app.role.RoleManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.webkit.URLUtil
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -20,6 +22,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,12 +43,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.webkit.WebViewFeature
 import site.anzz.childkiosk.data.AppDatabase
 import site.anzz.childkiosk.data.SystemConfigEntity
 import site.anzz.childkiosk.data.WebAppEntity
 import site.anzz.childkiosk.util.HashUtils
 import site.anzz.childkiosk.util.KioskPrefs
+import site.anzz.childkiosk.util.NativeLocationManager
+import site.anzz.childkiosk.util.NativeLocationResult
 import site.anzz.childkiosk.util.WebDataManager
 import site.anzz.childkiosk.util.WebDataStats
 import site.anzz.childkiosk.util.WebViewProviderDiagnostics
@@ -1478,6 +1486,114 @@ fun AdminConsoleScreen(
                     var customJsInjectTiming by remember { mutableStateOf(KioskPrefs.getCustomJsInjectTiming(context)) }
                     var customJsInjectUrl by remember { mutableStateOf(KioskPrefs.getCustomJsInjectUrl(context)) }
                     var customJsInjectCode by remember { mutableStateOf(KioskPrefs.getCustomJsInjectCode(context)) }
+                    var nativeLocationOptimizationEnabled by remember {
+                        mutableStateOf(KioskPrefs.isNativeLocationOptimizationEnabled(context))
+                    }
+                    var nativeLocationWarmupEnabled by remember {
+                        mutableStateOf(KioskPrefs.isNativeLocationWarmupEnabled(context))
+                    }
+                    var nativeLocationBridgeEnabled by remember {
+                        mutableStateOf(KioskPrefs.isNativeLocationBridgeEnabled(context))
+                    }
+                    var nativeLocationMode by remember { mutableStateOf(KioskPrefs.getNativeLocationMode(context)) }
+                    var nativeLocationWarmupTimeoutMs by remember {
+                        mutableStateOf(KioskPrefs.getNativeLocationWarmupTimeoutMs(context))
+                    }
+                    var nativeLocationRequestTimeoutMs by remember {
+                        mutableStateOf(KioskPrefs.getNativeLocationRequestTimeoutMs(context))
+                    }
+                    var nativeLocationMaxCacheAgeMs by remember {
+                        mutableStateOf(KioskPrefs.getNativeLocationMaxCacheAgeMs(context))
+                    }
+                    var nativeLocationWatchMaxDurationMs by remember {
+                        mutableStateOf(KioskPrefs.getNativeLocationWatchMaxDurationMs(context))
+                    }
+                    var nativeLocationAllowedOrigins by remember {
+                        mutableStateOf(KioskPrefs.getNativeLocationBridgeAllowedOrigins(context))
+                    }
+                    var nativeLocationOriginInput by remember { mutableStateOf("") }
+                    val nativeLocationManager = remember { NativeLocationManager(context) }
+                    var nativeLocationDiagnostics by remember {
+                        mutableStateOf(nativeLocationManager.diagnosticSummary())
+                    }
+                    var nativeLocationTesting by remember { mutableStateOf(false) }
+                    val nativeLocationBridgeRuntimeReady = remember {
+                        WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) &&
+                            WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
+                    }
+
+                    fun refreshNativeLocationDiagnostics() {
+                        nativeLocationDiagnostics = nativeLocationManager.diagnosticSummary()
+                    }
+
+                    fun onNativeLocationConfigChanged(recreateWebViews: Boolean = true) {
+                        quickMode = KioskPrefs.getQuickMode(context)
+                        refreshNativeLocationDiagnostics()
+                        if (recreateWebViews) WebViewPool.clear()
+                        onSandboxLimitsChanged()
+                        Toast.makeText(context, "新打开的网站生效", Toast.LENGTH_SHORT).show()
+                    }
+
+                    fun runNativeLocationTest() {
+                        if (nativeLocationTesting) return
+                        nativeLocationTesting = true
+                        nativeLocationManager.requestSingleLocation(
+                            config = KioskPrefs.getWebViewRuntimeConfig(context).copy(
+                                nativeLocationOptimizationEnabled = true
+                            ),
+                            allowCached = true,
+                            purpose = "admin_test"
+                        ) { result: NativeLocationResult ->
+                            nativeLocationTesting = false
+                            nativeLocationDiagnostics = result.toDiagnosticLine(redactCoordinates = true) +
+                                "\n\n" + nativeLocationManager.diagnosticSummary()
+                        }
+                    }
+
+                    val nativeLocationPermissionLauncher = rememberLauncherForActivityResult(
+                        ActivityResultContracts.RequestMultiplePermissions()
+                    ) { permissions ->
+                        val granted =
+                            permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true ||
+                                ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.ACCESS_FINE_LOCATION
+                                ) == PackageManager.PERMISSION_GRANTED ||
+                                ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION
+                                ) == PackageManager.PERMISSION_GRANTED
+                        if (granted) {
+                            runNativeLocationTest()
+                        } else {
+                            nativeLocationTesting = false
+                            nativeLocationDiagnostics = "未获得系统定位权限，无法测试 LocationManager。"
+                        }
+                    }
+
+                    fun testNativeLocationWithPermission() {
+                        val granted =
+                            ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.ACCESS_FINE_LOCATION
+                            ) == PackageManager.PERMISSION_GRANTED ||
+                                ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION
+                                ) == PackageManager.PERMISSION_GRANTED
+                        if (granted) {
+                            runNativeLocationTest()
+                        } else {
+                            nativeLocationTesting = true
+                            nativeLocationPermissionLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION
+                                )
+                            )
+                        }
+                    }
 
                     Column(
                         modifier = Modifier
@@ -2268,6 +2384,8 @@ fun AdminConsoleScreen(
                                             onCheckedChange = {
                                                 limitGeolocation = it
                                                 KioskPrefs.setLimitGeolocationEnabled(context, it)
+                                                if (it) WebViewPool.clear()
+                                                refreshNativeLocationDiagnostics()
                                                 onSandboxLimitsChanged()
                                             }
                                         )
@@ -2325,6 +2443,318 @@ fun AdminConsoleScreen(
                                                          Spacer(modifier = Modifier.weight(1f))
                                                      }
                                                 }
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text("启用系统定位优化", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                                Text("使用 Android LocationManager 做定位预热和可选网页托管；默认关闭，不接入外部 SDK", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                            Switch(
+                                                checked = nativeLocationOptimizationEnabled,
+                                                enabled = !limitGeolocation,
+                                                onCheckedChange = {
+                                                    nativeLocationOptimizationEnabled = it
+                                                    KioskPrefs.setNativeLocationOptimizationEnabled(context, it)
+                                                    onNativeLocationConfigChanged()
+                                                }
+                                            )
+                                        }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text("预热系统定位缓存", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                                Text("页面开始加载时提前刷新系统定位，普通 navigator.geolocation 仍走 WebView 默认路径", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                            Switch(
+                                                checked = nativeLocationWarmupEnabled,
+                                                enabled = !limitGeolocation && nativeLocationOptimizationEnabled,
+                                                onCheckedChange = {
+                                                    nativeLocationWarmupEnabled = it
+                                                    KioskPrefs.setNativeLocationWarmupEnabled(context, it)
+                                                    onNativeLocationConfigChanged()
+                                                }
+                                            )
+                                        }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text("托管网页 Geolocation", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                                Text("开启后对允许列表站点注入标准 geolocation bridge，由 LocationManager 返回位置；仅建议用于可信网页应用", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                            Switch(
+                                                checked = nativeLocationBridgeEnabled,
+                                                enabled = !limitGeolocation && nativeLocationOptimizationEnabled,
+                                                onCheckedChange = {
+                                                    nativeLocationBridgeEnabled = it
+                                                    KioskPrefs.setNativeLocationBridgeEnabled(context, it)
+                                                    onNativeLocationConfigChanged()
+                                                }
+                                            )
+                                        }
+
+                                        if (!nativeLocationBridgeRuntimeReady) {
+                                            Text(
+                                                "当前 WebView 内核不完整支持 document-start 注入或受控 WebMessage 通道，原生托管可能不可用；可先使用预热模式。",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.error
+                                            )
+                                        }
+
+                                        Text("定位模式", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            listOf(
+                                                KioskPrefs.NATIVE_LOCATION_MODE_COMPAT to "兼容",
+                                                KioskPrefs.NATIVE_LOCATION_MODE_HIGH_ACCURACY to "高精度",
+                                                KioskPrefs.NATIVE_LOCATION_MODE_LOW_POWER to "低功耗"
+                                            ).forEach { (mode, label) ->
+                                                FilterChip(
+                                                    selected = nativeLocationMode == mode,
+                                                    enabled = nativeLocationOptimizationEnabled && !limitGeolocation,
+                                                    onClick = {
+                                                        nativeLocationMode = mode
+                                                        KioskPrefs.setNativeLocationMode(context, mode)
+                                                        onNativeLocationConfigChanged(recreateWebViews = false)
+                                                    },
+                                                    label = { Text(label, fontSize = 12.sp) }
+                                                )
+                                            }
+                                        }
+
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            LocationValueChip(
+                                                label = "请求超时",
+                                                value = "${nativeLocationRequestTimeoutMs / 1000}s",
+                                                enabled = nativeLocationOptimizationEnabled && !limitGeolocation,
+                                                onMinus = {
+                                                    nativeLocationRequestTimeoutMs = (nativeLocationRequestTimeoutMs - 1000L).coerceAtLeast(3_000L)
+                                                    KioskPrefs.setNativeLocationRequestTimeoutMs(context, nativeLocationRequestTimeoutMs)
+                                                    onNativeLocationConfigChanged(recreateWebViews = false)
+                                                },
+                                                onPlus = {
+                                                    nativeLocationRequestTimeoutMs = (nativeLocationRequestTimeoutMs + 1000L).coerceAtMost(30_000L)
+                                                    KioskPrefs.setNativeLocationRequestTimeoutMs(context, nativeLocationRequestTimeoutMs)
+                                                    onNativeLocationConfigChanged(recreateWebViews = false)
+                                                }
+                                            )
+                                            LocationValueChip(
+                                                label = "预热超时",
+                                                value = "${nativeLocationWarmupTimeoutMs / 1000}s",
+                                                enabled = nativeLocationOptimizationEnabled && nativeLocationWarmupEnabled && !limitGeolocation,
+                                                onMinus = {
+                                                    nativeLocationWarmupTimeoutMs = (nativeLocationWarmupTimeoutMs - 1000L).coerceAtLeast(3_000L)
+                                                    KioskPrefs.setNativeLocationWarmupTimeoutMs(context, nativeLocationWarmupTimeoutMs)
+                                                    onNativeLocationConfigChanged(recreateWebViews = false)
+                                                },
+                                                onPlus = {
+                                                    nativeLocationWarmupTimeoutMs = (nativeLocationWarmupTimeoutMs + 1000L).coerceAtMost(15_000L)
+                                                    KioskPrefs.setNativeLocationWarmupTimeoutMs(context, nativeLocationWarmupTimeoutMs)
+                                                    onNativeLocationConfigChanged(recreateWebViews = false)
+                                                }
+                                            )
+                                            LocationValueChip(
+                                                label = "缓存年龄",
+                                                value = "${nativeLocationMaxCacheAgeMs / 1000}s",
+                                                enabled = nativeLocationOptimizationEnabled && !limitGeolocation,
+                                                onMinus = {
+                                                    nativeLocationMaxCacheAgeMs = (nativeLocationMaxCacheAgeMs - 10_000L).coerceAtLeast(0L)
+                                                    KioskPrefs.setNativeLocationMaxCacheAgeMs(context, nativeLocationMaxCacheAgeMs)
+                                                    onNativeLocationConfigChanged(recreateWebViews = false)
+                                                },
+                                                onPlus = {
+                                                    nativeLocationMaxCacheAgeMs = (nativeLocationMaxCacheAgeMs + 10_000L).coerceAtMost(10 * 60_000L)
+                                                    KioskPrefs.setNativeLocationMaxCacheAgeMs(context, nativeLocationMaxCacheAgeMs)
+                                                    onNativeLocationConfigChanged(recreateWebViews = false)
+                                                }
+                                            )
+                                            LocationValueChip(
+                                                label = "Watch 最长",
+                                                value = "${nativeLocationWatchMaxDurationMs / 60_000L}m",
+                                                enabled = nativeLocationOptimizationEnabled && nativeLocationBridgeEnabled && !limitGeolocation,
+                                                onMinus = {
+                                                    nativeLocationWatchMaxDurationMs = (nativeLocationWatchMaxDurationMs - 60_000L).coerceAtLeast(60_000L)
+                                                    KioskPrefs.setNativeLocationWatchMaxDurationMs(context, nativeLocationWatchMaxDurationMs)
+                                                    onNativeLocationConfigChanged(recreateWebViews = false)
+                                                },
+                                                onPlus = {
+                                                    nativeLocationWatchMaxDurationMs = (nativeLocationWatchMaxDurationMs + 60_000L).coerceAtMost(60 * 60_000L)
+                                                    KioskPrefs.setNativeLocationWatchMaxDurationMs(context, nativeLocationWatchMaxDurationMs)
+                                                    onNativeLocationConfigChanged(recreateWebViews = false)
+                                                }
+                                            )
+                                        }
+
+                                        OutlinedTextField(
+                                            value = nativeLocationOriginInput,
+                                            onValueChange = { nativeLocationOriginInput = it },
+                                            enabled = nativeLocationOptimizationEnabled && nativeLocationBridgeEnabled && !limitGeolocation,
+                                            modifier = Modifier.fillMaxWidth(),
+                                            label = { Text("原生定位托管允许 Origin") },
+                                            placeholder = { Text("https://example.com", fontSize = 12.sp) },
+                                            singleLine = true,
+                                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
+                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.End
+                                        ) {
+                                            OutlinedButton(
+                                                enabled = nativeLocationOriginInput.isNotBlank() &&
+                                                    nativeLocationOptimizationEnabled &&
+                                                    nativeLocationBridgeEnabled &&
+                                                    !limitGeolocation,
+                                                onClick = {
+                                                    val normalized = KioskPrefs.normalizeOriginKey(nativeLocationOriginInput)
+                                                    if (normalized.isBlank()) {
+                                                        Toast.makeText(context, "请输入 http/https Origin", Toast.LENGTH_SHORT).show()
+                                                    } else {
+                                                        val newSet = nativeLocationAllowedOrigins.toMutableSet()
+                                                        newSet.add(normalized)
+                                                        nativeLocationAllowedOrigins = newSet
+                                                        nativeLocationOriginInput = ""
+                                                        KioskPrefs.setNativeLocationBridgeAllowedOrigins(context, newSet)
+                                                        onNativeLocationConfigChanged()
+                                                    }
+                                                },
+                                                shape = RoundedCornerShape(12.dp)
+                                            ) {
+                                                Icon(imageVector = Icons.Default.Add, contentDescription = "添加", modifier = Modifier.size(16.dp))
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text("添加", fontSize = 12.sp)
+                                            }
+                                        }
+
+                                        if (nativeLocationAllowedOrigins.isNotEmpty()) {
+                                            Text("托管允许列表：", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                                            Column(
+                                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                nativeLocationAllowedOrigins.chunked(2).forEach { rowItems ->
+                                                    Row(
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    ) {
+                                                        rowItems.forEach { item ->
+                                                            Row(
+                                                                modifier = Modifier
+                                                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f), shape = RoundedCornerShape(8.dp))
+                                                                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                                                                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                                                                    .weight(1f),
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.SpaceBetween
+                                                            ) {
+                                                                Text(
+                                                                    text = item,
+                                                                    fontSize = 11.sp,
+                                                                    maxLines = 1,
+                                                                    overflow = TextOverflow.Ellipsis,
+                                                                    modifier = Modifier.weight(1f)
+                                                                )
+                                                                Spacer(modifier = Modifier.width(4.dp))
+                                                                Icon(
+                                                                    imageVector = Icons.Default.Close,
+                                                                    contentDescription = "移除",
+                                                                    tint = MaterialTheme.colorScheme.error,
+                                                                    modifier = Modifier
+                                                                        .size(16.dp)
+                                                                        .clickable {
+                                                                            val newSet = nativeLocationAllowedOrigins.toMutableSet()
+                                                                            newSet.remove(item)
+                                                                            nativeLocationAllowedOrigins = newSet
+                                                                            KioskPrefs.setNativeLocationBridgeAllowedOrigins(context, newSet)
+                                                                            onNativeLocationConfigChanged()
+                                                                        }
+                                                                )
+                                                            }
+                                                        }
+                                                        if (rowItems.size < 2) {
+                                                            Spacer(modifier = Modifier.weight(1f))
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.65f))
+                                                .padding(12.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Text("系统定位诊断", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = nativeLocationDiagnostics,
+                                                fontSize = 11.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .horizontalScroll(rememberScrollState()),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                AssistChip(
+                                                    onClick = { refreshNativeLocationDiagnostics() },
+                                                    label = { Text("刷新") },
+                                                    leadingIcon = {
+                                                        Icon(Icons.Default.Refresh, contentDescription = "刷新", modifier = Modifier.size(18.dp))
+                                                    }
+                                                )
+                                                AssistChip(
+                                                    enabled = !nativeLocationTesting,
+                                                    onClick = { testNativeLocationWithPermission() },
+                                                    label = { Text(if (nativeLocationTesting) "测试中" else "测试定位") },
+                                                    leadingIcon = {
+                                                        Icon(Icons.Default.LocationOn, contentDescription = "测试定位", modifier = Modifier.size(18.dp))
+                                                    }
+                                                )
+                                                AssistChip(
+                                                    onClick = {
+                                                        clipboardManager.setText(AnnotatedString(nativeLocationDiagnostics))
+                                                        Toast.makeText(context, "定位诊断已复制", Toast.LENGTH_SHORT).show()
+                                                    },
+                                                    label = { Text("复制诊断") },
+                                                    leadingIcon = {
+                                                        Icon(Icons.Default.ContentCopy, contentDescription = "复制诊断", modifier = Modifier.size(18.dp))
+                                                    }
+                                                )
                                             }
                                         }
                                     }
@@ -6142,6 +6572,44 @@ fun WebViewProviderScreen(
 }
 
 private fun enabledLabel(enabled: Boolean): String = if (enabled) "开启" else "关闭"
+
+@Composable
+private fun LocationValueChip(
+    label: String,
+    value: String,
+    enabled: Boolean,
+    onMinus: () -> Unit,
+    onPlus: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f), RoundedCornerShape(10.dp))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+        IconButton(
+            enabled = enabled,
+            onClick = onMinus,
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(Icons.Default.Remove, contentDescription = "$label 减少", modifier = Modifier.size(16.dp))
+        }
+        IconButton(
+            enabled = enabled,
+            onClick = onPlus,
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(Icons.Default.Add, contentDescription = "$label 增加", modifier = Modifier.size(16.dp))
+        }
+    }
+}
 
 @Composable
 private fun PermissionBlacklistChips(

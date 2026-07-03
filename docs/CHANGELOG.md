@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+### Added — 新增
+
+- **系统 LocationManager 网页定位优化**：
+  - 新增默认关闭的“系统定位优化”配置，可选择短时定位预热、定位策略、超时、缓存年龄、watch 最大持续时间和托管允许 Origin。
+  - 新增基于 Android `LocationManager` 的单次定位、预热、watch 和脱敏诊断能力，不接入任何第三方定位 SDK，不新增后台定位权限，也不拆分构建版本。
+  - 支持管理员后台测试系统定位并复制脱敏诊断，显示系统定位开关、精确/近似权限、可用 provider、耗时、精度、缓存年龄和错误类型。
+  - 可选“原生托管网页 Geolocation”使用 AndroidX WebKit document-start 脚本和受控 WebMessage 通道，只对允许 Origin 生效，并拒绝 iframe 绕过授权。
+  - Site Info Panel 增加当前站点原生定位托管允许列表开关，便于对可信网页应用即时授权或移除。
+
+### Changed — 变更
+
+- **定位生命周期与安全边界收紧**：
+  - 全局禁用网页定位或 Origin 命中定位黑名单时，预热和原生托管都不会启动 `LocationManager`。
+  - WebView 页面跳转、标签关闭、WebView 销毁和 Activity 不可见时会取消活跃定位请求与 watch，避免后台持续定位和耗电。
+  - WebViewPool 回收 WebView 前会清理原生定位 bridge 状态，避免旧实例携带旧配置复用。
+
 ## [0.2.30] - 2026-07-01
 
 ### Fixed — 修复
