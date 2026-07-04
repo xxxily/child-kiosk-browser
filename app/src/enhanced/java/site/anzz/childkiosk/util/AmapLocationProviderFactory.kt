@@ -245,7 +245,7 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
                 wallTimeMillis = location.time,
                 elapsedMs = System.currentTimeMillis() - startedAt,
                 error = NativeLocationError.PROVIDER_UNAVAILABLE,
-                message = "高德定位失败: ${location.errorCode} ${location.errorInfo.orEmpty()} ${location.locationDetail.orEmpty()}".trim()
+                message = amapFailureMessage(location)
             )
         }
         val coordinateSystem = if (CoordinateTransforms.outOfChina(location.latitude, location.longitude)) {
@@ -295,6 +295,47 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
             callback(result)
         } else {
             mainHandler.post { callback(result) }
+        }
+    }
+
+    private fun amapFailureMessage(location: AMapLocation): String {
+        val errorInfo = location.errorInfo.orEmpty()
+        val detail = location.locationDetail.orEmpty()
+        val conciseErrorInfo = errorInfo
+            .substringBefore("请到")
+            .substringBefore(",错误详细信息")
+            .trim()
+            .ifBlank { errorInfo.take(80).trim() }
+        val shaAndPackage = detail
+            .substringAfter("SHA1AndPackage#", missingDelimiterValue = "")
+            .substringBefore("#")
+            .trim()
+        val invalidUserKey = location.errorCode == 7 || detail.contains("INVALID_USER_KEY", ignoreCase = true)
+
+        return buildString {
+            append("高德定位失败: ")
+            append(location.errorCode)
+            if (conciseErrorInfo.isNotBlank()) {
+                append(' ')
+                append(conciseErrorInfo)
+            }
+            if (invalidUserKey) {
+                append("；鉴权失败 INVALID_USER_KEY，请检查高德控制台 Key 类型是否为 Android 定位 SDK Key，且已绑定当前包名和发布签名 SHA1")
+            }
+            if (shaAndPackage.isNotBlank()) {
+                append("；高德校验包名/SHA1=")
+                append(shaAndPackage)
+            } else {
+                val conciseDetail = detail
+                    .substringBefore("#gsid#")
+                    .substringBefore("#csid#")
+                    .trim()
+                    .take(180)
+                if (conciseDetail.isNotBlank()) {
+                    append("；")
+                    append(conciseDetail)
+                }
+            }
         }
     }
 

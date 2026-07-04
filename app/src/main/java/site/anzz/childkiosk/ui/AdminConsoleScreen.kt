@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.border
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
@@ -90,6 +91,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -167,6 +169,8 @@ fun AdminConsoleScreen(
             "未知"
         }
     }
+    val currentDistribution = remember { currentDistributionLabel() }
+    val currentSigningIdentity = remember { readCurrentAppSigningIdentity(context) }
 
     var webViewSnapshot by remember { mutableStateOf(WebViewProviderDiagnostics.collect(context)) }
 
@@ -454,6 +458,7 @@ fun AdminConsoleScreen(
                         item {
                             AboutAndSystemCard(
                                 currentVersion = currentVersion,
+                                currentDistribution = currentDistribution,
                                 webViewInfo = webViewSnapshot.providerSummary,
                                 deviceInfo = webViewSnapshot.deviceModel,
                                 androidVersion = webViewSnapshot.androidVersion,
@@ -462,7 +467,7 @@ fun AdminConsoleScreen(
                                 onCheckUpdate = {
                                     isCheckingUpdate = true
                                     scope.launch {
-                                        val release = fetchLatestRelease()
+                                        val release = fetchLatestRelease(BuildConfig.DISTRIBUTION)
                                         isCheckingUpdate = false
                                         if (release != null) {
                                             latestReleaseInfo = release
@@ -1540,6 +1545,7 @@ fun AdminConsoleScreen(
                     var nativeLocationDiagnostics by remember {
                         mutableStateOf(nativeLocationManager.diagnosticSummary())
                     }
+                    var showNativeLocationDiagnosticsDialog by remember { mutableStateOf(false) }
                     var nativeLocationTesting by remember { mutableStateOf(false) }
                     val nativeLocationBridgeRuntimeReady = remember {
                         WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) &&
@@ -2546,6 +2552,13 @@ fun AdminConsoleScreen(
                                                     fontSize = 11.sp,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
+                                                AmapKeyBindingInfo(
+                                                    identity = currentSigningIdentity,
+                                                    onCopy = { text, label ->
+                                                        clipboardManager.setText(AnnotatedString(text))
+                                                        Toast.makeText(context, "$label 已复制", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                )
 
                                                 Row(
                                                     modifier = Modifier.fillMaxWidth(),
@@ -3108,9 +3121,11 @@ fun AdminConsoleScreen(
                                         ) {
                                             Text("系统定位诊断", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                             Text(
-                                                text = nativeLocationDiagnostics,
+                                                text = nativeLocationDiagnostics.lineSequence().firstOrNull().orEmpty()
+                                                    .ifBlank { "暂无定位诊断" },
                                                 fontSize = 11.sp,
-                                                fontFamily = FontFamily.Monospace,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                             Row(
@@ -3124,6 +3139,16 @@ fun AdminConsoleScreen(
                                                     label = { Text("刷新") },
                                                     leadingIcon = {
                                                         Icon(Icons.Default.Refresh, contentDescription = "刷新", modifier = Modifier.size(18.dp))
+                                                    }
+                                                )
+                                                AssistChip(
+                                                    onClick = {
+                                                        refreshNativeLocationDiagnostics()
+                                                        showNativeLocationDiagnosticsDialog = true
+                                                    },
+                                                    label = { Text("查看详情") },
+                                                    leadingIcon = {
+                                                        Icon(Icons.Default.OpenInFull, contentDescription = "查看定位诊断", modifier = Modifier.size(18.dp))
                                                     }
                                                 )
                                                 AssistChip(
@@ -3145,6 +3170,17 @@ fun AdminConsoleScreen(
                                                     }
                                                 )
                                             }
+                                        }
+                                        if (showNativeLocationDiagnosticsDialog) {
+                                            NativeLocationDiagnosticsDialog(
+                                                diagnostics = nativeLocationDiagnostics,
+                                                onRefresh = { refreshNativeLocationDiagnostics() },
+                                                onCopy = {
+                                                    clipboardManager.setText(AnnotatedString(nativeLocationDiagnostics))
+                                                    Toast.makeText(context, "定位诊断已复制", Toast.LENGTH_SHORT).show()
+                                                },
+                                                onDismiss = { showNativeLocationDiagnosticsDialog = false }
+                                            )
                                         }
                                     }
                                 }
@@ -6436,11 +6472,13 @@ fun PinSetupDialog(
 data class ReleaseInfo(
     val version: String,
     val downloadUrl: String,
+    val assetName: String,
+    val distribution: String,
     val changelog: String,
     val releasePageUrl: String
 )
 
-suspend fun fetchLatestRelease(): ReleaseInfo? = withContext(Dispatchers.IO) {
+suspend fun fetchLatestRelease(distribution: String): ReleaseInfo? = withContext(Dispatchers.IO) {
     runCatching {
         val url = URL("https://api.github.com/repos/xxxily/child-kiosk-browser/releases/latest")
         val conn = url.openConnection() as HttpURLConnection
@@ -6459,7 +6497,9 @@ suspend fun fetchLatestRelease(): ReleaseInfo? = withContext(Dispatchers.IO) {
             
             val assets = jsonObj.optJSONArray("assets")
             var apkUrl = ""
+            var apkName = ""
             var bestAssetScore = Int.MIN_VALUE
+            val preferredDistribution = distribution.lowercase(Locale.US)
             if (assets != null && assets.length() > 0) {
                 for (i in 0 until assets.length()) {
                     val asset = assets.getJSONObject(i)
@@ -6470,10 +6510,11 @@ suspend fun fetchLatestRelease(): ReleaseInfo? = withContext(Dispatchers.IO) {
                         !name.contains("debug", ignoreCase = true) &&
                         assetUrl.isNotBlank()
                     ) {
-                        val score = releaseApkAssetScore(name)
+                        val score = releaseApkAssetScore(name, preferredDistribution)
                         if (score > bestAssetScore) {
                             bestAssetScore = score
                             apkUrl = assetUrl
+                            apkName = name
                         }
                     }
                 }
@@ -6485,6 +6526,8 @@ suspend fun fetchLatestRelease(): ReleaseInfo? = withContext(Dispatchers.IO) {
             ReleaseInfo(
                 version = tagName.trimStart('v'),
                 downloadUrl = apkUrl,
+                assetName = apkName,
+                distribution = preferredDistribution,
                 changelog = body,
                 releasePageUrl = htmlUrl
             )
@@ -6494,14 +6537,72 @@ suspend fun fetchLatestRelease(): ReleaseInfo? = withContext(Dispatchers.IO) {
     }.getOrNull()
 }
 
-private fun releaseApkAssetScore(name: String): Int {
+private fun releaseApkAssetScore(name: String, preferredDistribution: String): Int {
     val lower = name.lowercase(Locale.US)
     var score = 0
     if (lower.endsWith(".apk")) score += 20
     if ("release" in lower) score += 100
     if ("debug" in lower) score -= 100
     if ("unsigned" in lower) score -= 30
+    if (preferredDistribution in lower) score += 1_000
+    if ("standard" in lower && preferredDistribution != "standard") score -= 300
+    if ("enhanced" in lower && preferredDistribution != "enhanced") score -= 300
     return score
+}
+
+private fun currentDistributionLabel(): String {
+    return if (BuildConfig.AMAP_LOCATION_SDK_INCLUDED) {
+        "enhanced / 增强版"
+    } else {
+        "standard / 标准版"
+    }
+}
+
+private data class AppSigningIdentity(
+    val packageName: String,
+    val sha1: String?,
+    val error: String? = null
+)
+
+private fun readCurrentAppSigningIdentity(context: Context): AppSigningIdentity {
+    val packageName = context.packageName
+    return runCatching {
+        val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val packageInfo = context.packageManager.getPackageInfo(
+                packageName,
+                PackageManager.GET_SIGNING_CERTIFICATES
+            )
+            val signingInfo = packageInfo.signingInfo
+            when {
+                signingInfo == null -> emptyArray()
+                signingInfo.hasMultipleSigners() -> signingInfo.apkContentsSigners
+                signingInfo.apkContentsSigners.isNotEmpty() -> signingInfo.apkContentsSigners
+                else -> signingInfo.signingCertificateHistory ?: emptyArray()
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES).signatures
+        }
+        val signature = signatures.firstOrNull()
+            ?: return AppSigningIdentity(packageName = packageName, sha1 = null, error = "未读取到 APK 签名证书")
+        AppSigningIdentity(
+            packageName = packageName,
+            sha1 = sha1ColonHex(signature.toByteArray())
+        )
+    }.getOrElse { error ->
+        AppSigningIdentity(
+            packageName = packageName,
+            sha1 = null,
+            error = error.message ?: error::class.java.simpleName
+        )
+    }
+}
+
+private fun sha1ColonHex(bytes: ByteArray): String {
+    val digest = MessageDigest.getInstance("SHA-1").digest(bytes)
+    return digest.joinToString(":") { byte ->
+        String.format(Locale.US, "%02X", byte.toInt() and 0xFF)
+    }
 }
 
 fun isNewerVersion(current: String, latest: String): Boolean {
@@ -6657,8 +6758,219 @@ private fun openInstallUnknownAppsSettings(context: Context) {
 }
 
 @Composable
+fun NativeLocationDiagnosticsDialog(
+    diagnostics: String,
+    onRefresh: () -> Unit,
+    onCopy: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(0.dp),
+            color = MaterialTheme.colorScheme.background,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.LocationOn, contentDescription = "定位诊断", tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("定位诊断详情", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "关闭定位诊断")
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                        .padding(12.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        text = diagnostics.ifBlank { "暂无定位诊断" },
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onRefresh,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = "刷新定位诊断", modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("刷新")
+                    }
+                    OutlinedButton(
+                        onClick = onCopy,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "复制定位诊断", modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("复制")
+                    }
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("关闭")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AmapKeyBindingInfo(
+    identity: AppSigningIdentity,
+    onCopy: (String, String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.07f))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Default.VpnKey,
+                contentDescription = "高德 Key 申请信息",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = "高德 Key 申请信息",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+
+        Text(
+            text = "把下面当前安装包实际值填到高德开放平台 Android Key 中；平台类型选择 Android。",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        AmapKeyBindingRow(
+            label = "平台类型",
+            value = "Android",
+            onCopy = { onCopy("Android", "平台类型") }
+        )
+        AmapKeyBindingRow(
+            label = "包名",
+            value = identity.packageName,
+            onCopy = { onCopy(identity.packageName, "包名") }
+        )
+        AmapKeyBindingRow(
+            label = "SHA1",
+            value = identity.sha1 ?: "无法读取签名 SHA1",
+            isError = identity.sha1 == null,
+            onCopy = identity.sha1?.let { sha1 ->
+                { onCopy(sha1, "SHA1") }
+            }
+        )
+
+        if (identity.sha1 != null) {
+            OutlinedButton(
+                onClick = {
+                    onCopy(
+                        "平台类型: Android\n包名: ${identity.packageName}\nSHA1: ${identity.sha1}",
+                        "高德 Key 申请信息"
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(Icons.Default.ContentCopy, contentDescription = "复制高德 Key 申请信息", modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("复制申请信息", fontSize = 12.sp)
+            }
+        }
+
+        if (identity.error != null) {
+            Text(
+                text = "签名读取失败：${identity.error}",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+    }
+}
+
+@Composable
+private fun AmapKeyBindingRow(
+    label: String,
+    value: String,
+    isError: Boolean = false,
+    onCopy: (() -> Unit)? = null
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.width(56.dp),
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        SelectionContainer(modifier = Modifier.weight(1f)) {
+            Text(
+                text = value,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+            )
+        }
+        IconButton(
+            onClick = { onCopy?.invoke() },
+            enabled = onCopy != null,
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.ContentCopy,
+                contentDescription = "复制$label",
+                modifier = Modifier.size(16.dp)
+            )
+        }
+    }
+}
+
+@Composable
 fun AboutAndSystemCard(
     currentVersion: String,
+    currentDistribution: String,
     webViewInfo: String,
     deviceInfo: String,
     androidVersion: String,
@@ -6732,6 +7044,7 @@ fun AboutAndSystemCard(
                     color = MaterialTheme.colorScheme.primary
                 )
                 DiagnosticItem(label = "应用版本", value = currentVersion)
+                DiagnosticItem(label = "安装版本", value = currentDistribution)
                 DiagnosticItem(label = "WebView 内核", value = webViewInfo)
                 DiagnosticItem(label = "设备型号", value = deviceInfo)
                 DiagnosticItem(label = "安卓版本", value = "Android $androidVersion")
@@ -7175,6 +7488,19 @@ fun UpdateDialog(
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
+                )
+
+                Text(
+                    text = buildString {
+                        append("当前安装：")
+                        append(currentDistributionLabel())
+                        if (releaseInfo.assetName.isNotBlank()) {
+                            append("\n将下载：")
+                            append(releaseInfo.assetName)
+                        }
+                    },
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 Text(

@@ -1340,14 +1340,16 @@ class WebViewActivity : ComponentActivity() {
                     requestAndroidLocationPermissionForNativeLocation(
                         onGranted = runRequest,
                         onDenied = {
+                            val result = NativeLocationResult(
+                                success = false,
+                                error = NativeLocationError.PERMISSION_DENIED,
+                                message = "未获得系统定位权限"
+                            )
+                            nativeLocationManager.recordAuditOnly("bridge_get_denied_permission", origin, result)
                             dispatchNativeLocationBridgeResult(
                                 webView,
                                 requestId,
-                                NativeLocationResult(
-                                    success = false,
-                                    error = NativeLocationError.PERMISSION_DENIED,
-                                    message = "未获得系统定位权限"
-                                )
+                                result
                             )
                             unregisterNativeLocationBridgeRequest(webView, requestId)
                         }
@@ -1355,10 +1357,12 @@ class WebViewActivity : ComponentActivity() {
                 }
             },
             onDenied = { error, message ->
+                val result = NativeLocationResult(success = false, error = error, message = message)
+                nativeLocationManager.recordAuditOnly("bridge_get_denied_policy", origin, result)
                 dispatchNativeLocationBridgeResult(
                     webView,
                     requestId,
-                    NativeLocationResult(success = false, error = error, message = message)
+                    result
                 )
                 unregisterNativeLocationBridgeRequest(webView, requestId)
             }
@@ -1375,14 +1379,16 @@ class WebViewActivity : ComponentActivity() {
             ?.count { nativeLocationBridgeWatchIds.containsKey(it) }
             ?: 0
         if (currentWatchCount >= MAX_NATIVE_LOCATION_WATCHES_PER_WEBVIEW) {
+            val result = NativeLocationResult(
+                success = false,
+                error = NativeLocationError.PROVIDER_UNAVAILABLE,
+                message = "watchPosition 数量已达到上限"
+            )
+            nativeLocationManager.recordAuditOnly("watch_denied_limit", origin, result)
             dispatchNativeLocationBridgeResult(
                 webView = webView,
                 requestId = requestId,
-                result = NativeLocationResult(
-                    success = false,
-                    error = NativeLocationError.PROVIDER_UNAVAILABLE,
-                    message = "watchPosition 数量已达到上限"
-                ),
+                result = result,
                 isWatch = true,
                 requireActive = false
             )
@@ -1416,14 +1422,16 @@ class WebViewActivity : ComponentActivity() {
                     requestAndroidLocationPermissionForNativeLocation(
                         onGranted = runRequest,
                         onDenied = {
+                            val result = NativeLocationResult(
+                                success = false,
+                                error = NativeLocationError.PERMISSION_DENIED,
+                                message = "未获得系统定位权限"
+                            )
+                            nativeLocationManager.recordAuditOnly("watch_denied_permission", origin, result)
                             dispatchNativeLocationBridgeResult(
                                 webView,
                                 requestId,
-                                NativeLocationResult(
-                                    success = false,
-                                    error = NativeLocationError.PERMISSION_DENIED,
-                                    message = "未获得系统定位权限"
-                                ),
+                                result,
                                 isWatch = true
                             )
                             unregisterNativeLocationBridgeRequest(webView, requestId)
@@ -1432,10 +1440,12 @@ class WebViewActivity : ComponentActivity() {
                 }
             },
             onDenied = { error, message ->
+                val result = NativeLocationResult(success = false, error = error, message = message)
+                nativeLocationManager.recordAuditOnly("watch_denied_policy", origin, result)
                 dispatchNativeLocationBridgeResult(
                     webView,
                     requestId,
-                    NativeLocationResult(success = false, error = error, message = message),
+                    result,
                     isWatch = true
                 )
                 unregisterNativeLocationBridgeRequest(webView, requestId)
