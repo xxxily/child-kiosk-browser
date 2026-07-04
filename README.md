@@ -118,7 +118,14 @@ GitHub Releases 从 `v0.3.0` 起同时提供两类 APK：
 - `standard`：不包含高德定位 SDK，适合不需要第三方定位增强的用户。
 - `enhanced`：包含高德 Android 定位 SDK。管理员需要在高德开放平台自行申请 Android SDK Key，并在应用后台填写 Key、确认隐私合规后启用。
 
-申请高德 Android SDK Key 时，使用以下公开信息：
+申请高德 Android SDK Key 时，优先使用应用后台显示的当前安装包实际值：
+
+1. 安装 `enhanced` APK。
+2. 进入家长后台 → 网页定位增强 → 高德 Android SDK Key。
+3. 在“高德 Key 申请信息”中复制平台类型、包名和 SHA1。
+4. 在高德开放平台创建 Android Key，并把这些值填入对应字段。
+
+项目 GitHub Releases 官方 release APK 当前参考值如下：
 
 ```text
 包名 / Package:
@@ -132,8 +139,8 @@ site.anzz.childkiosk
 
 - 包名和 APK 签名证书 SHA1 可以公开；它们用于高德控制台绑定应用身份，不包含私钥或签名密码。
 - 不要公开或提交 keystore、`KEYSTORE_BASE64`、`KEYSTORE_PWD`、`KEY_PWD` 等签名私密材料。
-- 如果你自行重新签名 APK，需要在高德控制台使用你自己的签名 SHA1，而不是上面的项目发布签名。
-- debug APK 使用 debug 签名，不建议用于正式高德 Key 绑定。
+- 如果你自行重新签名 APK、安装 debug APK，或后续项目 release 签名发生变化，需要使用应用后台动态显示的 SHA1，而不是上面的项目发布签名参考值。
+- debug APK 使用 debug 签名，不建议用于正式高德 Key 绑定；如需测试，也应为 debug 签名单独申请 Key。
 
 ### 3. ADB 安装到设备
 
