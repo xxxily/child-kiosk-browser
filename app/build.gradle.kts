@@ -86,6 +86,22 @@ android {
             isMinifyEnabled = false
         }
     }
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("standard") {
+            dimension = "distribution"
+            buildConfigField("String", "DISTRIBUTION", "\"standard\"")
+            buildConfigField("Boolean", "AMAP_LOCATION_SDK_INCLUDED", "false")
+            buildConfigField("String", "AMAP_LOCATION_SDK_VERSION", "\"\"")
+        }
+        create("enhanced") {
+            dimension = "distribution"
+            buildConfigField("String", "DISTRIBUTION", "\"enhanced\"")
+            buildConfigField("Boolean", "AMAP_LOCATION_SDK_INCLUDED", "true")
+            buildConfigField("String", "AMAP_LOCATION_SDK_VERSION", "\"11.2.000\"")
+            proguardFiles("src/enhanced/proguard-rules.pro")
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -95,6 +111,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8" // 与 Kotlin 1.9.22 配对的 Compose Compiler 版本
@@ -129,6 +146,8 @@ dependencies {
 
     // Coil Image Loader
     implementation(libs.coil.compose)
+
+    add("enhancedImplementation", libs.amap.location)
 
     testImplementation(libs.junit)
 }

@@ -36,11 +36,11 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build Release APK
-        run: ./gradlew :app:assembleRelease --stacktrace
+      - name: Build Release APKs
+        run: ./gradlew :app:assembleStandardRelease :app:assembleEnhancedRelease --stacktrace
 
-      - name: Build Debug APK
-        run: ./gradlew :app:assembleDebug --stacktrace
+      - name: Build Debug APKs
+        run: ./gradlew :app:assembleStandardDebug :app:assembleEnhancedDebug --stacktrace
 
       - name: Rename APK files
         id: rename
@@ -48,8 +48,10 @@ jobs:
           mkdir -p artifacts
           VERSION_NAME=$(grep -E 'versionName' app/build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
           echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
-          cp app/build/outputs/apk/release/app-release.apk "artifacts/child-kiosk-browser-${VERSION_NAME}-release.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk "artifacts/child-kiosk-browser-${VERSION_NAME}-debug.apk"
+          cp app/build/outputs/apk/standard/release/app-standard-release.apk "artifacts/child-kiosk-browser-${VERSION_NAME}-standard-release.apk"
+          cp app/build/outputs/apk/standard/debug/app-standard-debug.apk "artifacts/child-kiosk-browser-${VERSION_NAME}-standard-debug.apk"
+          cp app/build/outputs/apk/enhanced/release/app-enhanced-release.apk "artifacts/child-kiosk-browser-${VERSION_NAME}-enhanced-release.apk"
+          cp app/build/outputs/apk/enhanced/debug/app-enhanced-debug.apk "artifacts/child-kiosk-browser-${VERSION_NAME}-enhanced-debug.apk"
           ls -lh artifacts
 
       - name: Upload APK Artifact

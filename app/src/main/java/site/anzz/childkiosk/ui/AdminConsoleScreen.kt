@@ -46,6 +46,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.webkit.WebViewFeature
+import site.anzz.childkiosk.BuildConfig
 import site.anzz.childkiosk.data.AppDatabase
 import site.anzz.childkiosk.data.SystemConfigEntity
 import site.anzz.childkiosk.data.WebAppEntity
@@ -1513,6 +1514,28 @@ fun AdminConsoleScreen(
                         mutableStateOf(KioskPrefs.getNativeLocationBridgeAllowedOrigins(context))
                     }
                     var nativeLocationOriginInput by remember { mutableStateOf("") }
+                    var amapLocationEnabled by remember { mutableStateOf(KioskPrefs.isAmapLocationEnabled(context)) }
+                    var amapLocationApiKey by remember { mutableStateOf(KioskPrefs.getAmapLocationApiKey(context)) }
+                    var amapLocationPrivacyAgreed by remember {
+                        mutableStateOf(KioskPrefs.isAmapLocationPrivacyAgreed(context))
+                    }
+                    var amapLocationProviderStrategy by remember {
+                        mutableStateOf(KioskPrefs.getAmapLocationProviderStrategy(context))
+                    }
+                    var amapLocationH5AssistantEnabled by remember {
+                        mutableStateOf(KioskPrefs.isAmapLocationH5AssistantEnabled(context))
+                    }
+                    var amapLocationH5AssistantAllowedOrigins by remember {
+                        mutableStateOf(KioskPrefs.getAmapLocationH5AssistantAllowedOrigins(context))
+                    }
+                    var nativeLocationCoordinateMode by remember {
+                        mutableStateOf(KioskPrefs.getNativeLocationCoordinateMode(context))
+                    }
+                    var nativeLocationGcj02AllowedOrigins by remember {
+                        mutableStateOf(KioskPrefs.getNativeLocationGcj02AllowedOrigins(context))
+                    }
+                    var amapH5OriginInput by remember { mutableStateOf("") }
+                    var nativeLocationGcj02OriginInput by remember { mutableStateOf("") }
                     val nativeLocationManager = remember { NativeLocationManager(context) }
                     var nativeLocationDiagnostics by remember {
                         mutableStateOf(nativeLocationManager.diagnosticSummary())
@@ -1540,7 +1563,15 @@ fun AdminConsoleScreen(
                         nativeLocationTesting = true
                         nativeLocationManager.requestSingleLocation(
                             config = KioskPrefs.getWebViewRuntimeConfig(context).copy(
-                                nativeLocationOptimizationEnabled = true
+                                nativeLocationOptimizationEnabled = true,
+                                amapLocationEnabled = amapLocationEnabled,
+                                amapLocationApiKey = amapLocationApiKey,
+                                amapLocationPrivacyAgreed = amapLocationPrivacyAgreed,
+                                amapLocationProviderStrategy = amapLocationProviderStrategy,
+                                amapLocationH5AssistantEnabled = amapLocationH5AssistantEnabled,
+                                amapLocationH5AssistantAllowedOrigins = amapLocationH5AssistantAllowedOrigins,
+                                nativeLocationCoordinateMode = nativeLocationCoordinateMode,
+                                nativeLocationGcj02AllowedOrigins = nativeLocationGcj02AllowedOrigins
                             ),
                             allowCached = true,
                             purpose = "admin_test"
@@ -2462,8 +2493,8 @@ fun AdminConsoleScreen(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Column(modifier = Modifier.weight(1f)) {
-                                                Text("启用系统定位优化", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                                Text("使用 Android LocationManager 做定位预热和可选网页托管；默认关闭，不接入外部 SDK", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text("启用网页定位增强", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                                Text("可使用系统 LocationManager 或 enhanced 版本的高德定位 SDK 托管可信网页定位", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                             Switch(
                                                 checked = nativeLocationOptimizationEnabled,
@@ -2474,6 +2505,115 @@ fun AdminConsoleScreen(
                                                     onNativeLocationConfigChanged()
                                                 }
                                             )
+                                        }
+
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.65f))
+                                                .padding(12.dp),
+                                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Text("高德定位 SDK", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                if (BuildConfig.AMAP_LOCATION_SDK_INCLUDED) {
+                                                    "当前版本：enhanced，已集成高德定位 SDK ${BuildConfig.AMAP_LOCATION_SDK_VERSION}"
+                                                } else {
+                                                    "当前版本：standard，未集成高德定位 SDK；需要高德增强定位请安装 enhanced APK"
+                                                },
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+
+                                            if (BuildConfig.AMAP_LOCATION_SDK_INCLUDED) {
+                                                OutlinedTextField(
+                                                    value = amapLocationApiKey,
+                                                    onValueChange = {
+                                                        amapLocationApiKey = it.trim()
+                                                        KioskPrefs.setAmapLocationApiKey(context, amapLocationApiKey)
+                                                        refreshNativeLocationDiagnostics()
+                                                    },
+                                                    enabled = !limitGeolocation,
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    label = { Text("高德 Android SDK Key") },
+                                                    placeholder = { Text("用户自行在高德开放平台申请", fontSize = 12.sp) },
+                                                    singleLine = true,
+                                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
+                                                )
+                                                Text(
+                                                    "Key 状态：${KioskPrefs.maskedAmapLocationApiKey(context)}；修改后新打开的网站生效",
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text("已完成高德隐私合规确认", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                                        Text("确认已向监护人/使用者披露高德定位 SDK 信息采集和隐私政策", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    }
+                                                    Switch(
+                                                        checked = amapLocationPrivacyAgreed,
+                                                        enabled = !limitGeolocation,
+                                                        onCheckedChange = {
+                                                            amapLocationPrivacyAgreed = it
+                                                            KioskPrefs.setAmapLocationPrivacyAgreed(context, it)
+                                                            onNativeLocationConfigChanged()
+                                                        }
+                                                    )
+                                                }
+
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text("启用高德定位 provider", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                                        Text("Key 非空且隐私确认后可用；默认只服务允许列表中的标准 Geolocation 托管站点", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    }
+                                                    Switch(
+                                                        checked = amapLocationEnabled,
+                                                        enabled = !limitGeolocation && nativeLocationOptimizationEnabled &&
+                                                            amapLocationApiKey.isNotBlank() &&
+                                                            amapLocationPrivacyAgreed,
+                                                        onCheckedChange = {
+                                                            amapLocationEnabled = it
+                                                            KioskPrefs.setAmapLocationEnabled(context, it)
+                                                            onNativeLocationConfigChanged()
+                                                        }
+                                                    )
+                                                }
+
+                                                Text("provider 策略", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .horizontalScroll(rememberScrollState()),
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    listOf(
+                                                        KioskPrefs.NATIVE_LOCATION_PROVIDER_AMAP_FIRST to "高德优先",
+                                                        KioskPrefs.NATIVE_LOCATION_PROVIDER_SYSTEM to "系统原生",
+                                                        KioskPrefs.NATIVE_LOCATION_PROVIDER_AMAP_ONLY to "仅高德"
+                                                    ).forEach { (strategy, label) ->
+                                                        FilterChip(
+                                                            selected = amapLocationProviderStrategy == strategy,
+                                                            enabled = nativeLocationOptimizationEnabled && !limitGeolocation,
+                                                            onClick = {
+                                                                amapLocationProviderStrategy = strategy
+                                                                KioskPrefs.setAmapLocationProviderStrategy(context, strategy)
+                                                                onNativeLocationConfigChanged(recreateWebViews = false)
+                                                            },
+                                                            label = { Text(label, fontSize = 12.sp) }
+                                                        )
+                                                    }
+                                                }
+                                            }
                                         }
 
                                         Row(
@@ -2503,7 +2643,7 @@ fun AdminConsoleScreen(
                                         ) {
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Text("托管网页 Geolocation", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                                Text("开启后对允许列表站点注入标准 geolocation bridge，由 LocationManager 返回位置；仅建议用于可信网页应用", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text("开启后对允许列表站点注入标准 geolocation bridge，由系统或高德 provider 返回位置；仅建议用于可信网页应用", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                             Switch(
                                                 checked = nativeLocationBridgeEnabled,
@@ -2704,6 +2844,254 @@ fun AdminConsoleScreen(
                                                         }
                                                         if (rowItems.size < 2) {
                                                             Spacer(modifier = Modifier.weight(1f))
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Text("网页返回坐标系", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            listOf(
+                                                KioskPrefs.NATIVE_LOCATION_COORDINATE_WGS84 to "标准 WGS84",
+                                                KioskPrefs.NATIVE_LOCATION_COORDINATE_GCJ02_PER_SITE to "GCJ-02 按站点"
+                                            ).forEach { (mode, label) ->
+                                                FilterChip(
+                                                    selected = nativeLocationCoordinateMode == mode,
+                                                    enabled = nativeLocationOptimizationEnabled && nativeLocationBridgeEnabled && !limitGeolocation,
+                                                    onClick = {
+                                                        nativeLocationCoordinateMode = mode
+                                                        KioskPrefs.setNativeLocationCoordinateMode(context, mode)
+                                                        onNativeLocationConfigChanged(recreateWebViews = false)
+                                                    },
+                                                    label = { Text(label, fontSize = 12.sp) }
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            "默认按标准浏览器语义返回 WGS84；只有明确依赖高德/国内地图坐标的可信站点才加入 GCJ-02 兼容列表。",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+
+                                        OutlinedTextField(
+                                            value = nativeLocationGcj02OriginInput,
+                                            onValueChange = { nativeLocationGcj02OriginInput = it },
+                                            enabled = nativeLocationOptimizationEnabled &&
+                                                nativeLocationBridgeEnabled &&
+                                                nativeLocationCoordinateMode == KioskPrefs.NATIVE_LOCATION_COORDINATE_GCJ02_PER_SITE &&
+                                                !limitGeolocation,
+                                            modifier = Modifier.fillMaxWidth(),
+                                            label = { Text("GCJ-02 兼容 Origin") },
+                                            placeholder = { Text("https://amap-web.example", fontSize = 12.sp) },
+                                            singleLine = true,
+                                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
+                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.End
+                                        ) {
+                                            OutlinedButton(
+                                                enabled = nativeLocationGcj02OriginInput.isNotBlank() &&
+                                                    nativeLocationOptimizationEnabled &&
+                                                    nativeLocationBridgeEnabled &&
+                                                    nativeLocationCoordinateMode == KioskPrefs.NATIVE_LOCATION_COORDINATE_GCJ02_PER_SITE &&
+                                                    !limitGeolocation,
+                                                onClick = {
+                                                    val normalized = KioskPrefs.normalizeOriginKey(nativeLocationGcj02OriginInput)
+                                                    if (normalized.isBlank()) {
+                                                        Toast.makeText(context, "请输入 http/https Origin", Toast.LENGTH_SHORT).show()
+                                                    } else {
+                                                        val newSet = nativeLocationGcj02AllowedOrigins.toMutableSet()
+                                                        newSet.add(normalized)
+                                                        nativeLocationGcj02AllowedOrigins = newSet
+                                                        nativeLocationGcj02OriginInput = ""
+                                                        KioskPrefs.setNativeLocationGcj02AllowedOrigins(context, newSet)
+                                                        onNativeLocationConfigChanged(recreateWebViews = false)
+                                                    }
+                                                },
+                                                shape = RoundedCornerShape(12.dp)
+                                            ) {
+                                                Icon(imageVector = Icons.Default.Add, contentDescription = "添加", modifier = Modifier.size(16.dp))
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text("添加", fontSize = 12.sp)
+                                            }
+                                        }
+
+                                        if (nativeLocationGcj02AllowedOrigins.isNotEmpty()) {
+                                            Text("GCJ-02 兼容列表：", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                                            Column(
+                                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                nativeLocationGcj02AllowedOrigins.chunked(2).forEach { rowItems ->
+                                                    Row(
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    ) {
+                                                        rowItems.forEach { item ->
+                                                            Row(
+                                                                modifier = Modifier
+                                                                    .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f), shape = RoundedCornerShape(8.dp))
+                                                                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                                                                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                                                                    .weight(1f),
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.SpaceBetween
+                                                            ) {
+                                                                Text(
+                                                                    text = item,
+                                                                    fontSize = 11.sp,
+                                                                    maxLines = 1,
+                                                                    overflow = TextOverflow.Ellipsis,
+                                                                    modifier = Modifier.weight(1f)
+                                                                )
+                                                                Spacer(modifier = Modifier.width(4.dp))
+                                                                Icon(
+                                                                    imageVector = Icons.Default.Close,
+                                                                    contentDescription = "移除",
+                                                                    tint = MaterialTheme.colorScheme.error,
+                                                                    modifier = Modifier
+                                                                        .size(16.dp)
+                                                                        .clickable {
+                                                                            val newSet = nativeLocationGcj02AllowedOrigins.toMutableSet()
+                                                                            newSet.remove(item)
+                                                                            nativeLocationGcj02AllowedOrigins = newSet
+                                                                            KioskPrefs.setNativeLocationGcj02AllowedOrigins(context, newSet)
+                                                                            onNativeLocationConfigChanged(recreateWebViews = false)
+                                                                        }
+                                                                )
+                                                            }
+                                                        }
+                                                        if (rowItems.size < 2) {
+                                                            Spacer(modifier = Modifier.weight(1f))
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        if (BuildConfig.AMAP_LOCATION_SDK_INCLUDED) {
+                                            Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text("高德 H5 辅助定位", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                                    Text("仅服务使用高德 JS API 且 useNative=true 的页面；普通 navigator.geolocation 仍用上面的托管模式", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                }
+                                                Switch(
+                                                    checked = amapLocationH5AssistantEnabled,
+                                                    enabled = !limitGeolocation &&
+                                                        nativeLocationOptimizationEnabled &&
+                                                        amapLocationEnabled &&
+                                                        amapLocationApiKey.isNotBlank() &&
+                                                        amapLocationPrivacyAgreed,
+                                                    onCheckedChange = {
+                                                        amapLocationH5AssistantEnabled = it
+                                                        KioskPrefs.setAmapLocationH5AssistantEnabled(context, it)
+                                                        onNativeLocationConfigChanged()
+                                                    }
+                                                )
+                                            }
+
+                                            OutlinedTextField(
+                                                value = amapH5OriginInput,
+                                                onValueChange = { amapH5OriginInput = it },
+                                                enabled = nativeLocationOptimizationEnabled &&
+                                                    amapLocationH5AssistantEnabled &&
+                                                    !limitGeolocation,
+                                                modifier = Modifier.fillMaxWidth(),
+                                                label = { Text("高德 H5 辅助定位允许 Origin") },
+                                                placeholder = { Text("https://example.com", fontSize = 12.sp) },
+                                                singleLine = true,
+                                                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
+                                            )
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.End
+                                            ) {
+                                                OutlinedButton(
+                                                    enabled = amapH5OriginInput.isNotBlank() &&
+                                                        nativeLocationOptimizationEnabled &&
+                                                        amapLocationH5AssistantEnabled &&
+                                                        !limitGeolocation,
+                                                    onClick = {
+                                                        val normalized = KioskPrefs.normalizeOriginKey(amapH5OriginInput)
+                                                        if (normalized.isBlank()) {
+                                                            Toast.makeText(context, "请输入 http/https Origin", Toast.LENGTH_SHORT).show()
+                                                        } else {
+                                                            val newSet = amapLocationH5AssistantAllowedOrigins.toMutableSet()
+                                                            newSet.add(normalized)
+                                                            amapLocationH5AssistantAllowedOrigins = newSet
+                                                            amapH5OriginInput = ""
+                                                            KioskPrefs.setAmapLocationH5AssistantAllowedOrigins(context, newSet)
+                                                            onNativeLocationConfigChanged()
+                                                        }
+                                                    },
+                                                    shape = RoundedCornerShape(12.dp)
+                                                ) {
+                                                    Icon(imageVector = Icons.Default.Add, contentDescription = "添加", modifier = Modifier.size(16.dp))
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text("添加", fontSize = 12.sp)
+                                                }
+                                            }
+
+                                            if (amapLocationH5AssistantAllowedOrigins.isNotEmpty()) {
+                                                Text("高德 H5 辅助定位允许列表：", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                                                Column(
+                                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    amapLocationH5AssistantAllowedOrigins.chunked(2).forEach { rowItems ->
+                                                        Row(
+                                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                            modifier = Modifier.fillMaxWidth()
+                                                        ) {
+                                                            rowItems.forEach { item ->
+                                                                Row(
+                                                                    modifier = Modifier
+                                                                        .background(MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f), shape = RoundedCornerShape(8.dp))
+                                                                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                                                                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                                                                        .weight(1f),
+                                                                    verticalAlignment = Alignment.CenterVertically,
+                                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                                ) {
+                                                                    Text(
+                                                                        text = item,
+                                                                        fontSize = 11.sp,
+                                                                        maxLines = 1,
+                                                                        overflow = TextOverflow.Ellipsis,
+                                                                        modifier = Modifier.weight(1f)
+                                                                    )
+                                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                                    Icon(
+                                                                        imageVector = Icons.Default.Close,
+                                                                        contentDescription = "移除",
+                                                                        tint = MaterialTheme.colorScheme.error,
+                                                                        modifier = Modifier
+                                                                            .size(16.dp)
+                                                                            .clickable {
+                                                                                val newSet = amapLocationH5AssistantAllowedOrigins.toMutableSet()
+                                                                                newSet.remove(item)
+                                                                                amapLocationH5AssistantAllowedOrigins = newSet
+                                                                                KioskPrefs.setAmapLocationH5AssistantAllowedOrigins(context, newSet)
+                                                                                onNativeLocationConfigChanged()
+                                                                            }
+                                                                    )
+                                                                }
+                                                            }
+                                                            if (rowItems.size < 2) {
+                                                                Spacer(modifier = Modifier.weight(1f))
+                                                            }
                                                         }
                                                     }
                                                 }

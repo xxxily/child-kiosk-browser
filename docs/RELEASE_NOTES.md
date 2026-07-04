@@ -1,3 +1,25 @@
+## Child Kiosk Browser vNext
+
+本轮新增按需安装的高德定位增强版。默认 standard APK 不包含高德 SDK；enhanced APK 单独集成高德 Android 定位 SDK，管理员填写自己的高德 Key 并确认隐私合规后，可信网页可通过现有 Geolocation bridge 使用高德优先、系统回退的定位策略。
+
+### 本轮核心变化
+
+* **四包构建输出**：CI 同时产出 `standard/enhanced` 的 debug/release APK，用户可按需选择。
+* **高德增强定位**：enhanced 版本支持高德 Key、隐私确认、provider 策略、脱敏诊断和按站点启用。
+* **标准网页托管**：普通网页不需要接入高德 JS SDK；允许列表站点调用 `navigator.geolocation` 时由原生 provider 返回结果。
+* **高德 H5 辅助定位**：仅面向使用高德 JS API 且 `useNative=true` 的页面，独立按 Origin 启用。
+* **坐标系保护**：默认返回 WGS84；GCJ-02 仅对明确加入兼容列表的可信站点生效。
+
+### 建议验证
+
+1. 安装 standard APK，确认后台显示未集成高德 SDK，系统定位优化和托管仍可使用。
+2. 安装 enhanced APK，填写高德 Key、确认隐私合规并启用高德 provider。
+3. 对可信测试页加入托管允许 Origin，验证 `getCurrentPosition`、`watchPosition`、`clearWatch`。
+4. 使用高德 JS API 测试页加入 H5 辅助允许列表，验证 `AMap.Geolocation({ useNative: true })`。
+5. 比较高德优先、系统原生、仅高德三种策略的耗时、精度、错误和回退诊断。
+
+---
+
 ## Child Kiosk Browser v0.2.32
 
 本版本修复首屏应用自定义网络图标不稳定的问题。用户选择可用的自定义网络图标后，应用会把图标冻结到本地私有缓存，后续不再因为网络不可用或原图标 URL 失效而自动变回默认五角星图标。

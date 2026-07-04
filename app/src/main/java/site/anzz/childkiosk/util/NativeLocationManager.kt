@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.CancellationSignal
 import android.os.Handler
 import android.os.Looper
+import android.webkit.WebView
 import androidx.core.content.ContextCompat
 import java.util.Locale
 import java.util.UUID
@@ -27,6 +28,12 @@ enum class NativeLocationError {
     UNKNOWN
 }
 
+object NativeLocationCoordinateSystem {
+    const val WGS84 = "WGS84"
+    const val GCJ02 = "GCJ02"
+    const val UNKNOWN = "UNKNOWN"
+}
+
 data class NativeLocationResult(
     val success: Boolean,
     val latitude: Double? = null,
@@ -38,6 +45,7 @@ data class NativeLocationResult(
     val elapsedRealtimeNanos: Long? = null,
     val wallTimeMillis: Long? = null,
     val provider: String? = null,
+    val coordinateSystem: String = NativeLocationCoordinateSystem.UNKNOWN,
     val cached: Boolean = false,
     val cacheAgeMillis: Long? = null,
     val precisePermission: Boolean = false,
@@ -55,6 +63,7 @@ data class NativeLocationResult(
         return listOf(
             "状态=$status",
             "provider=${provider ?: "无"}",
+            "坐标系=$coordinateSystem",
             "耗时=${elapsedMs}ms",
             "精度=${accuracyMeters?.let { "${it.toInt()}m" } ?: "未知"}",
             "缓存=${if (cached) "是" else "否"}",
@@ -91,6 +100,8 @@ class NativeLocationManager(private val context: Context) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val mainExecutor = Executor { command -> mainHandler.post(command) }
     private val activeRequests = ConcurrentHashMap<String, ActiveRequest>()
+    private val routedRequests = ConcurrentHashMap<String, RoutedRequest>()
+    private val amapProvider = AmapLocationProviderFactory.create(appContext)
 
     @Volatile
     private var lastResult: NativeLocationResult? = null
@@ -115,7 +126,9 @@ class NativeLocationManager(private val context: Context) {
             appendLine("应用权限: ${status.permissionLabel()}")
             appendLine("可用 Provider: ${status.providers.ifEmpty { listOf("无") }.joinToString()}")
             appendLine("最近一次: ${status.lastDiagnostic}")
+            appendLine("高德 SDK: ${amapProvider.diagnosticSummary(KioskPrefs.getWebViewRuntimeConfig(appContext))}")
             appendLine("活跃请求数: ${activeRequests.size}")
+            appendLine("路由请求数: ${routedRequests.size}")
             appendLine("最近注册: ${formatRelativeTime(lastListenerRegisteredAtMs)}")
             appendLine("最近释放: ${formatRelativeTime(lastListenerReleasedAtMs)}")
         }.trim()
@@ -126,12 +139,97 @@ class NativeLocationManager(private val context: Context) {
         timeoutMs: Long = config.nativeLocationRequestTimeoutMs,
         allowCached: Boolean = true,
         purpose: String = "single",
+        origin: String? = null,
+        callback: (NativeLocationResult) -> Unit
+    ): String {
+        if (shouldUseAmap(config)) {
+            return requestAmapFirstLocation(config, timeoutMs, allowCached, purpose, origin, callback)
+        }
+        return requestSystemSingleLocation(config, timeoutMs, allowCached, purpose, origin, callback)
+    }
+
+    private fun requestAmapFirstLocation(
+        config: WebViewRuntimeConfig,
+        timeoutMs: Long,
+        allowCached: Boolean,
+        purpose: String,
+        origin: String?,
+        callback: (NativeLocationResult) -> Unit
+    ): String {
+        val strategy = config.amapLocationProviderStrategy
+        if (!amapProvider.isUsable(config)) {
+            if (strategy == KioskPrefs.NATIVE_LOCATION_PROVIDER_AMAP_ONLY) {
+                val result = NativeLocationResult(
+                    success = false,
+                    provider = "amap",
+                    error = NativeLocationError.PROVIDER_UNAVAILABLE,
+                    message = amapProvider.availabilityLabel(config)
+                )
+                recordAndDispatch(result, callback)
+                return ""
+            }
+            return requestSystemSingleLocation(config, timeoutMs, allowCached, purpose, origin, callback)
+        }
+
+        val routeId = UUID.randomUUID().toString()
+        val route = RoutedRequest()
+        routedRequests[routeId] = route
+
+        fun deliver(result: NativeLocationResult) {
+            routedRequests.remove(routeId)
+            recordAndDispatch(resultForWeb(result, config, origin), callback)
+        }
+
+        fun fallbackToSystem(amapFailure: NativeLocationResult) {
+            if (strategy == KioskPrefs.NATIVE_LOCATION_PROVIDER_AMAP_ONLY || !shouldFallbackFromAmap(amapFailure)) {
+                deliver(amapFailure)
+                return
+            }
+            val systemId = requestSystemSingleLocation(
+                config = config,
+                timeoutMs = timeoutMs,
+                allowCached = allowCached,
+                purpose = "fallback_after_amap:$purpose",
+                origin = origin
+            ) { systemResult ->
+                deliver(systemResult.copy(message = "${systemResult.message.ifBlank { "系统定位返回" }}；高德回退原因: ${amapFailure.message}"))
+            }
+            route.systemId = systemId
+            if (systemId.isBlank()) {
+                routedRequests.remove(routeId)
+            }
+        }
+
+        val amapId = amapProvider.requestSingleLocation(
+            config = config,
+            timeoutMs = timeoutMs,
+            allowCached = allowCached,
+            origin = origin
+        ) { result ->
+            if (!routedRequests.containsKey(routeId)) return@requestSingleLocation
+            if (result.success) {
+                deliver(result)
+            } else {
+                fallbackToSystem(result)
+            }
+        }
+        route.amapId = amapId.takeIf { it.isNotBlank() }
+        if (!routedRequests.containsKey(routeId)) return ""
+        return routeId
+    }
+
+    private fun requestSystemSingleLocation(
+        config: WebViewRuntimeConfig,
+        timeoutMs: Long = config.nativeLocationRequestTimeoutMs,
+        allowCached: Boolean = true,
+        purpose: String = "single",
+        origin: String? = null,
         callback: (NativeLocationResult) -> Unit
     ): String {
         val startedAt = System.currentTimeMillis()
         val denied = preflightDenied(startedAt)
         if (denied != null) {
-            recordAndDispatch(denied, callback)
+            recordAndDispatch(resultForWeb(denied, config, origin), callback)
             return ""
         }
 
@@ -144,7 +242,7 @@ class NativeLocationManager(private val context: Context) {
                     startedAt = startedAt,
                     message = "命中近期系统定位缓存"
                 )
-                recordAndDispatch(result, callback)
+                recordAndDispatch(resultForWeb(result, config, origin), callback)
                 return ""
             }
         }
@@ -156,7 +254,7 @@ class NativeLocationManager(private val context: Context) {
                 "没有可用系统定位 provider",
                 startedAt
             )
-            recordAndDispatch(result, callback)
+            recordAndDispatch(resultForWeb(result, config, origin), callback)
             return ""
         }
 
@@ -167,7 +265,7 @@ class NativeLocationManager(private val context: Context) {
         fun finish(result: NativeLocationResult) {
             val removed = activeRequests.remove(requestId) ?: return
             removed.cancel()
-            recordAndDispatch(result, removed.callback)
+            recordAndDispatch(resultForWeb(result, config, origin), removed.callback)
         }
 
         val timeout = Runnable {
@@ -208,18 +306,60 @@ class NativeLocationManager(private val context: Context) {
     fun startWatch(
         config: WebViewRuntimeConfig,
         intervalMs: Long = 5_000L,
+        origin: String? = null,
         callback: (NativeLocationResult) -> Unit
     ): String {
+        if (shouldUseAmap(config) && amapProvider.isUsable(config)) {
+            var suppressStartupFailure = true
+            var startupFailure: NativeLocationResult? = null
+            val watchId = amapProvider.startWatch(config, origin) amapCallback@{ result ->
+                if (suppressStartupFailure && !result.success) {
+                    startupFailure = result
+                    return@amapCallback
+                }
+                recordAndDispatch(resultForWeb(result, config, origin), callback)
+            }
+            suppressStartupFailure = false
+            if (watchId.isNotBlank()) {
+                return "amap:$watchId"
+            }
+            if (config.amapLocationProviderStrategy == KioskPrefs.NATIVE_LOCATION_PROVIDER_AMAP_ONLY) {
+                val result = startupFailure ?: NativeLocationResult(
+                    success = false,
+                    provider = "amap",
+                    error = NativeLocationError.PROVIDER_UNAVAILABLE,
+                    message = amapProvider.availabilityLabel(config)
+                )
+                recordAndDispatch(resultForWeb(result, config, origin), callback)
+                return ""
+            }
+        } else if (config.amapLocationProviderStrategy == KioskPrefs.NATIVE_LOCATION_PROVIDER_AMAP_ONLY) {
+            recordAndDispatch(
+                NativeLocationResult(
+                    success = false,
+                    provider = "amap",
+                    error = NativeLocationError.PROVIDER_UNAVAILABLE,
+                    message = amapProvider.availabilityLabel(config)
+                ),
+                callback
+            )
+            return ""
+        }
+
         val startedAt = System.currentTimeMillis()
         val denied = preflightDenied(startedAt)
         if (denied != null) {
-            recordAndDispatch(denied, callback)
+            recordAndDispatch(resultForWeb(denied, config, origin), callback)
             return ""
         }
         val provider = providerOrder(config).firstOrNull()
         if (provider == null) {
             recordAndDispatch(
-                errorResult(NativeLocationError.PROVIDER_UNAVAILABLE, "没有可用系统定位 provider", startedAt),
+                resultForWeb(
+                    errorResult(NativeLocationError.PROVIDER_UNAVAILABLE, "没有可用系统定位 provider", startedAt),
+                    config,
+                    origin
+                ),
                 callback
             )
             return ""
@@ -231,7 +371,11 @@ class NativeLocationManager(private val context: Context) {
         val listener = object : LocationListener {
             override fun onLocationChanged(location: Location) {
                 recordAndDispatch(
-                    resultFromLocation(location, cached = false, startedAt = startedAt, message = "watchPosition 更新"),
+                    resultForWeb(
+                        resultFromLocation(location, cached = false, startedAt = startedAt, message = "watchPosition 更新"),
+                        config,
+                        origin
+                    ),
                     callback
                 )
             }
@@ -241,7 +385,11 @@ class NativeLocationManager(private val context: Context) {
             override fun onProviderEnabled(provider: String) = Unit
             override fun onProviderDisabled(provider: String) {
                 recordAndDispatch(
-                    errorResult(NativeLocationError.PROVIDER_UNAVAILABLE, "Provider 已关闭: $provider", startedAt),
+                    resultForWeb(
+                        errorResult(NativeLocationError.PROVIDER_UNAVAILABLE, "Provider 已关闭: $provider", startedAt),
+                        config,
+                        origin
+                    ),
                     callback
                 )
             }
@@ -261,7 +409,11 @@ class NativeLocationManager(private val context: Context) {
             activeRequests.remove(watchId)
             active.cancel()
             recordAndDispatch(
-                errorResult(NativeLocationError.UNKNOWN, it.message ?: "启动持续定位失败", startedAt),
+                resultForWeb(
+                    errorResult(NativeLocationError.UNKNOWN, it.message ?: "启动持续定位失败", startedAt),
+                    config,
+                    origin
+                ),
                 callback
             )
             return ""
@@ -279,15 +431,40 @@ class NativeLocationManager(private val context: Context) {
     }
 
     fun cancelRequest(id: String) {
+        if (id.startsWith("amap:")) {
+            amapProvider.cancelRequest(id.removePrefix("amap:"))
+            return
+        }
+        routedRequests.remove(id)?.let { route ->
+            route.amapId?.let { amapProvider.cancelRequest(it) }
+            route.systemId?.let { cancelRequest(it) }
+            return
+        }
         val active = activeRequests.remove(id) ?: return
         active.cancel()
     }
 
     fun stopAll() {
+        routedRequests.clear()
+        amapProvider.stopAll()
+        amapProvider.stopAllAssistantLocations()
         activeRequests.keys.toList().forEach { id ->
             val active = activeRequests.remove(id) ?: return@forEach
             active.cancel()
         }
+    }
+
+    fun destroy() {
+        stopAll()
+        amapProvider.destroy()
+    }
+
+    fun startAmapAssistantLocation(webView: WebView, config: WebViewRuntimeConfig, origin: String): Boolean {
+        return amapProvider.startAssistantLocation(webView, config, origin)
+    }
+
+    fun stopAmapAssistantLocation(webView: WebView) {
+        amapProvider.stopAssistantLocation(webView)
     }
 
     @SuppressLint("MissingPermission")
@@ -431,6 +608,7 @@ class NativeLocationManager(private val context: Context) {
             elapsedRealtimeNanos = location.elapsedRealtimeNanos,
             wallTimeMillis = location.time,
             provider = location.provider,
+            coordinateSystem = NativeLocationCoordinateSystem.WGS84,
             cached = cached,
             cacheAgeMillis = age,
             precisePermission = hasFinePermission(),
@@ -452,6 +630,39 @@ class NativeLocationManager(private val context: Context) {
     private fun recordAndDispatch(result: NativeLocationResult, callback: (NativeLocationResult) -> Unit) {
         lastResult = result
         callback(result)
+    }
+
+    private fun shouldUseAmap(config: WebViewRuntimeConfig): Boolean {
+        return config.amapLocationProviderStrategy != KioskPrefs.NATIVE_LOCATION_PROVIDER_SYSTEM &&
+            config.amapLocationEnabled
+    }
+
+    private fun shouldFallbackFromAmap(result: NativeLocationResult): Boolean {
+        return result.error != NativeLocationError.PERMISSION_DENIED &&
+            result.error != NativeLocationError.DISABLED
+    }
+
+    private fun resultForWeb(
+        result: NativeLocationResult,
+        config: WebViewRuntimeConfig,
+        origin: String?
+    ): NativeLocationResult {
+        if (!result.success) return result
+        if (result.coordinateSystem != NativeLocationCoordinateSystem.GCJ02) return result
+        val normalizedOrigin = origin?.let { KioskPrefs.normalizeOriginKey(it) }.orEmpty()
+        val allowGcj02 = config.nativeLocationCoordinateMode == KioskPrefs.NATIVE_LOCATION_COORDINATE_GCJ02_PER_SITE &&
+            normalizedOrigin.isNotBlank() &&
+            config.nativeLocationGcj02AllowedOrigins.contains(normalizedOrigin)
+        if (allowGcj02) return result
+        val lat = result.latitude ?: return result
+        val lon = result.longitude ?: return result
+        val converted = CoordinateTransforms.gcj02ToWgs84(lat, lon)
+        return result.copy(
+            latitude = converted.latitude,
+            longitude = converted.longitude,
+            coordinateSystem = NativeLocationCoordinateSystem.WGS84,
+            message = "${result.message.ifBlank { "定位成功" }}；坐标已转换为 WGS84"
+        )
     }
 
     private fun isLocationEnabled(): Boolean {
@@ -506,5 +717,60 @@ class NativeLocationManager(private val context: Context) {
             }
             timeoutRunnable?.let { mainHandler.removeCallbacks(it) }
         }
+    }
+
+    private class RoutedRequest {
+        @Volatile
+        var amapId: String? = null
+        @Volatile
+        var systemId: String? = null
+    }
+}
+
+data class CoordinatePoint(val latitude: Double, val longitude: Double)
+
+object CoordinateTransforms {
+    private const val PI = 3.1415926535897932384626
+    private const val A = 6378245.0
+    private const val EE = 0.00669342162296594323
+
+    fun gcj02ToWgs84(latitude: Double, longitude: Double): CoordinatePoint {
+        if (outOfChina(latitude, longitude)) return CoordinatePoint(latitude, longitude)
+        val delta = delta(latitude, longitude)
+        return CoordinatePoint(latitude * 2 - delta.latitude, longitude * 2 - delta.longitude)
+    }
+
+    fun outOfChina(latitude: Double, longitude: Double): Boolean {
+        return longitude < 72.004 || longitude > 137.8347 || latitude < 0.8293 || latitude > 55.8271
+    }
+
+    private fun delta(latitude: Double, longitude: Double): CoordinatePoint {
+        var dLat = transformLat(longitude - 105.0, latitude - 35.0)
+        var dLon = transformLon(longitude - 105.0, latitude - 35.0)
+        val radLat = latitude / 180.0 * PI
+        var magic = kotlin.math.sin(radLat)
+        magic = 1 - EE * magic * magic
+        val sqrtMagic = kotlin.math.sqrt(magic)
+        dLat = (dLat * 180.0) / ((A * (1 - EE)) / (magic * sqrtMagic) * PI)
+        dLon = (dLon * 180.0) / (A / sqrtMagic * kotlin.math.cos(radLat) * PI)
+        return CoordinatePoint(latitude + dLat, longitude + dLon)
+    }
+
+    private fun transformLat(x: Double, y: Double): Double {
+        var ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y +
+            0.2 * kotlin.math.sqrt(kotlin.math.abs(x))
+        ret += (20.0 * kotlin.math.sin(6.0 * x * PI) + 20.0 * kotlin.math.sin(2.0 * x * PI)) * 2.0 / 3.0
+        ret += (20.0 * kotlin.math.sin(y * PI) + 40.0 * kotlin.math.sin(y / 3.0 * PI)) * 2.0 / 3.0
+        ret += (160.0 * kotlin.math.sin(y / 12.0 * PI) + 320 * kotlin.math.sin(y * PI / 30.0)) * 2.0 / 3.0
+        return ret
+    }
+
+    private fun transformLon(x: Double, y: Double): Double {
+        var ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y +
+            0.1 * kotlin.math.sqrt(kotlin.math.abs(x))
+        ret += (20.0 * kotlin.math.sin(6.0 * x * PI) + 20.0 * kotlin.math.sin(2.0 * x * PI)) * 2.0 / 3.0
+        ret += (20.0 * kotlin.math.sin(x * PI) + 40.0 * kotlin.math.sin(x / 3.0 * PI)) * 2.0 / 3.0
+        ret += (150.0 * kotlin.math.sin(x / 12.0 * PI) + 300.0 * kotlin.math.sin(x / 30.0 * PI)) * 2.0 / 3.0
+        return ret
     }
 }

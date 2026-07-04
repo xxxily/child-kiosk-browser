@@ -63,7 +63,15 @@ data class WebViewRuntimeConfig(
     val nativeLocationRequestTimeoutMs: Long,
     val nativeLocationMaxCacheAgeMs: Long,
     val nativeLocationMode: String,
-    val nativeLocationWatchMaxDurationMs: Long
+    val nativeLocationWatchMaxDurationMs: Long,
+    val amapLocationEnabled: Boolean,
+    val amapLocationApiKey: String,
+    val amapLocationPrivacyAgreed: Boolean,
+    val amapLocationProviderStrategy: String,
+    val amapLocationH5AssistantEnabled: Boolean,
+    val amapLocationH5AssistantAllowedOrigins: Set<String>,
+    val nativeLocationCoordinateMode: String,
+    val nativeLocationGcj02AllowedOrigins: Set<String>
 ) {
     fun toJson(): JSONObject {
         return JSONObject()
@@ -120,6 +128,14 @@ data class WebViewRuntimeConfig(
             .put("nativeLocationMaxCacheAgeMs", nativeLocationMaxCacheAgeMs)
             .put("nativeLocationMode", nativeLocationMode)
             .put("nativeLocationWatchMaxDurationMs", nativeLocationWatchMaxDurationMs)
+            .put("amapLocationEnabled", amapLocationEnabled)
+            .put("amapLocationApiKey", amapLocationApiKey)
+            .put("amapLocationPrivacyAgreed", amapLocationPrivacyAgreed)
+            .put("amapLocationProviderStrategy", amapLocationProviderStrategy)
+            .put("amapLocationH5AssistantEnabled", amapLocationH5AssistantEnabled)
+            .put("amapLocationH5AssistantAllowedOrigins", org.json.JSONArray(amapLocationH5AssistantAllowedOrigins))
+            .put("nativeLocationCoordinateMode", nativeLocationCoordinateMode)
+            .put("nativeLocationGcj02AllowedOrigins", org.json.JSONArray(nativeLocationGcj02AllowedOrigins))
     }
 
     companion object {
@@ -244,7 +260,39 @@ data class WebViewRuntimeConfig(
                 nativeLocationWatchMaxDurationMs = json.optLong(
                     "nativeLocationWatchMaxDurationMs",
                     fallback.nativeLocationWatchMaxDurationMs
-                )
+                ),
+                amapLocationEnabled = json.optBoolean("amapLocationEnabled", fallback.amapLocationEnabled),
+                amapLocationApiKey = json.optString("amapLocationApiKey", fallback.amapLocationApiKey),
+                amapLocationPrivacyAgreed = json.optBoolean(
+                    "amapLocationPrivacyAgreed",
+                    fallback.amapLocationPrivacyAgreed
+                ),
+                amapLocationProviderStrategy = json.optString(
+                    "amapLocationProviderStrategy",
+                    fallback.amapLocationProviderStrategy
+                ),
+                amapLocationH5AssistantEnabled = json.optBoolean(
+                    "amapLocationH5AssistantEnabled",
+                    fallback.amapLocationH5AssistantEnabled
+                ),
+                amapLocationH5AssistantAllowedOrigins = json.optJSONArray("amapLocationH5AssistantAllowedOrigins")?.let { array ->
+                    val set = mutableSetOf<String>()
+                    for (i in 0 until array.length()) {
+                        set.add(array.getString(i))
+                    }
+                    set
+                } ?: fallback.amapLocationH5AssistantAllowedOrigins,
+                nativeLocationCoordinateMode = json.optString(
+                    "nativeLocationCoordinateMode",
+                    fallback.nativeLocationCoordinateMode
+                ),
+                nativeLocationGcj02AllowedOrigins = json.optJSONArray("nativeLocationGcj02AllowedOrigins")?.let { array ->
+                    val set = mutableSetOf<String>()
+                    for (i in 0 until array.length()) {
+                        set.add(array.getString(i))
+                    }
+                    set
+                } ?: fallback.nativeLocationGcj02AllowedOrigins
             )
         }
     }
@@ -311,6 +359,11 @@ object KioskPrefs {
     const val NATIVE_LOCATION_MODE_COMPAT = "COMPAT"
     const val NATIVE_LOCATION_MODE_HIGH_ACCURACY = "HIGH_ACCURACY"
     const val NATIVE_LOCATION_MODE_LOW_POWER = "LOW_POWER"
+    const val NATIVE_LOCATION_PROVIDER_SYSTEM = "SYSTEM"
+    const val NATIVE_LOCATION_PROVIDER_AMAP_FIRST = "AMAP_FIRST"
+    const val NATIVE_LOCATION_PROVIDER_AMAP_ONLY = "AMAP_ONLY"
+    const val NATIVE_LOCATION_COORDINATE_WGS84 = "WGS84"
+    const val NATIVE_LOCATION_COORDINATE_GCJ02_PER_SITE = "GCJ02_PER_SITE"
 
     private const val KEY_NATIVE_LOCATION_OPTIMIZATION_ENABLED = "native_location_optimization_enabled"
     private const val KEY_NATIVE_LOCATION_WARMUP_ENABLED = "native_location_warmup_enabled"
@@ -321,6 +374,15 @@ object KioskPrefs {
     private const val KEY_NATIVE_LOCATION_MAX_CACHE_AGE_MS = "native_location_max_cache_age_ms"
     private const val KEY_NATIVE_LOCATION_MODE = "native_location_mode"
     private const val KEY_NATIVE_LOCATION_WATCH_MAX_DURATION_MS = "native_location_watch_max_duration_ms"
+    private const val KEY_AMAP_LOCATION_ENABLED = "amap_location_enabled"
+    private const val KEY_AMAP_LOCATION_API_KEY = "amap_location_api_key"
+    private const val KEY_AMAP_LOCATION_PRIVACY_AGREED = "amap_location_privacy_agreed"
+    private const val KEY_AMAP_LOCATION_PROVIDER_STRATEGY = "amap_location_provider_strategy"
+    private const val KEY_AMAP_LOCATION_H5_ASSISTANT_ENABLED = "amap_location_h5_assistant_enabled"
+    private const val KEY_AMAP_LOCATION_H5_ASSISTANT_ALLOWED_ORIGINS =
+        "amap_location_h5_assistant_allowed_origins"
+    private const val KEY_NATIVE_LOCATION_COORDINATE_MODE = "native_location_coordinate_mode"
+    private const val KEY_NATIVE_LOCATION_GCJ02_ALLOWED_ORIGINS = "native_location_gcj02_allowed_origins"
 
     private const val KEY_WEBVIEW_TOP_PROGRESS_ENABLED = "webview_top_progress_enabled"
     private const val KEY_LEGACY_LIGHTWEIGHT_NATIVE_LOADING_INDICATOR_ENABLED =
@@ -723,7 +785,15 @@ object KioskPrefs {
             nativeLocationRequestTimeoutMs = getNativeLocationRequestTimeoutMs(context),
             nativeLocationMaxCacheAgeMs = getNativeLocationMaxCacheAgeMs(context),
             nativeLocationMode = getNativeLocationMode(context),
-            nativeLocationWatchMaxDurationMs = getNativeLocationWatchMaxDurationMs(context)
+            nativeLocationWatchMaxDurationMs = getNativeLocationWatchMaxDurationMs(context),
+            amapLocationEnabled = isAmapLocationEnabled(context),
+            amapLocationApiKey = getAmapLocationApiKey(context),
+            amapLocationPrivacyAgreed = isAmapLocationPrivacyAgreed(context),
+            amapLocationProviderStrategy = getAmapLocationProviderStrategy(context),
+            amapLocationH5AssistantEnabled = isAmapLocationH5AssistantEnabled(context),
+            amapLocationH5AssistantAllowedOrigins = getAmapLocationH5AssistantAllowedOrigins(context),
+            nativeLocationCoordinateMode = getNativeLocationCoordinateMode(context),
+            nativeLocationGcj02AllowedOrigins = getNativeLocationGcj02AllowedOrigins(context)
         )
     }
 
@@ -1041,6 +1111,115 @@ object KioskPrefs {
         customEditor(context)
             .putLong(KEY_NATIVE_LOCATION_WATCH_MAX_DURATION_MS, durationMs.coerceIn(60_000L, 60 * 60_000L))
             .apply()
+
+    fun isAmapLocationEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_AMAP_LOCATION_ENABLED, false)
+
+    fun setAmapLocationEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean(KEY_AMAP_LOCATION_ENABLED, enabled).apply()
+
+    fun getAmapLocationApiKey(context: Context): String =
+        prefs(context).getString(KEY_AMAP_LOCATION_API_KEY, "")?.trim().orEmpty()
+
+    fun setAmapLocationApiKey(context: Context, apiKey: String) =
+        customEditor(context).putString(KEY_AMAP_LOCATION_API_KEY, apiKey.trim()).apply()
+
+    fun maskedAmapLocationApiKey(context: Context): String {
+        val key = getAmapLocationApiKey(context)
+        return when {
+            key.isBlank() -> "未设置"
+            key.length <= 4 -> "已设置"
+            else -> "已设置 (*${key.takeLast(4)})"
+        }
+    }
+
+    fun isAmapLocationPrivacyAgreed(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_AMAP_LOCATION_PRIVACY_AGREED, false)
+
+    fun setAmapLocationPrivacyAgreed(context: Context, agreed: Boolean) =
+        customEditor(context).putBoolean(KEY_AMAP_LOCATION_PRIVACY_AGREED, agreed).apply()
+
+    fun getAmapLocationProviderStrategy(context: Context): String {
+        return when (prefs(context).getString(KEY_AMAP_LOCATION_PROVIDER_STRATEGY, NATIVE_LOCATION_PROVIDER_AMAP_FIRST)) {
+            NATIVE_LOCATION_PROVIDER_SYSTEM -> NATIVE_LOCATION_PROVIDER_SYSTEM
+            NATIVE_LOCATION_PROVIDER_AMAP_ONLY -> NATIVE_LOCATION_PROVIDER_AMAP_ONLY
+            else -> NATIVE_LOCATION_PROVIDER_AMAP_FIRST
+        }
+    }
+
+    fun setAmapLocationProviderStrategy(context: Context, strategy: String) {
+        val normalized = when (strategy) {
+            NATIVE_LOCATION_PROVIDER_SYSTEM -> NATIVE_LOCATION_PROVIDER_SYSTEM
+            NATIVE_LOCATION_PROVIDER_AMAP_ONLY -> NATIVE_LOCATION_PROVIDER_AMAP_ONLY
+            else -> NATIVE_LOCATION_PROVIDER_AMAP_FIRST
+        }
+        customEditor(context).putString(KEY_AMAP_LOCATION_PROVIDER_STRATEGY, normalized).apply()
+    }
+
+    fun isAmapLocationH5AssistantEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_AMAP_LOCATION_H5_ASSISTANT_ENABLED, false)
+
+    fun setAmapLocationH5AssistantEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean(KEY_AMAP_LOCATION_H5_ASSISTANT_ENABLED, enabled).apply()
+
+    fun getAmapLocationH5AssistantAllowedOrigins(context: Context): Set<String> {
+        return normalizeStringSet(
+            prefs(context).getStringSet(KEY_AMAP_LOCATION_H5_ASSISTANT_ALLOWED_ORIGINS, emptySet()) ?: emptySet(),
+            ::normalizeOriginKey
+        )
+    }
+
+    fun setAmapLocationH5AssistantAllowedOrigins(context: Context, origins: Set<String>) {
+        prefs(context).edit()
+            .putStringSet(
+                KEY_AMAP_LOCATION_H5_ASSISTANT_ALLOWED_ORIGINS,
+                normalizeStringSet(origins, ::normalizeOriginKey)
+            )
+            .apply()
+    }
+
+    fun addAmapLocationH5AssistantAllowedOrigin(context: Context, origin: String) {
+        val current = getAmapLocationH5AssistantAllowedOrigins(context).toMutableSet()
+        normalizeOriginKey(origin).takeIf { it.isNotBlank() }?.let { current.add(it) }
+        setAmapLocationH5AssistantAllowedOrigins(context, current)
+    }
+
+    fun removeAmapLocationH5AssistantAllowedOrigin(context: Context, origin: String) {
+        val current = getAmapLocationH5AssistantAllowedOrigins(context).toMutableSet()
+        current.remove(normalizeOriginKey(origin))
+        setAmapLocationH5AssistantAllowedOrigins(context, current)
+    }
+
+    fun getNativeLocationCoordinateMode(context: Context): String {
+        return when (prefs(context).getString(KEY_NATIVE_LOCATION_COORDINATE_MODE, NATIVE_LOCATION_COORDINATE_WGS84)) {
+            NATIVE_LOCATION_COORDINATE_GCJ02_PER_SITE -> NATIVE_LOCATION_COORDINATE_GCJ02_PER_SITE
+            else -> NATIVE_LOCATION_COORDINATE_WGS84
+        }
+    }
+
+    fun setNativeLocationCoordinateMode(context: Context, mode: String) {
+        val normalized = when (mode) {
+            NATIVE_LOCATION_COORDINATE_GCJ02_PER_SITE -> NATIVE_LOCATION_COORDINATE_GCJ02_PER_SITE
+            else -> NATIVE_LOCATION_COORDINATE_WGS84
+        }
+        customEditor(context).putString(KEY_NATIVE_LOCATION_COORDINATE_MODE, normalized).apply()
+    }
+
+    fun getNativeLocationGcj02AllowedOrigins(context: Context): Set<String> {
+        return normalizeStringSet(
+            prefs(context).getStringSet(KEY_NATIVE_LOCATION_GCJ02_ALLOWED_ORIGINS, emptySet()) ?: emptySet(),
+            ::normalizeOriginKey
+        )
+    }
+
+    fun setNativeLocationGcj02AllowedOrigins(context: Context, origins: Set<String>) {
+        prefs(context).edit()
+            .putStringSet(
+                KEY_NATIVE_LOCATION_GCJ02_ALLOWED_ORIGINS,
+                normalizeStringSet(origins, ::normalizeOriginKey)
+            )
+            .apply()
+    }
 
     fun isLimitSslCheckEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_ssl_check", true)
     fun setLimitSslCheckEnabled(context: Context, enabled: Boolean) =

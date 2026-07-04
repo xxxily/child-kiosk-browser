@@ -648,7 +648,7 @@ class WebViewActivity : ComponentActivity() {
         tabList.forEach { tab ->
             tab.webView?.let { destroyWebViewSafely(it) }
         }
-        nativeLocationManager.stopAll()
+        nativeLocationManager.destroy()
         nativeLocationBridgeWatchIds.clear()
         nativeLocationBridgeNativeRequestIds.clear()
         nativeLocationBridgeWebViewRequests.clear()
@@ -1183,13 +1183,14 @@ class WebViewActivity : ComponentActivity() {
 
     fun requestNativeLocationForAdmin(callback: (NativeLocationResult) -> Unit) {
         val runRequest: () -> Unit = {
-            nativeLocationManager.requestSingleLocation(
-                config = runtimeConfig.copy(nativeLocationOptimizationEnabled = true),
-                timeoutMs = runtimeConfig.nativeLocationRequestTimeoutMs,
-                allowCached = true,
-                purpose = "admin_test",
-                callback = callback
-            )
+                nativeLocationManager.requestSingleLocation(
+                    config = runtimeConfig.copy(nativeLocationOptimizationEnabled = true),
+                    timeoutMs = runtimeConfig.nativeLocationRequestTimeoutMs,
+                    allowCached = true,
+                    purpose = "admin_test",
+                    origin = currentPageOrigin(),
+                    callback = callback
+                )
         }
         if (hasLocationPermission()) {
             runRequest()
@@ -1228,7 +1229,7 @@ class WebViewActivity : ComponentActivity() {
         }
         nativeLocationBridgeWatchIds.clear()
         nativeLocationBridgeNativeRequestIds.clear()
-        nativeLocationManager.stopAll()
+        nativeLocationManager.destroy()
         Log.d("ChildKioskLocation", "Stopped native location requests: $reason")
     }
 
@@ -1318,7 +1319,8 @@ class WebViewActivity : ComponentActivity() {
                 config = requestConfig,
                 timeoutMs = requestConfig.nativeLocationRequestTimeoutMs,
                 allowCached = true,
-                purpose = "bridge_get:$origin"
+                purpose = "bridge_get:$origin",
+                origin = origin
             ) { result ->
                 nativeLocationBridgeNativeRequestIds.remove(requestId)
                 dispatchNativeLocationBridgeResult(webView, requestId, result)
@@ -1389,7 +1391,7 @@ class WebViewActivity : ComponentActivity() {
         registerNativeLocationBridgeRequest(webView, requestId)
         val runRequest: () -> Unit = runRequest@{
             if (!isNativeLocationBridgeRequestActive(webView, requestId)) return@runRequest
-            val watchId = nativeLocationManager.startWatch(latestRuntimeConfig()) { result ->
+            val watchId = nativeLocationManager.startWatch(latestRuntimeConfig(), origin = origin) { result ->
                 dispatchNativeLocationBridgeResult(webView, requestId, result, isWatch = true)
                 if (!result.success) {
                     nativeLocationBridgeWatchIds.remove(requestId)?.let { nativeId ->
@@ -1547,6 +1549,20 @@ class WebViewActivity : ComponentActivity() {
             if (webView.url.isNullOrBlank()) return@post
             webView.evaluateJavascript(js, null)
         }
+    }
+
+    internal fun maybeStartAmapAssistantLocation(webView: WebView, url: String?) {
+        val latestConfig = latestRuntimeConfig()
+        if (!latestConfig.amapLocationEnabled || !latestConfig.amapLocationH5AssistantEnabled) return
+        if (latestConfig.limitGeolocation) return
+        val origin = normalizePermissionOrigin(originForWebStorage(url.orEmpty()).orEmpty())
+        if (origin.isBlank()) return
+        if (isOriginBlacklisted(latestConfig.geolocationBlacklist, origin)) return
+        nativeLocationManager.startAmapAssistantLocation(webView, latestConfig, origin)
+    }
+
+    internal fun stopAmapAssistantLocation(webView: WebView) {
+        nativeLocationManager.stopAmapAssistantLocation(webView)
     }
 
     private fun nativeLocationBridgePayload(
@@ -2233,6 +2249,7 @@ class WebViewActivity : ComponentActivity() {
         val webView = targetTab.webView
         if (webView != null) {
             clearNativeLocationBridgeRequests(webView)
+            stopAmapAssistantLocation(webView)
             unregisterFilterDiagnosticsWebView(webView)
             removeWebViewFromRoot(webView)
             runCatching {
@@ -2267,6 +2284,7 @@ class WebViewActivity : ComponentActivity() {
         removeWebViewFromRoot(webView)
         runCatching {
             clearNativeLocationBridgeRequests(webView)
+            stopAmapAssistantLocation(webView)
             webView.stopLoading()
             webView.destroy()
         }
@@ -3694,8 +3712,10 @@ private fun createSecureWebView(
                 onNavigationStateChanged()
                 if (view != null) {
                     (ctx as? WebViewActivity)?.clearNativeLocationBridgeRequests(view)
+                    (ctx as? WebViewActivity)?.stopAmapAssistantLocation(view)
                     injectNativeLocationBridgeIfNeeded(view, runtimeConfig)
                     injectPageScripts(view, ctx, runtimeConfig, "PAGE_STARTED")
+                    (ctx as? WebViewActivity)?.maybeStartAmapAssistantLocation(view, url)
                 }
             }
 
@@ -3720,6 +3740,7 @@ private fun createSecureWebView(
                     }
                     injectNativeLocationBridgeIfNeeded(view, runtimeConfig)
                     injectPageScripts(view, ctx, runtimeConfig, "PAGE_FINISHED")
+                    (ctx as? WebViewActivity)?.maybeStartAmapAssistantLocation(view, url)
                     onPageFinishedInActivity(view, url)
                 }
 
@@ -4595,6 +4616,7 @@ private fun shouldBlockPopup(
 
 private fun destroyWebViewSafely(webView: WebView) {
     runCatching {
+        (webView.context as? WebViewActivity)?.stopAmapAssistantLocation(webView)
         webView.stopLoading()
         webView.webChromeClient = null
         webView.webViewClient = WebViewClient()

@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+### Added — 新增
+
+- **高德 Android 定位 SDK 增强版构建**：
+  - 新增 `standard/enhanced` 构建变体，standard 不包含高德 SDK，enhanced 单独集成 `com.amap.api:location:11.2.000`。
+  - GitHub Actions 调整为同时输出 standard/enhanced 的 debug/release 四个 APK，用户可按需安装。
+  - 后台“网页定位增强”显示当前 APK 是否包含高德定位 SDK 以及 SDK 版本。
+- **高德 provider 与网页 Geolocation 托管**：
+  - enhanced 版本支持用户自行填写高德 Android SDK Key，并在完成隐私合规确认后启用高德定位 provider。
+  - 原生网页定位 bridge 支持“高德优先、系统回退 / 系统原生 / 仅高德”策略，继续复用 Origin 允许列表、定位黑名单、全局禁用定位和系统权限链路。
+  - 新增坐标系策略：默认按标准浏览器语义返回 WGS84；仅对明确加入兼容列表的可信站点返回 GCJ-02。
+- **高德 H5 辅助定位**：
+  - enhanced 版本新增高德 H5 辅助定位开关和允许 Origin，服务于使用高德 JS API 且 `useNative=true` 的页面。
+
+### Changed — 变更
+
+- **定位配置与生命周期收敛**：
+  - 现有系统 `LocationManager` 定位能力被纳入 provider 路由，作为 standard 默认能力和 enhanced 回退能力。
+  - WebView 页面跳转、标签关闭、冻结、销毁和 WebViewPool 回收时会清理定位 bridge 和高德 H5 辅助定位状态。
+
 ## [0.2.32] - 2026-07-03
 
 ### Fixed — 修复
