@@ -1,4 +1,4 @@
-## Child Kiosk Browser vNext
+## Child Kiosk Browser v0.3.0
 
 本轮新增按需安装的高德定位增强版。默认 standard APK 不包含高德 SDK；enhanced APK 单独集成高德 Android 定位 SDK，管理员填写自己的高德 Key 并确认隐私合规后，可信网页可通过现有 Geolocation bridge 使用高德优先、系统回退的定位策略。
 
