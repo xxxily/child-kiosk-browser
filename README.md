@@ -98,21 +98,49 @@ docs/
 ```bash
 git clone https://github.com/xxxily/child-kiosk-browser.git
 cd child-kiosk-browser
-./gradlew :app:assembleDebug          # 调试包
-./gradlew :app:assembleRelease        # 发布包（默认仍使用 debug 签名以便侧载）
+./gradlew :app:assembleStandardDebug :app:assembleStandardRelease
+./gradlew :app:assembleEnhancedDebug :app:assembleEnhancedRelease
 ```
 
 构建产物：
 
-- `app/build/outputs/apk/debug/app-debug.apk`
-- `app/build/outputs/apk/release/app-release.apk`
+- `app/build/outputs/apk/standard/debug/app-standard-debug.apk`
+- `app/build/outputs/apk/standard/release/app-standard-release.apk`
+- `app/build/outputs/apk/enhanced/debug/app-enhanced-debug.apk`
+- `app/build/outputs/apk/enhanced/release/app-enhanced-release.apk`
 
-> Release 包默认使用 debug keystore 签名，便于直接侧载。如需上架商店或自定义签名，请在 `app/build.gradle.kts` 中配置 `signingConfigs` 并替换 release 块。
+> 本项目发布到 GitHub Releases 的 release APK 使用项目 release 证书签名；本地没有配置 release keystore 时，Gradle 会回退到 debug 签名，便于直接侧载测试。
 
-### 2. ADB 安装到设备
+### 2. APK 版本选择与高德 Key
+
+GitHub Releases 从 `v0.3.0` 起同时提供两类 APK：
+
+- `standard`：不包含高德定位 SDK，适合不需要第三方定位增强的用户。
+- `enhanced`：包含高德 Android 定位 SDK。管理员需要在高德开放平台自行申请 Android SDK Key，并在应用后台填写 Key、确认隐私合规后启用。
+
+申请高德 Android SDK Key 时，使用以下公开信息：
+
+```text
+包名 / Package:
+site.anzz.childkiosk
+
+发布签名 SHA1:
+7F:C2:48:26:64:BF:D1:B3:79:CA:72:6F:BE:BA:E3:01:B9:61:F5:7D
+```
+
+说明：
+
+- 包名和 APK 签名证书 SHA1 可以公开；它们用于高德控制台绑定应用身份，不包含私钥或签名密码。
+- 不要公开或提交 keystore、`KEYSTORE_BASE64`、`KEYSTORE_PWD`、`KEY_PWD` 等签名私密材料。
+- 如果你自行重新签名 APK，需要在高德控制台使用你自己的签名 SHA1，而不是上面的项目发布签名。
+- debug APK 使用 debug 签名，不建议用于正式高德 Key 绑定。
+
+### 3. ADB 安装到设备
 
 ```bash
-adb install -r -t app/build/outputs/apk/release/app-release.apk
+adb install -r -t app/build/outputs/apk/standard/release/app-standard-release.apk
+# 或安装高德增强版：
+adb install -r -t app/build/outputs/apk/enhanced/release/app-enhanced-release.apk
 ```
 
 ---
