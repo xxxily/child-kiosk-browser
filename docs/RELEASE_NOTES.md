@@ -1,3 +1,24 @@
+## Child Kiosk Browser v0.3.6
+
+本版本继续排查网页触发高德定位时仍可能出现 `INVALID_USER_KEY` 的问题。核心变化是修复高德配置写入跨进程 runtime 快照时的异步竞态，并新增脱敏诊断上下文，用来直接对比后台测试路径和 `:webview` 网页路径实际使用的高德 Key 指纹与配置来源。
+
+### 本轮核心变化
+
+* **修复高德配置快照竞态**：保存高德 Key、隐私确认、provider 策略和 H5 辅助定位配置时，先同步提交偏好设置，再写入供 WebView 进程读取的 runtime 快照，避免旧 Key 被写入快照。
+* **诊断显示 WebView 进程配置**：定位诊断会展示当前进程、是否 `:webview` 进程、provider 策略、Key 长度与 SHA-256 短指纹、runtime 快照更新时间和读取状态。
+* **高德 SDK 调用链脱敏日志**：enhanced 版本会记录 `setApiKey`、client 创建、单次定位 attempt、鉴权失败重试、SDK 回调和 H5 辅助定位启动等关键节点。
+* **网页记录附带排查上下文**：网页定位失败和系统回退记录会包含 `effectiveKey`、`prefsKey`、`runtimeFile`、`configuredKey`、`requestKey` 等脱敏字段，便于判断是否仍存在进程间配置不一致。
+* **不泄露敏感信息**：诊断只记录 Key 长度和短指纹，不记录高德 Key 原文，也不记录定位坐标。
+
+### 建议验证
+
+1. 安装 `child-kiosk-browser-0.3.6-enhanced-release.apk`。
+2. 进入后台“能力增强”，重新保存一次高德 Key、隐私确认和 provider 策略。
+3. 完全退出并重新打开应用，用可信网页触发 `navigator.geolocation`。
+4. 打开定位诊断详情，对比网页记录中的 `effectiveKey`、`prefsKey`、`runtimeFile`、`configuredKey` 和 `requestKey` 是否一致，并确认 `process` 为 `site.anzz.childkiosk:webview`。
+
+---
+
 ## Child Kiosk Browser v0.3.5
 
 本版本继续收敛高德增强定位在真实网页中的偶发问题，同时整理后台设置结构。网页定位增强已经从“安全沙箱与限制”中移到独立的“能力增强”内页，后续新增增强能力也会放在这个入口下，避免配置页继续膨胀。
