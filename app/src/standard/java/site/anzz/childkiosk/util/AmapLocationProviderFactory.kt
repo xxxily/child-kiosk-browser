@@ -4,7 +4,11 @@ import android.content.Context
 import android.webkit.WebView
 
 object AmapLocationProviderFactory {
-    fun create(context: Context): AmapLocationProvider = NoOpAmapLocationProvider
+    fun create(@Suppress("UNUSED_PARAMETER") context: Context): AmapLocationProvider = NoOpAmapLocationProvider
+    fun configureApiKey(
+        @Suppress("UNUSED_PARAMETER") context: Context,
+        @Suppress("UNUSED_PARAMETER") apiKey: String
+    ) = Unit
 }
 
 private object NoOpAmapLocationProvider : AmapLocationProvider {

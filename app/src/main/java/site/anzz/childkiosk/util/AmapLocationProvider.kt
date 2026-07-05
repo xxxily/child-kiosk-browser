@@ -37,3 +37,7 @@ interface AmapLocationProvider {
     fun stopAssistantLocation(webView: WebView)
     fun stopAllAssistantLocations()
 }
+
+interface AmapLocationApiKeyConfigurator {
+    fun configureApiKey(apiKey: String)
+}

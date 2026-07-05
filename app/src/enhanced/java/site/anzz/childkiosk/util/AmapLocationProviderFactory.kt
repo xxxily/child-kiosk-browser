@@ -15,6 +15,10 @@ import java.util.concurrent.ConcurrentHashMap
 
 object AmapLocationProviderFactory {
     fun create(context: Context): AmapLocationProvider = RealAmapLocationProvider(context.applicationContext)
+
+    fun configureApiKey(@Suppress("UNUSED_PARAMETER") context: Context, apiKey: String) {
+        RealAmapLocationProvider.configureApiKey(apiKey)
+    }
 }
 
 private class RealAmapLocationProvider(private val appContext: Context) : AmapLocationProvider {
@@ -198,9 +202,9 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
         startedAt: Long
     ): AMapLocationClient? {
         return runCatching {
+            configureApiKey(config.amapLocationApiKey)
             AMapLocationClient.updatePrivacyShow(appContext, true, true)
             AMapLocationClient.updatePrivacyAgree(appContext, true)
-            AMapLocationClient.setApiKey(config.amapLocationApiKey)
             AMapLocationClient(appContext)
         }.getOrElse { e ->
             callback?.let {
@@ -212,6 +216,18 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
                 )
             }
             null
+        }
+    }
+
+    companion object : AmapLocationApiKeyConfigurator {
+        @Volatile
+        private var lastConfiguredApiKey: String = ""
+
+        override fun configureApiKey(apiKey: String) {
+            val normalized = apiKey.trim()
+            if (normalized.isBlank() || normalized == lastConfiguredApiKey) return
+            AMapLocationClient.setApiKey(normalized)
+            lastConfiguredApiKey = normalized
         }
     }
 

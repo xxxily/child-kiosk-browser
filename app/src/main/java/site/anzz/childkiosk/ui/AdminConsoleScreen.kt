@@ -52,6 +52,7 @@ import site.anzz.childkiosk.data.AppDatabase
 import site.anzz.childkiosk.data.SystemConfigEntity
 import site.anzz.childkiosk.data.WebAppEntity
 import site.anzz.childkiosk.util.HashUtils
+import site.anzz.childkiosk.util.AmapLocationProviderFactory
 import site.anzz.childkiosk.util.KioskPrefs
 import site.anzz.childkiosk.util.NativeLocationManager
 import site.anzz.childkiosk.util.NativeLocationResult
@@ -2538,6 +2539,7 @@ fun AdminConsoleScreen(
                                                     onValueChange = {
                                                         amapLocationApiKey = it.trim()
                                                         KioskPrefs.setAmapLocationApiKey(context, amapLocationApiKey)
+                                                        AmapLocationProviderFactory.configureApiKey(context, amapLocationApiKey)
                                                         refreshNativeLocationDiagnostics()
                                                     },
                                                     enabled = !limitGeolocation,

@@ -1,3 +1,23 @@
+## Child Kiosk Browser v0.3.3
+
+本版本继续修复高德定位 Key 初始化时机。由于本项目的 enhanced APK 面向不同用户分发，不能在 Manifest 中内置某一个公共高德 Key，因此继续使用高德官方支持的 `AMapLocationClient.setApiKey(String)` 动态设置方式；本轮把 `setApiKey` 提前到所有高德 SDK 调用之前，并在应用启动和后台保存 Key 时主动刷新。
+
+### 本轮核心变化
+
+* **Key 设置更早执行**：`AMapLocationClient.setApiKey()` 现在早于隐私确认 API 和 `AMapLocationClient` 实例创建。
+* **进程启动预配置**：应用启动时会读取后台保存的高德 Key 并提前配置 SDK。
+* **后台修改即时刷新**：管理员修改高德 Key 后立即调用 SDK 更新 Key，不等到下一次定位请求。
+* **不内置公共 Key**：Manifest 不写死 `com.amap.api.v2.apikey`，避免发布包泄露或共享某个用户的高德 Key。
+
+### 建议验证
+
+1. 安装 `child-kiosk-browser-0.3.3-enhanced-release.apk`。
+2. 进入后台确认高德 Key、包名和 SHA1 绑定值无误。
+3. 保存 Key 后完全退出并重新打开应用，再测试高德 provider 定位。
+4. 如果仍出现 `INVALID_USER_KEY#SHA1AndPackage`，把新版定位诊断中“高德校验包名/SHA1”与高德控制台 Android Key 绑定项逐字对照。
+
+---
+
 ## Child Kiosk Browser v0.3.2
 
 本版本修复 enhanced APK 的高德定位 SDK Manifest 集成缺口。经复核，GitHub Release APK 的实际包名和发布签名 SHA1 与文档一致；本轮补齐高德定位 SDK 要求的 `APSService` 声明，避免 SDK 初始化后仍出现鉴权/定位服务异常。

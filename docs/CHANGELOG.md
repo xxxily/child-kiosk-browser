@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-07-05
+
+### Fixed — 修复
+
+- **高德动态 Key 初始化时机修正**：
+  - 将 `AMapLocationClient.setApiKey()` 调整到高德隐私确认 API 和 `AMapLocationClient` 创建之前执行，严格满足“Key 设置要在 SDK 业务初始化之前”的要求。
+  - 应用进程启动时会用后台已保存的 Key 提前配置高德 SDK；后台修改 Key 后也会立即刷新 SDK 内部 Key。
+  - 仍不在 Manifest 中写入 `com.amap.api.v2.apikey`，避免公共 APK 内置某个用户的高德 Key；用户自行填写 Key 的场景继续使用官方支持的 `setApiKey(String)` 方式。
+
 ## [0.3.2] - 2026-07-05
 
 ### Fixed — 修复
