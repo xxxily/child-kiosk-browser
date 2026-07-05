@@ -1,3 +1,24 @@
+## Child Kiosk Browser v0.3.7
+
+本版本针对“后台测试高德定位正常，但网页触发定位仍偶发 `INVALID_USER_KEY`”继续修复。根据诊断日志，主进程和 `:webview` 进程使用的是同一个高德 Key 指纹，包名/SHA1 也一致，因此本轮把网页定位的高德调用从 WebView 独立进程收回主进程执行，复用后台测试已经验证正常的 SDK 初始化路径。
+
+### 本轮核心变化
+
+* **网页定位走主进程代理**：网页 `navigator.geolocation.getCurrentPosition` 和 `watchPosition` 通过主进程定位代理执行，不再直接在 `site.anzz.childkiosk:webview` 进程初始化高德 SDK。
+* **规避 WebView 进程鉴权异常**：主进程代理复用后台测试路径，降低高德 SDK 在 WebView 独立进程内出现 `INVALID_USER_KEY` 的风险。
+* **初始化顺序收紧**：去掉应用启动和 Key 输入时提前调用 `setApiKey` 的行为，只在定位请求开始前按“隐私确认接口 -> setApiKey -> 创建 `AMapLocationClient`”执行。
+* **诊断更容易确认路径**：网页定位结果说明会附带“主进程定位代理”，用于确认网页请求已经走新代理路径。
+* **仍保留系统回退**：高德失败时继续按现有 provider 策略回退系统定位，网页不会因为高德异常直接崩溃。
+
+### 建议验证
+
+1. 安装 `child-kiosk-browser-0.3.7-enhanced-release.apk`。
+2. 完全退出并重新打开应用，进入可信网页触发 `navigator.geolocation`。
+3. 打开后台“能力增强”里的定位诊断详情，确认网页定位记录的说明中出现“主进程定位代理”。
+4. 确认网页定位记录不再持续出现 `site.anzz.childkiosk:webview` 进程下的高德 `INVALID_USER_KEY`。
+
+---
+
 ## Child Kiosk Browser v0.3.6
 
 本版本继续排查网页触发高德定位时仍可能出现 `INVALID_USER_KEY` 的问题。核心变化是修复高德配置写入跨进程 runtime 快照时的异步竞态，并新增脱敏诊断上下文，用来直接对比后台测试路径和 `:webview` 网页路径实际使用的高德 Key 指纹与配置来源。
