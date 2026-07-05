@@ -17,7 +17,16 @@ import java.util.concurrent.ConcurrentHashMap
 object AmapLocationProviderFactory {
     fun create(context: Context): AmapLocationProvider = RealAmapLocationProvider(context.applicationContext)
 
-    fun configureApiKey(@Suppress("UNUSED_PARAMETER") context: Context, apiKey: String) {
+    fun configureApiKey(context: Context, apiKey: String) {
+        AmapLocationDebug.log(
+            context.applicationContext,
+            "configure_api_key_entry",
+            KioskPrefs.mergeFreshAmapLocationRuntimeConfig(
+                context.applicationContext,
+                KioskPrefs.getWebViewRuntimeConfig(context.applicationContext)
+            ),
+            "entryKey=${AmapLocationDebug.keyLabel(apiKey)}"
+        )
         RealAmapLocationProvider.configureApiKey(apiKey, force = false)
     }
 }
@@ -65,6 +74,12 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
     ): String {
         val latestConfig = KioskPrefs.mergeFreshAmapLocationRuntimeConfig(appContext, config)
         if (!isUsable(latestConfig)) {
+            AmapLocationDebug.log(
+                appContext,
+                "single_unusable",
+                latestConfig,
+                "origin=${origin.orEmpty()}, reason=${availabilityLabel(latestConfig)}"
+            )
             dispatchError(NativeLocationError.PROVIDER_UNAVAILABLE, availabilityLabel(config), callback)
             return ""
         }
@@ -75,8 +90,15 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
                 config = latestConfig,
                 timeoutMs = timeoutMs,
                 allowCached = allowCached,
+                origin = origin,
                 callback = callback
             )
+        )
+        AmapLocationDebug.log(
+            appContext,
+            "single_enqueue",
+            latestConfig,
+            "request=${shortId(requestId)}, origin=${origin.orEmpty()}, timeoutMs=$timeoutMs, allowCached=$allowCached"
         )
         mainHandler.post {
             if (!activeRequests.containsKey(requestId)) return@post
@@ -93,7 +115,7 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
             val active = activeRequests[requestId] ?: continue
             val single = active.single ?: continue
             runningSingleRequestId = requestId
-            startSingleAttempt(requestId, active, single, retryAuthFailure = true)
+            startSingleAttempt(requestId, active, single, retryAuthFailure = true, attempt = 1)
             return
         }
     }
@@ -102,13 +124,25 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
         requestId: String,
         active: ActiveAmapRequest,
         single: SingleAmapRequest,
-        retryAuthFailure: Boolean
+        retryAuthFailure: Boolean,
+        attempt: Int
     ) {
         if (!activeRequests.containsKey(requestId) || runningSingleRequestId != requestId) return
 
         active.destroyClientOnly()
         val startedAt = System.currentTimeMillis()
-        val client = createClient(single.config, single.callback, startedAt)
+        AmapLocationDebug.log(
+            appContext,
+            "single_attempt_start",
+            single.config,
+            "request=${shortId(requestId)}, attempt=$attempt, origin=${single.origin.orEmpty()}, retryAuth=$retryAuthFailure"
+        )
+        val client = createClient(
+            single.config,
+            single.callback,
+            startedAt,
+            "single:${shortId(requestId)}:attempt=$attempt"
+        )
         if (client == null) {
             activeRequests.remove(requestId)?.destroy()
             releaseSingleRequestSlot(requestId)
@@ -126,7 +160,11 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
                     precisePermission = true,
                     elapsedMs = System.currentTimeMillis() - startedAt,
                     error = NativeLocationError.TIMEOUT,
-                    message = "高德定位请求超时"
+                    message = providerDebugMessage(
+                        "高德定位请求超时",
+                        single.config,
+                        "request=${shortId(requestId)}, attempt=$attempt, origin=${single.origin.orEmpty()}"
+                    )
                 ),
                 single.callback
             )
@@ -143,12 +181,30 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
             val current = activeRequests[requestId] ?: return@setLocationListener
             if (current.client !== client) return@setLocationListener
             current.destroyClientOnly()
-            val result = resultFromLocation(location, startedAt, "高德单次定位返回")
+            val result = resultFromLocation(
+                location = location,
+                startedAt = startedAt,
+                successMessage = "高德单次定位返回",
+                config = single.config,
+                debugExtra = "request=${shortId(requestId)}, attempt=$attempt, origin=${single.origin.orEmpty()}"
+            )
+            AmapLocationDebug.log(
+                appContext,
+                "single_callback",
+                single.config,
+                "request=${shortId(requestId)}, attempt=$attempt, success=${result.success}, error=${result.error?.name ?: "none"}, elapsedMs=${result.elapsedMs}"
+            )
             if (retryAuthFailure && isAuthFailure(result)) {
                 val retry = Runnable {
                     current.retryRunnable = null
                     if (activeRequests.containsKey(requestId) && runningSingleRequestId == requestId) {
-                        startSingleAttempt(requestId, current, single, retryAuthFailure = false)
+                        AmapLocationDebug.log(
+                            appContext,
+                            "single_auth_retry",
+                            single.config,
+                            "request=${shortId(requestId)}, nextAttempt=${attempt + 1}, origin=${single.origin.orEmpty()}"
+                        )
+                        startSingleAttempt(requestId, current, single, retryAuthFailure = false, attempt = attempt + 1)
                     }
                 }
                 current.retryRunnable = retry
@@ -167,7 +223,16 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
         }.onFailure { e ->
             activeRequests.remove(requestId)?.destroy()
             releaseSingleRequestSlot(requestId)
-            dispatchError(NativeLocationError.UNKNOWN, e.message ?: "启动高德定位失败", single.callback, startedAt)
+            dispatchError(
+                NativeLocationError.UNKNOWN,
+                providerDebugMessage(
+                    e.message ?: "启动高德定位失败",
+                    single.config,
+                    "request=${shortId(requestId)}, attempt=$attempt, origin=${single.origin.orEmpty()}, exception=${e.javaClass.simpleName}"
+                ),
+                single.callback,
+                startedAt
+            )
         }
     }
 
@@ -184,16 +249,31 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
         callback: (NativeLocationResult) -> Unit
     ): String {
         if (!isUsable(config)) {
+            AmapLocationDebug.log(
+                appContext,
+                "watch_unusable",
+                config,
+                "origin=${origin.orEmpty()}, reason=${availabilityLabel(config)}"
+            )
             dispatchError(NativeLocationError.PROVIDER_UNAVAILABLE, availabilityLabel(config), callback)
             return ""
         }
 
         val startedAt = System.currentTimeMillis()
-        val client = createClient(config, callback, startedAt) ?: return ""
         val requestId = UUID.randomUUID().toString()
+        val client = createClient(config, callback, startedAt, "watch:${shortId(requestId)}") ?: return ""
         val timeout = Runnable {
             cancelRequest(requestId)
-            dispatchError(NativeLocationError.TIMEOUT, "高德 watchPosition 达到最长持续时间", callback, startedAt)
+            dispatchError(
+                NativeLocationError.TIMEOUT,
+                providerDebugMessage(
+                    "高德 watchPosition 达到最长持续时间",
+                    config,
+                    "request=${shortId(requestId)}, origin=${origin.orEmpty()}"
+                ),
+                callback,
+                startedAt
+            )
         }
         activeRequests[requestId] = ActiveAmapRequest(client = client, timeout = timeout)
 
@@ -205,7 +285,16 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
         }
         client.setLocationListener { location ->
             if (!activeRequests.containsKey(requestId)) return@setLocationListener
-            dispatch(resultFromLocation(location, startedAt, "高德连续定位返回"), callback)
+            dispatch(
+                resultFromLocation(
+                    location = location,
+                    startedAt = startedAt,
+                    successMessage = "高德连续定位返回",
+                    config = config,
+                    debugExtra = "request=${shortId(requestId)}, origin=${origin.orEmpty()}"
+                ),
+                callback
+            )
         }
         client.setLocationOption(option)
         mainHandler.postDelayed(timeout, config.nativeLocationWatchMaxDurationMs)
@@ -213,7 +302,16 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
             client.startLocation()
         }.onFailure { e ->
             activeRequests.remove(requestId)?.destroy()
-            dispatchError(NativeLocationError.UNKNOWN, e.message ?: "启动高德连续定位失败", callback, startedAt)
+            dispatchError(
+                NativeLocationError.UNKNOWN,
+                providerDebugMessage(
+                    e.message ?: "启动高德连续定位失败",
+                    config,
+                    "request=${shortId(requestId)}, origin=${origin.orEmpty()}, exception=${e.javaClass.simpleName}"
+                ),
+                callback,
+                startedAt
+            )
             return ""
         }
         return requestId
@@ -256,13 +354,23 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
             return false
         }
         stopAssistantLocation(webView)
-        val client = createClient(config, callback = null, startedAt = System.currentTimeMillis()) ?: return false
+        val client = createClient(
+            config,
+            callback = null,
+            startedAt = System.currentTimeMillis(),
+            debugSource = "h5_assistant:$normalizedOrigin"
+        ) ?: return false
         return runCatching {
             client.startAssistantLocation(webView)
             assistantClients[webView] = client
+            AmapLocationDebug.log(appContext, "h5_assistant_started", config, "origin=$normalizedOrigin")
             true
         }.getOrElse { e ->
-            lastDiagnostic = "H5辅助定位启动失败: ${e.message ?: e.javaClass.simpleName}"
+            lastDiagnostic = providerDebugMessage(
+                "H5辅助定位启动失败: ${e.message ?: e.javaClass.simpleName}",
+                config,
+                "origin=$normalizedOrigin, exception=${e.javaClass.simpleName}"
+            )
             runCatching { client.onDestroy() }
             false
         }
@@ -283,22 +391,42 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
     private fun createClient(
         config: WebViewRuntimeConfig,
         callback: ((NativeLocationResult) -> Unit)?,
-        startedAt: Long
+        startedAt: Long,
+        debugSource: String
     ): AMapLocationClient? {
         return runCatching {
+            AmapLocationDebug.log(
+                appContext,
+                "create_client_start",
+                config,
+                "source=$debugSource, lastConfigured=${configuredKeyLabel()}"
+            )
             configureApiKey(config.amapLocationApiKey, force = true)
             AMapLocationClient.updatePrivacyShow(appContext, true, true)
             AMapLocationClient.updatePrivacyAgree(appContext, true)
-            AMapLocationClient(appContext)
+            AMapLocationClient(appContext).also {
+                AmapLocationDebug.log(
+                    appContext,
+                    "create_client_success",
+                    config,
+                    "source=$debugSource, lastConfigured=${configuredKeyLabel()}"
+                )
+            }
         }.getOrElse { e ->
+            val debugMessage = providerDebugMessage(
+                e.message ?: "初始化高德定位客户端失败",
+                config,
+                "source=$debugSource, exception=${e.javaClass.simpleName}, lastConfigured=${configuredKeyLabel()}"
+            )
             callback?.let {
                 dispatchError(
                     NativeLocationError.UNKNOWN,
-                    e.message ?: "初始化高德定位客户端失败",
+                    debugMessage,
                     it,
                     startedAt
                 )
             }
+            AmapLocationDebug.log(appContext, "create_client_failed", config, debugMessage)
             null
         }
     }
@@ -320,6 +448,8 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
             AMapLocationClient.setApiKey(normalized)
             lastConfiguredApiKey = normalized
         }
+
+        fun configuredKeyLabel(): String = AmapLocationDebug.keyLabel(lastConfiguredApiKey)
     }
 
     private fun modeFor(config: WebViewRuntimeConfig): AMapLocationClientOption.AMapLocationMode {
@@ -333,7 +463,9 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
     private fun resultFromLocation(
         location: AMapLocation?,
         startedAt: Long,
-        successMessage: String
+        successMessage: String,
+        config: WebViewRuntimeConfig,
+        debugExtra: String
     ): NativeLocationResult {
         if (location == null) {
             return NativeLocationResult(
@@ -341,7 +473,7 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
                 provider = "amap",
                 elapsedMs = System.currentTimeMillis() - startedAt,
                 error = NativeLocationError.PROVIDER_UNAVAILABLE,
-                message = "高德定位返回空结果"
+                message = providerDebugMessage("高德定位返回空结果", config, debugExtra)
             )
         }
         if (location.errorCode != AMapLocation.LOCATION_SUCCESS) {
@@ -352,7 +484,7 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
                 wallTimeMillis = location.time,
                 elapsedMs = System.currentTimeMillis() - startedAt,
                 error = NativeLocationError.PROVIDER_UNAVAILABLE,
-                message = amapFailureMessage(location)
+                message = providerDebugMessage(amapFailureMessage(location), config, debugExtra)
             )
         }
         val coordinateSystem = if (CoordinateTransforms.outOfChina(location.latitude, location.longitude)) {
@@ -374,7 +506,7 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
             coordinateSystem = coordinateSystem,
             precisePermission = true,
             elapsedMs = System.currentTimeMillis() - startedAt,
-            message = "$successMessage type=${location.locationType}"
+            message = providerDebugMessage("$successMessage type=${location.locationType}", config, debugExtra)
         )
     }
 
@@ -446,6 +578,12 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
         }
     }
 
+    private fun providerDebugMessage(message: String, config: WebViewRuntimeConfig, extra: String): String {
+        return "$message；SDK调试: $extra, configuredKey=${configuredKeyLabel()}, requestKey=${AmapLocationDebug.keyLabel(config.amapLocationApiKey)}"
+    }
+
+    private fun shortId(id: String): String = id.take(8)
+
     private fun isAuthFailure(result: NativeLocationResult): Boolean {
         return !result.success &&
             result.provider == "amap" &&
@@ -456,6 +594,7 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
         val config: WebViewRuntimeConfig,
         val timeoutMs: Long,
         val allowCached: Boolean,
+        val origin: String?,
         val callback: (NativeLocationResult) -> Unit
     )
 

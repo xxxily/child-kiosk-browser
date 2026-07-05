@@ -855,6 +855,54 @@ object KioskPrefs {
         )
     }
 
+    fun getAmapLocationRuntimeConfigDebugSnapshot(context: Context): AmapLocationRuntimeConfigSnapshot {
+        val appContext = context.applicationContext
+        val file = amapLocationRuntimeConfigFile(appContext).baseFile
+        if (!file.exists()) {
+            return AmapLocationRuntimeConfigSnapshot(
+                exists = false,
+                updatedAt = null,
+                lastModifiedAt = null,
+                enabled = null,
+                apiKeyLength = 0,
+                apiKeyFingerprint = "blank",
+                privacyAgreed = null,
+                providerStrategy = null,
+                h5AssistantEnabled = null
+            )
+        }
+        return runCatching {
+            val json = JSONObject(file.readText(Charsets.UTF_8))
+            val key = json.optString("amapLocationApiKey", "").trim()
+            AmapLocationRuntimeConfigSnapshot(
+                exists = true,
+                updatedAt = json.optLong("updatedAt").takeIf { it > 0L },
+                lastModifiedAt = file.lastModified().takeIf { it > 0L },
+                enabled = json.optBoolean("amapLocationEnabled"),
+                apiKeyLength = key.length,
+                apiKeyFingerprint = AmapLocationDebug.keyFingerprint(key),
+                privacyAgreed = json.optBoolean("amapLocationPrivacyAgreed"),
+                providerStrategy = normalizeAmapLocationProviderStrategy(
+                    json.optString("amapLocationProviderStrategy", NATIVE_LOCATION_PROVIDER_AMAP_FIRST)
+                ),
+                h5AssistantEnabled = json.optBoolean("amapLocationH5AssistantEnabled")
+            )
+        }.getOrElse { error ->
+            AmapLocationRuntimeConfigSnapshot(
+                exists = true,
+                updatedAt = null,
+                lastModifiedAt = file.lastModified().takeIf { it > 0L },
+                enabled = null,
+                apiKeyLength = 0,
+                apiKeyFingerprint = "blank",
+                privacyAgreed = null,
+                providerStrategy = null,
+                h5AssistantEnabled = null,
+                readError = error.javaClass.simpleName
+            )
+        }
+    }
+
     fun getWebPreloadEnabled(context: Context): Boolean {
         return prefs(context).getBoolean("web_preload_enabled", false)
     }
@@ -1512,7 +1560,7 @@ object KioskPrefs {
     }
 
     private fun SharedPreferences.Editor.applyAmapLocationRuntimeConfig(context: Context) {
-        apply()
+        commit()
         writeAmapLocationRuntimeConfig(context.applicationContext)
     }
 

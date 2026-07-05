@@ -150,6 +150,7 @@ class NativeLocationManager(private val context: Context) {
             appendLine("可用 Provider: ${status.providers.ifEmpty { listOf("无") }.joinToString()}")
             appendLine("最近一次: ${status.lastDiagnostic}")
             appendLine("高德 SDK: ${amapProvider.diagnosticSummary(latestConfig)}")
+            appendLine("高德配置调试: ${AmapLocationDebug.configSummary(appContext, latestConfig)}")
             appendLine("活跃请求数: ${activeRequests.size}")
             appendLine("路由请求数: ${routedRequests.size}")
             appendLine("最近注册: ${formatRelativeTime(lastListenerRegisteredAtMs)}")
@@ -176,6 +177,12 @@ class NativeLocationManager(private val context: Context) {
         callback: (NativeLocationResult) -> Unit
     ): String {
         val effectiveConfig = KioskPrefs.mergeFreshAmapLocationRuntimeConfig(appContext, config)
+        AmapLocationDebug.log(
+            appContext,
+            "route_single",
+            effectiveConfig,
+            "purpose=$purpose, origin=${origin.orEmpty()}, timeoutMs=$timeoutMs, allowCached=$allowCached"
+        )
         if (shouldUseAmap(effectiveConfig)) {
             return requestAmapFirstLocation(effectiveConfig, timeoutMs, allowCached, purpose, origin, callback)
         }
@@ -197,7 +204,12 @@ class NativeLocationManager(private val context: Context) {
                     success = false,
                     provider = "amap",
                     error = NativeLocationError.PROVIDER_UNAVAILABLE,
-                    message = amapProvider.availabilityLabel(config)
+                    message = AmapLocationDebug.appendToMessage(
+                        amapProvider.availabilityLabel(config),
+                        appContext,
+                        config,
+                        "purpose=$purpose, origin=${origin.orEmpty()}, stage=provider_unusable"
+                    )
                 )
                 recordAndDispatch(result, callback, purpose, origin)
                 return ""
@@ -215,11 +227,18 @@ class NativeLocationManager(private val context: Context) {
         }
 
         fun fallbackToSystem(amapFailure: NativeLocationResult) {
-            if (strategy == KioskPrefs.NATIVE_LOCATION_PROVIDER_AMAP_ONLY || !shouldFallbackFromAmap(amapFailure)) {
-                deliver(amapFailure)
+            val contextualFailure = withAmapDebug(
+                result = amapFailure,
+                config = config,
+                purpose = purpose,
+                origin = origin,
+                stage = "amap_result"
+            )
+            if (strategy == KioskPrefs.NATIVE_LOCATION_PROVIDER_AMAP_ONLY || !shouldFallbackFromAmap(contextualFailure)) {
+                deliver(contextualFailure)
                 return
             }
-            NativeLocationAuditStore.record(appContext, "amap_fallback:$purpose", origin, amapFailure)
+            NativeLocationAuditStore.record(appContext, "amap_fallback:$purpose", origin, contextualFailure)
             val systemId = requestSystemSingleLocation(
                 config = config,
                 timeoutMs = timeoutMs,
@@ -227,7 +246,11 @@ class NativeLocationManager(private val context: Context) {
                 purpose = "fallback_after_amap:$purpose",
                 origin = origin
             ) { systemResult ->
-                deliver(systemResult.copy(message = "${systemResult.message.ifBlank { "系统定位返回" }}；高德回退原因: ${amapFailure.message}"))
+                deliver(
+                    systemResult.copy(
+                        message = "${systemResult.message.ifBlank { "系统定位返回" }}；高德回退原因: ${contextualFailure.message}"
+                    )
+                )
             }
             route.systemId = systemId
             if (systemId.isBlank()) {
@@ -243,7 +266,14 @@ class NativeLocationManager(private val context: Context) {
         ) { result ->
             if (!routedRequests.containsKey(routeId)) return@requestSingleLocation
             if (result.success) {
-                deliver(result)
+                val contextualResult = withAmapDebug(
+                    result = result,
+                    config = config,
+                    purpose = purpose,
+                    origin = origin,
+                    stage = "amap_result"
+                )
+                deliver(contextualResult)
             } else {
                 fallbackToSystem(result)
             }
@@ -353,11 +383,18 @@ class NativeLocationManager(private val context: Context) {
             var suppressStartupFailure = true
             var startupFailure: NativeLocationResult? = null
             val watchId = amapProvider.startWatch(effectiveConfig, origin) amapCallback@{ result ->
+                val contextualResult = withAmapDebug(
+                    result = result,
+                    config = effectiveConfig,
+                    purpose = "watch",
+                    origin = origin,
+                    stage = "amap_watch"
+                )
                 if (suppressStartupFailure && !result.success) {
-                    startupFailure = result
+                    startupFailure = contextualResult
                     return@amapCallback
                 }
-                recordAndDispatch(resultForWeb(result, effectiveConfig, origin), callback, "watch", origin)
+                recordAndDispatch(resultForWeb(contextualResult, effectiveConfig, origin), callback, "watch", origin)
             }
             suppressStartupFailure = false
             if (watchId.isNotBlank()) {
@@ -368,7 +405,12 @@ class NativeLocationManager(private val context: Context) {
                     success = false,
                     provider = "amap",
                     error = NativeLocationError.PROVIDER_UNAVAILABLE,
-                    message = amapProvider.availabilityLabel(effectiveConfig)
+                    message = AmapLocationDebug.appendToMessage(
+                        amapProvider.availabilityLabel(effectiveConfig),
+                        appContext,
+                        effectiveConfig,
+                        "purpose=watch, origin=${origin.orEmpty()}, stage=watch_start_failed"
+                    )
                 )
                 recordAndDispatch(resultForWeb(result, effectiveConfig, origin), callback, "watch", origin)
                 return ""
@@ -379,7 +421,12 @@ class NativeLocationManager(private val context: Context) {
                     success = false,
                     provider = "amap",
                     error = NativeLocationError.PROVIDER_UNAVAILABLE,
-                    message = amapProvider.availabilityLabel(effectiveConfig)
+                    message = AmapLocationDebug.appendToMessage(
+                        amapProvider.availabilityLabel(effectiveConfig),
+                        appContext,
+                        effectiveConfig,
+                        "purpose=watch, origin=${origin.orEmpty()}, stage=provider_unusable"
+                    )
                 ),
                 callback,
                 "watch",
@@ -712,6 +759,24 @@ class NativeLocationManager(private val context: Context) {
             result.error != NativeLocationError.DISABLED
     }
 
+    private fun withAmapDebug(
+        result: NativeLocationResult,
+        config: WebViewRuntimeConfig,
+        purpose: String,
+        origin: String?,
+        stage: String
+    ): NativeLocationResult {
+        if (result.provider != "amap") return result
+        return result.copy(
+            message = AmapLocationDebug.appendToMessage(
+                result.message,
+                appContext,
+                config,
+                "purpose=$purpose, origin=${origin.orEmpty()}, stage=$stage"
+            )
+        )
+    }
+
     private fun resultForWeb(
         result: NativeLocationResult,
         config: WebViewRuntimeConfig,
@@ -802,7 +867,7 @@ private object NativeLocationAuditStore {
     private const val CLEARED_AT_FILE_NAME = "native_location_audit_cleared_at.txt"
     private const val MAX_RECORDS = 80
     private const val MAX_FILE_BYTES = 96 * 1024L
-    private const val MAX_MESSAGE_CHARS = 220
+    private const val MAX_MESSAGE_CHARS = 900
     private val executor = Executors.newSingleThreadExecutor()
     private val recentLines = ArrayDeque<String>()
     private val lock = Any()
