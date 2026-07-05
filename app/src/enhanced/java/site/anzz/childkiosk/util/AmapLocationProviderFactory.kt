@@ -8,6 +8,7 @@ import android.webkit.WebView
 import com.amap.api.location.AMapLocation
 import com.amap.api.location.AMapLocationClient
 import com.amap.api.location.AMapLocationClientOption
+import java.util.ArrayDeque
 import java.util.Collections
 import java.util.UUID
 import java.util.WeakHashMap
@@ -17,7 +18,7 @@ object AmapLocationProviderFactory {
     fun create(context: Context): AmapLocationProvider = RealAmapLocationProvider(context.applicationContext)
 
     fun configureApiKey(@Suppress("UNUSED_PARAMETER") context: Context, apiKey: String) {
-        RealAmapLocationProvider.configureApiKey(apiKey)
+        RealAmapLocationProvider.configureApiKey(apiKey, force = false)
     }
 }
 
@@ -27,7 +28,10 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val activeRequests = ConcurrentHashMap<String, ActiveAmapRequest>()
+    private val singleRequestQueue = ArrayDeque<String>()
     private val assistantClients = Collections.synchronizedMap(WeakHashMap<WebView, AMapLocationClient>())
+
+    private var runningSingleRequestId: String? = null
 
     @Volatile
     private var lastDiagnostic: String = "暂无高德定位诊断"
@@ -59,17 +63,62 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
         origin: String?,
         callback: (NativeLocationResult) -> Unit
     ): String {
-        if (!isUsable(config)) {
+        val latestConfig = KioskPrefs.mergeFreshAmapLocationRuntimeConfig(appContext, config)
+        if (!isUsable(latestConfig)) {
             dispatchError(NativeLocationError.PROVIDER_UNAVAILABLE, availabilityLabel(config), callback)
             return ""
         }
 
-        val startedAt = System.currentTimeMillis()
-        val client = createClient(config, callback, startedAt) ?: return ""
         val requestId = UUID.randomUUID().toString()
+        activeRequests[requestId] = ActiveAmapRequest(
+            single = SingleAmapRequest(
+                config = latestConfig,
+                timeoutMs = timeoutMs,
+                allowCached = allowCached,
+                callback = callback
+            )
+        )
+        mainHandler.post {
+            if (!activeRequests.containsKey(requestId)) return@post
+            singleRequestQueue.addLast(requestId)
+            startNextSingleRequestIfIdle()
+        }
+        return requestId
+    }
+
+    private fun startNextSingleRequestIfIdle() {
+        if (runningSingleRequestId != null) return
+        while (singleRequestQueue.isNotEmpty()) {
+            val requestId = singleRequestQueue.removeFirst()
+            val active = activeRequests[requestId] ?: continue
+            val single = active.single ?: continue
+            runningSingleRequestId = requestId
+            startSingleAttempt(requestId, active, single, retryAuthFailure = true)
+            return
+        }
+    }
+
+    private fun startSingleAttempt(
+        requestId: String,
+        active: ActiveAmapRequest,
+        single: SingleAmapRequest,
+        retryAuthFailure: Boolean
+    ) {
+        if (!activeRequests.containsKey(requestId) || runningSingleRequestId != requestId) return
+
+        active.destroyClientOnly()
+        val startedAt = System.currentTimeMillis()
+        val client = createClient(single.config, single.callback, startedAt)
+        if (client == null) {
+            activeRequests.remove(requestId)?.destroy()
+            releaseSingleRequestSlot(requestId)
+            return
+        }
+
         val timeout = Runnable {
-            val active = activeRequests.remove(requestId) ?: return@Runnable
-            active.destroy()
+            val removed = activeRequests.remove(requestId) ?: return@Runnable
+            removed.destroy()
+            releaseSingleRequestSlot(requestId)
             dispatch(
                 NativeLocationResult(
                     success = false,
@@ -79,32 +128,54 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
                     error = NativeLocationError.TIMEOUT,
                     message = "高德定位请求超时"
                 ),
-                callback
+                single.callback
             )
         }
-        activeRequests[requestId] = ActiveAmapRequest(client, timeout)
+        active.attachClient(client, timeout)
 
         val option = AMapLocationClientOption().apply {
-            locationMode = modeFor(config)
+            locationMode = modeFor(single.config)
             isOnceLocation = true
-            isOnceLocationLatest = allowCached
-            httpTimeOut = timeoutMs.coerceIn(1_000L, 60_000L)
+            isOnceLocationLatest = single.allowCached
+            httpTimeOut = single.timeoutMs.coerceIn(1_000L, 60_000L)
         }
         client.setLocationListener { location ->
-            val active = activeRequests.remove(requestId) ?: return@setLocationListener
-            active.destroy()
-            dispatch(resultFromLocation(location, startedAt, "高德单次定位返回"), callback)
+            val current = activeRequests[requestId] ?: return@setLocationListener
+            if (current.client !== client) return@setLocationListener
+            current.destroyClientOnly()
+            val result = resultFromLocation(location, startedAt, "高德单次定位返回")
+            if (retryAuthFailure && isAuthFailure(result)) {
+                val retry = Runnable {
+                    current.retryRunnable = null
+                    if (activeRequests.containsKey(requestId) && runningSingleRequestId == requestId) {
+                        startSingleAttempt(requestId, current, single, retryAuthFailure = false)
+                    }
+                }
+                current.retryRunnable = retry
+                mainHandler.postDelayed(retry, AUTH_FAILURE_RETRY_DELAY_MS)
+                return@setLocationListener
+            }
+
+            activeRequests.remove(requestId)?.destroy()
+            releaseSingleRequestSlot(requestId)
+            dispatch(result, single.callback)
         }
         client.setLocationOption(option)
-        mainHandler.postDelayed(timeout, timeoutMs.coerceAtLeast(1_000L))
+        mainHandler.postDelayed(timeout, single.timeoutMs.coerceAtLeast(1_000L))
         runCatching {
             client.startLocation()
         }.onFailure { e ->
             activeRequests.remove(requestId)?.destroy()
-            dispatchError(NativeLocationError.UNKNOWN, e.message ?: "启动高德定位失败", callback, startedAt)
-            return ""
+            releaseSingleRequestSlot(requestId)
+            dispatchError(NativeLocationError.UNKNOWN, e.message ?: "启动高德定位失败", single.callback, startedAt)
         }
-        return requestId
+    }
+
+    private fun releaseSingleRequestSlot(requestId: String) {
+        if (runningSingleRequestId == requestId) {
+            runningSingleRequestId = null
+            startNextSingleRequestIfIdle()
+        }
     }
 
     override fun startWatch(
@@ -124,7 +195,7 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
             cancelRequest(requestId)
             dispatchError(NativeLocationError.TIMEOUT, "高德 watchPosition 达到最长持续时间", callback, startedAt)
         }
-        activeRequests[requestId] = ActiveAmapRequest(client, timeout)
+        activeRequests[requestId] = ActiveAmapRequest(client = client, timeout = timeout)
 
         val option = AMapLocationClientOption().apply {
             locationMode = modeFor(config)
@@ -149,11 +220,24 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
     }
 
     override fun cancelRequest(id: String) {
-        activeRequests.remove(id)?.destroy()
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { cancelRequest(id) }
+            return
+        }
+        singleRequestQueue.remove(id)
+        val active = activeRequests.remove(id) ?: return
+        active.destroy()
+        releaseSingleRequestSlot(id)
     }
 
     override fun stopAll() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { stopAll() }
+            return
+        }
+        singleRequestQueue.clear()
         activeRequests.keys.toList().forEach(::cancelRequest)
+        runningSingleRequestId = null
     }
 
     override fun destroy() {
@@ -202,7 +286,7 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
         startedAt: Long
     ): AMapLocationClient? {
         return runCatching {
-            configureApiKey(config.amapLocationApiKey)
+            configureApiKey(config.amapLocationApiKey, force = true)
             AMapLocationClient.updatePrivacyShow(appContext, true, true)
             AMapLocationClient.updatePrivacyAgree(appContext, true)
             AMapLocationClient(appContext)
@@ -220,12 +304,19 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
     }
 
     companion object : AmapLocationApiKeyConfigurator {
+        private const val AUTH_FAILURE_RETRY_DELAY_MS = 450L
+
         @Volatile
         private var lastConfiguredApiKey: String = ""
 
         override fun configureApiKey(apiKey: String) {
+            configureApiKey(apiKey, force = false)
+        }
+
+        fun configureApiKey(apiKey: String, force: Boolean) {
             val normalized = apiKey.trim()
-            if (normalized.isBlank() || normalized == lastConfiguredApiKey) return
+            if (normalized.isBlank()) return
+            if (!force && normalized == lastConfiguredApiKey) return
             AMapLocationClient.setApiKey(normalized)
             lastConfiguredApiKey = normalized
         }
@@ -355,14 +446,46 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
         }
     }
 
+    private fun isAuthFailure(result: NativeLocationResult): Boolean {
+        return !result.success &&
+            result.provider == "amap" &&
+            result.message.contains("INVALID_USER_KEY", ignoreCase = true)
+    }
+
+    private data class SingleAmapRequest(
+        val config: WebViewRuntimeConfig,
+        val timeoutMs: Long,
+        val allowCached: Boolean,
+        val callback: (NativeLocationResult) -> Unit
+    )
+
     private inner class ActiveAmapRequest(
-        private val client: AMapLocationClient,
-        private val timeout: Runnable
+        var client: AMapLocationClient? = null,
+        private var timeout: Runnable? = null,
+        val single: SingleAmapRequest? = null
     ) {
+        var retryRunnable: Runnable? = null
+
+        fun attachClient(client: AMapLocationClient, timeout: Runnable) {
+            destroyClientOnly()
+            this.client = client
+            this.timeout = timeout
+        }
+
+        fun destroyClientOnly() {
+            timeout?.let { mainHandler.removeCallbacks(it) }
+            timeout = null
+            client?.let { activeClient ->
+                runCatching { activeClient.stopLocation() }
+                runCatching { activeClient.onDestroy() }
+            }
+            client = null
+        }
+
         fun destroy() {
-            mainHandler.removeCallbacks(timeout)
-            runCatching { client.stopLocation() }
-            runCatching { client.onDestroy() }
+            retryRunnable?.let { mainHandler.removeCallbacks(it) }
+            retryRunnable = null
+            destroyClientOnly()
         }
     }
 }

@@ -23,7 +23,6 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicLong
 
 enum class NativeLocationError {
     DISABLED,
@@ -328,8 +327,11 @@ class NativeLocationManager(private val context: Context) {
         callback: ((NativeLocationResult) -> Unit)? = null
     ): String {
         if (!config.nativeLocationOptimizationEnabled || !config.nativeLocationWarmupEnabled) return ""
-        return requestSingleLocation(
-            config = config,
+        val effectiveConfig = KioskPrefs
+            .mergeFreshAmapLocationRuntimeConfig(appContext, config)
+            .copy(amapLocationProviderStrategy = KioskPrefs.NATIVE_LOCATION_PROVIDER_SYSTEM)
+        return requestSystemSingleLocation(
+            config = effectiveConfig,
             timeoutMs = config.nativeLocationWarmupTimeoutMs,
             allowCached = false,
             purpose = "warmup:$origin",
@@ -797,22 +799,20 @@ class NativeLocationManager(private val context: Context) {
 
 private object NativeLocationAuditStore {
     private const val FILE_NAME = "native_location_audit.jsonl"
+    private const val CLEARED_AT_FILE_NAME = "native_location_audit_cleared_at.txt"
     private const val MAX_RECORDS = 80
     private const val MAX_FILE_BYTES = 96 * 1024L
     private const val MAX_MESSAGE_CHARS = 220
     private val executor = Executors.newSingleThreadExecutor()
     private val recentLines = ArrayDeque<String>()
     private val lock = Any()
-    private val generation = AtomicLong(0L)
     private val timeFormat = ThreadLocal.withInitial {
         SimpleDateFormat("MM-dd HH:mm:ss", Locale.CHINA)
     }
 
     fun record(context: Context, purpose: String, origin: String?, result: NativeLocationResult) {
         val appContext = context.applicationContext
-        val writeGeneration = generation.get()
         val json = JSONObject()
-            .put("generation", writeGeneration)
             .put("time", System.currentTimeMillis())
             .put("origin", origin.orEmpty().ifBlank { originFromPurpose(purpose) }.ifBlank { "app/internal" })
             .put("purpose", purposeLabel(purpose))
@@ -835,7 +835,6 @@ private object NativeLocationAuditStore {
 
         executor.execute {
             runCatching {
-                if (generation.get() != writeGeneration) return@runCatching
                 val file = auditFile(appContext)
                 file.parentFile?.mkdirs()
                 file.appendText(line + "\n")
@@ -862,24 +861,32 @@ private object NativeLocationAuditStore {
 
     fun records(context: Context, limit: Int): List<NativeLocationAuditRecord> {
         val boundedLimit = limit.coerceAtLeast(1)
-        val currentGeneration = generation.get()
-        val lines = readLines(context.applicationContext).takeLast(boundedLimit)
-        return lines.asReversed().mapNotNull { line -> recordFromLine(line, currentGeneration) }
+        val appContext = context.applicationContext
+        val clearedAt = readClearedAt(appContext)
+        val lines = readLines(appContext)
+        return lines
+            .mapNotNull { line -> recordFromLine(line) }
+            .filter { it.timestamp > clearedAt }
+            .takeLast(boundedLimit)
+            .asReversed()
     }
 
     fun clear(context: Context) {
         val appContext = context.applicationContext
-        generation.incrementAndGet()
+        val clearedAt = System.currentTimeMillis()
         synchronized(lock) {
             recentLines.clear()
         }
         runCatching {
+            writeClearedAt(appContext, clearedAt)
             val file = auditFile(appContext)
             if (file.exists()) file.delete()
         }
     }
 
     private fun auditFile(context: Context): File = File(context.filesDir, FILE_NAME)
+
+    private fun clearedAtFile(context: Context): File = File(context.filesDir, CLEARED_AT_FILE_NAME)
 
     private fun readLines(context: Context): List<String> {
         val file = auditFile(context)
@@ -894,12 +901,9 @@ private object NativeLocationAuditStore {
         return (fileLines + memoryLines).distinct()
     }
 
-    private fun recordFromLine(line: String, currentGeneration: Long): NativeLocationAuditRecord? {
+    private fun recordFromLine(line: String): NativeLocationAuditRecord? {
         return runCatching {
             val json = JSONObject(line)
-            if (currentGeneration > 0L && json.optLong("generation", 0L) != currentGeneration) {
-                return@runCatching null
-            }
             NativeLocationAuditRecord(
                 timestamp = json.optLong("time"),
                 origin = json.optString("origin", "未知"),
@@ -914,6 +918,21 @@ private object NativeLocationAuditStore {
                 message = json.optString("message", "")
             )
         }.getOrNull()
+    }
+
+    private fun readClearedAt(context: Context): Long {
+        val file = clearedAtFile(context)
+        return if (file.exists()) {
+            runCatching { file.readText().trim().toLong() }.getOrDefault(0L)
+        } else {
+            0L
+        }
+    }
+
+    private fun writeClearedAt(context: Context, timestamp: Long) {
+        val file = clearedAtFile(context)
+        file.parentFile?.mkdirs()
+        file.writeText(timestamp.toString())
     }
 
     private fun trim(file: File) {
