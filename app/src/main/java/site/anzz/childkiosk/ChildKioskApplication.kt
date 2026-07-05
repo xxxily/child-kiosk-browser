@@ -35,7 +35,14 @@ class ChildKioskApplication : Application(), ComponentCallbacks2 {
             }
         }
         Log.d("ChildKioskApp", "Process started: $processName, webViewProcess=$isWebViewProcess")
-        AmapLocationProviderFactory.configureApiKey(this, KioskPrefs.getAmapLocationApiKey(this))
+        if (!isWebViewProcess) {
+            KioskPrefs.refreshAmapLocationRuntimeConfig(this)
+        }
+        AmapLocationProviderFactory.configureApiKey(
+            this,
+            KioskPrefs.mergeFreshAmapLocationRuntimeConfig(this, KioskPrefs.getWebViewRuntimeConfig(this))
+                .amapLocationApiKey
+        )
 
         // 1. 初始化 WebView 预加载池
         WebViewPool.init(this)

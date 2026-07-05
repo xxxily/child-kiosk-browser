@@ -23,6 +23,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 enum class NativeLocationError {
     DISABLED,
@@ -99,6 +100,20 @@ data class NativeLocationStatus(
     fun enabledLabel(): String = if (locationEnabled) "已开启" else "已关闭"
 }
 
+data class NativeLocationAuditRecord(
+    val timestamp: Long,
+    val origin: String,
+    val purpose: String,
+    val success: Boolean,
+    val provider: String,
+    val accuracyMeters: Int?,
+    val elapsedMs: Long,
+    val cached: Boolean,
+    val coordinateSystem: String,
+    val error: String,
+    val message: String
+)
+
 class NativeLocationManager(private val context: Context) {
     private val appContext = context.applicationContext
     private val locationManager = appContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
@@ -126,12 +141,16 @@ class NativeLocationManager(private val context: Context) {
     }
 
     fun diagnosticSummary(): String = status().let { status ->
+        val latestConfig = KioskPrefs.mergeFreshAmapLocationRuntimeConfig(
+            appContext,
+            KioskPrefs.getWebViewRuntimeConfig(appContext)
+        )
         buildString {
             appendLine("系统定位: ${status.enabledLabel()}")
             appendLine("应用权限: ${status.permissionLabel()}")
             appendLine("可用 Provider: ${status.providers.ifEmpty { listOf("无") }.joinToString()}")
             appendLine("最近一次: ${status.lastDiagnostic}")
-            appendLine("高德 SDK: ${amapProvider.diagnosticSummary(KioskPrefs.getWebViewRuntimeConfig(appContext))}")
+            appendLine("高德 SDK: ${amapProvider.diagnosticSummary(latestConfig)}")
             appendLine("活跃请求数: ${activeRequests.size}")
             appendLine("路由请求数: ${routedRequests.size}")
             appendLine("最近注册: ${formatRelativeTime(lastListenerRegisteredAtMs)}")
@@ -139,6 +158,14 @@ class NativeLocationManager(private val context: Context) {
             appendLine("最近定位记录:")
             appendLine(NativeLocationAuditStore.summary(appContext, limit = 20).prependIndent("  "))
         }.trim()
+    }
+
+    fun auditRecords(limit: Int = 80): List<NativeLocationAuditRecord> {
+        return NativeLocationAuditStore.records(appContext, limit)
+    }
+
+    fun clearAuditRecords() {
+        NativeLocationAuditStore.clear(appContext)
     }
 
     fun requestSingleLocation(
@@ -149,10 +176,11 @@ class NativeLocationManager(private val context: Context) {
         origin: String? = null,
         callback: (NativeLocationResult) -> Unit
     ): String {
-        if (shouldUseAmap(config)) {
-            return requestAmapFirstLocation(config, timeoutMs, allowCached, purpose, origin, callback)
+        val effectiveConfig = KioskPrefs.mergeFreshAmapLocationRuntimeConfig(appContext, config)
+        if (shouldUseAmap(effectiveConfig)) {
+            return requestAmapFirstLocation(effectiveConfig, timeoutMs, allowCached, purpose, origin, callback)
         }
-        return requestSystemSingleLocation(config, timeoutMs, allowCached, purpose, origin, callback)
+        return requestSystemSingleLocation(effectiveConfig, timeoutMs, allowCached, purpose, origin, callback)
     }
 
     private fun requestAmapFirstLocation(
@@ -318,37 +346,38 @@ class NativeLocationManager(private val context: Context) {
         origin: String? = null,
         callback: (NativeLocationResult) -> Unit
     ): String {
-        if (shouldUseAmap(config) && amapProvider.isUsable(config)) {
+        val effectiveConfig = KioskPrefs.mergeFreshAmapLocationRuntimeConfig(appContext, config)
+        if (shouldUseAmap(effectiveConfig) && amapProvider.isUsable(effectiveConfig)) {
             var suppressStartupFailure = true
             var startupFailure: NativeLocationResult? = null
-            val watchId = amapProvider.startWatch(config, origin) amapCallback@{ result ->
+            val watchId = amapProvider.startWatch(effectiveConfig, origin) amapCallback@{ result ->
                 if (suppressStartupFailure && !result.success) {
                     startupFailure = result
                     return@amapCallback
                 }
-                recordAndDispatch(resultForWeb(result, config, origin), callback, "watch", origin)
+                recordAndDispatch(resultForWeb(result, effectiveConfig, origin), callback, "watch", origin)
             }
             suppressStartupFailure = false
             if (watchId.isNotBlank()) {
                 return "amap:$watchId"
             }
-            if (config.amapLocationProviderStrategy == KioskPrefs.NATIVE_LOCATION_PROVIDER_AMAP_ONLY) {
+            if (effectiveConfig.amapLocationProviderStrategy == KioskPrefs.NATIVE_LOCATION_PROVIDER_AMAP_ONLY) {
                 val result = startupFailure ?: NativeLocationResult(
                     success = false,
                     provider = "amap",
                     error = NativeLocationError.PROVIDER_UNAVAILABLE,
-                    message = amapProvider.availabilityLabel(config)
+                    message = amapProvider.availabilityLabel(effectiveConfig)
                 )
-                recordAndDispatch(resultForWeb(result, config, origin), callback, "watch", origin)
+                recordAndDispatch(resultForWeb(result, effectiveConfig, origin), callback, "watch", origin)
                 return ""
             }
-        } else if (config.amapLocationProviderStrategy == KioskPrefs.NATIVE_LOCATION_PROVIDER_AMAP_ONLY) {
+        } else if (effectiveConfig.amapLocationProviderStrategy == KioskPrefs.NATIVE_LOCATION_PROVIDER_AMAP_ONLY) {
             recordAndDispatch(
                 NativeLocationResult(
                     success = false,
                     provider = "amap",
                     error = NativeLocationError.PROVIDER_UNAVAILABLE,
-                    message = amapProvider.availabilityLabel(config)
+                    message = amapProvider.availabilityLabel(effectiveConfig)
                 ),
                 callback,
                 "watch",
@@ -360,15 +389,15 @@ class NativeLocationManager(private val context: Context) {
         val startedAt = System.currentTimeMillis()
         val denied = preflightDenied(startedAt)
         if (denied != null) {
-            recordAndDispatch(resultForWeb(denied, config, origin), callback, "watch", origin)
+            recordAndDispatch(resultForWeb(denied, effectiveConfig, origin), callback, "watch", origin)
             return ""
         }
-        val provider = providerOrder(config).firstOrNull()
+        val provider = providerOrder(effectiveConfig).firstOrNull()
         if (provider == null) {
             recordAndDispatch(
                 resultForWeb(
                     errorResult(NativeLocationError.PROVIDER_UNAVAILABLE, "没有可用系统定位 provider", startedAt),
-                    config,
+                    effectiveConfig,
                     origin
                 ),
                 callback,
@@ -386,7 +415,7 @@ class NativeLocationManager(private val context: Context) {
                 recordAndDispatch(
                     resultForWeb(
                         resultFromLocation(location, cached = false, startedAt = startedAt, message = "watchPosition 更新"),
-                        config,
+                        effectiveConfig,
                         origin
                     ),
                     callback,
@@ -402,7 +431,7 @@ class NativeLocationManager(private val context: Context) {
                 recordAndDispatch(
                     resultForWeb(
                         errorResult(NativeLocationError.PROVIDER_UNAVAILABLE, "Provider 已关闭: $provider", startedAt),
-                        config,
+                        effectiveConfig,
                         origin
                     ),
                     callback,
@@ -417,7 +446,7 @@ class NativeLocationManager(private val context: Context) {
             stopRequest(watchId, NativeLocationError.TIMEOUT, "watchPosition 达到最长持续时间")
         }
         active.timeoutRunnable = timeout
-        mainHandler.postDelayed(timeout, config.nativeLocationWatchMaxDurationMs)
+        mainHandler.postDelayed(timeout, effectiveConfig.nativeLocationWatchMaxDurationMs)
 
         runCatching {
             lastListenerRegisteredAtMs = System.currentTimeMillis()
@@ -428,7 +457,7 @@ class NativeLocationManager(private val context: Context) {
             recordAndDispatch(
                 resultForWeb(
                     errorResult(NativeLocationError.UNKNOWN, it.message ?: "启动持续定位失败", startedAt),
-                    config,
+                    effectiveConfig,
                     origin
                 ),
                 callback,
@@ -481,7 +510,11 @@ class NativeLocationManager(private val context: Context) {
     }
 
     fun startAmapAssistantLocation(webView: WebView, config: WebViewRuntimeConfig, origin: String): Boolean {
-        return amapProvider.startAssistantLocation(webView, config, origin)
+        return amapProvider.startAssistantLocation(
+            webView,
+            KioskPrefs.mergeFreshAmapLocationRuntimeConfig(appContext, config),
+            origin
+        )
     }
 
     fun stopAmapAssistantLocation(webView: WebView) {
@@ -770,13 +803,16 @@ private object NativeLocationAuditStore {
     private val executor = Executors.newSingleThreadExecutor()
     private val recentLines = ArrayDeque<String>()
     private val lock = Any()
+    private val generation = AtomicLong(0L)
     private val timeFormat = ThreadLocal.withInitial {
         SimpleDateFormat("MM-dd HH:mm:ss", Locale.CHINA)
     }
 
     fun record(context: Context, purpose: String, origin: String?, result: NativeLocationResult) {
         val appContext = context.applicationContext
+        val writeGeneration = generation.get()
         val json = JSONObject()
+            .put("generation", writeGeneration)
             .put("time", System.currentTimeMillis())
             .put("origin", origin.orEmpty().ifBlank { originFromPurpose(purpose) }.ifBlank { "app/internal" })
             .put("purpose", purposeLabel(purpose))
@@ -799,6 +835,7 @@ private object NativeLocationAuditStore {
 
         executor.execute {
             runCatching {
+                if (generation.get() != writeGeneration) return@runCatching
                 val file = auditFile(appContext)
                 file.parentFile?.mkdirs()
                 file.appendText(line + "\n")
@@ -810,8 +847,42 @@ private object NativeLocationAuditStore {
     }
 
     fun summary(context: Context, limit: Int): String {
-        val file = auditFile(context.applicationContext)
+        val records = records(context, limit)
+        if (records.isEmpty()) return "暂无定位记录"
+
+        return records.mapIndexed { index, record ->
+            val time = timeFormat.get()?.format(Date(record.timestamp)) ?: "未知时间"
+            val status = if (record.success) "成功" else "失败"
+            val accuracy = record.accuracyMeters?.let { "${it}m" } ?: "未知"
+            val cached = if (record.cached) "缓存" else "实时"
+            val message = record.message.takeIf { it.isNotBlank() }?.let { "，说明=$it" }.orEmpty()
+            "${index + 1}. $time，来源=${record.origin}，类型=${record.purpose}，状态=$status，provider=${record.provider}，精度=$accuracy，耗时=${record.elapsedMs}ms，$cached，错误=${record.error}$message"
+        }.joinToString("\n")
+    }
+
+    fun records(context: Context, limit: Int): List<NativeLocationAuditRecord> {
         val boundedLimit = limit.coerceAtLeast(1)
+        val currentGeneration = generation.get()
+        val lines = readLines(context.applicationContext).takeLast(boundedLimit)
+        return lines.asReversed().mapNotNull { line -> recordFromLine(line, currentGeneration) }
+    }
+
+    fun clear(context: Context) {
+        val appContext = context.applicationContext
+        generation.incrementAndGet()
+        synchronized(lock) {
+            recentLines.clear()
+        }
+        runCatching {
+            val file = auditFile(appContext)
+            if (file.exists()) file.delete()
+        }
+    }
+
+    private fun auditFile(context: Context): File = File(context.filesDir, FILE_NAME)
+
+    private fun readLines(context: Context): List<String> {
+        val file = auditFile(context)
         val memoryLines = synchronized(lock) { recentLines.toList() }
         val fileLines = if (file.exists()) {
             runCatching {
@@ -820,27 +891,30 @@ private object NativeLocationAuditStore {
         } else {
             emptyList()
         }
-        val lines = (fileLines + memoryLines)
-            .distinct()
-            .takeLast(boundedLimit)
-        if (lines.isEmpty()) return "暂无定位记录"
-
-        return lines.asReversed().mapIndexed { index, line ->
-            runCatching {
-                val json = JSONObject(line)
-                val time = timeFormat.get()?.format(Date(json.optLong("time"))) ?: "未知时间"
-                val status = if (json.optBoolean("success")) "成功" else "失败"
-                val accuracy = json.optInt("accuracy", -1).takeIf { it >= 0 }?.let { "${it}m" } ?: "未知"
-                val cached = if (json.optBoolean("cached")) "缓存" else "实时"
-                val message = json.optString("message", "").takeIf { it.isNotBlank() }?.let { "，说明=$it" }.orEmpty()
-                "${index + 1}. $time，来源=${json.optString("origin", "未知")}，类型=${json.optString("purpose", "未知")}，状态=$status，provider=${json.optString("provider", "无")}，精度=$accuracy，耗时=${json.optLong("elapsed")}ms，$cached，错误=${json.optString("error", "无")}$message"
-            }.getOrElse {
-                "${index + 1}. 记录解析失败"
-            }
-        }.joinToString("\n")
+        return (fileLines + memoryLines).distinct()
     }
 
-    private fun auditFile(context: Context): File = File(context.filesDir, FILE_NAME)
+    private fun recordFromLine(line: String, currentGeneration: Long): NativeLocationAuditRecord? {
+        return runCatching {
+            val json = JSONObject(line)
+            if (currentGeneration > 0L && json.optLong("generation", 0L) != currentGeneration) {
+                return@runCatching null
+            }
+            NativeLocationAuditRecord(
+                timestamp = json.optLong("time"),
+                origin = json.optString("origin", "未知"),
+                purpose = json.optString("purpose", "未知"),
+                success = json.optBoolean("success"),
+                provider = json.optString("provider", "无"),
+                accuracyMeters = json.optInt("accuracy", -1).takeIf { it >= 0 },
+                elapsedMs = json.optLong("elapsed"),
+                cached = json.optBoolean("cached"),
+                coordinateSystem = json.optString("coordinateSystem", NativeLocationCoordinateSystem.UNKNOWN),
+                error = json.optString("error", "无"),
+                message = json.optString("message", "")
+            )
+        }.getOrNull()
+    }
 
     private fun trim(file: File) {
         val lines = file.readLines().filter { it.isNotBlank() }.takeLast(MAX_RECORDS)

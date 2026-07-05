@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
+import android.util.AtomicFile
 import site.anzz.childkiosk.util.filter.FilterPreset
 import site.anzz.childkiosk.util.filter.FilterRepository
 import site.anzz.childkiosk.util.filter.FilterRuntimeSnapshot
@@ -309,6 +310,7 @@ object KioskPrefs {
 
     private const val PREFS_NAME = "kiosk_prefs"
     private const val EXTRA_WEBVIEW_RUNTIME_CONFIG = "WEBVIEW_RUNTIME_CONFIG_JSON"
+    private const val AMAP_LOCATION_RUNTIME_CONFIG_FILE = "amap_location_runtime_config.json"
     private const val KEY_QUICK_MODE = "quick_mode"
     private const val KEY_PROTECTION_MODE = "non_owner_protection_mode"
     private const val KEY_ORIENTATION_MODE = "orientation_mode"
@@ -819,6 +821,40 @@ object KioskPrefs {
         }.getOrDefault(fallback)
     }
 
+    fun refreshAmapLocationRuntimeConfig(context: Context) {
+        writeAmapLocationRuntimeConfig(context.applicationContext)
+    }
+
+    fun mergeFreshAmapLocationRuntimeConfig(
+        context: Context,
+        config: WebViewRuntimeConfig
+    ): WebViewRuntimeConfig {
+        val json = readAmapLocationRuntimeConfig(context.applicationContext) ?: return config
+        return config.copy(
+            amapLocationEnabled = json.optBoolean("amapLocationEnabled", config.amapLocationEnabled),
+            amapLocationApiKey = json.optString("amapLocationApiKey", config.amapLocationApiKey).trim(),
+            amapLocationPrivacyAgreed = json.optBoolean(
+                "amapLocationPrivacyAgreed",
+                config.amapLocationPrivacyAgreed
+            ),
+            amapLocationProviderStrategy = normalizeAmapLocationProviderStrategy(
+                json.optString("amapLocationProviderStrategy", config.amapLocationProviderStrategy)
+            ),
+            amapLocationH5AssistantEnabled = json.optBoolean(
+                "amapLocationH5AssistantEnabled",
+                config.amapLocationH5AssistantEnabled
+            ),
+            amapLocationH5AssistantAllowedOrigins = json.optJSONArray("amapLocationH5AssistantAllowedOrigins")
+                ?.let { array ->
+                    val set = mutableSetOf<String>()
+                    for (i in 0 until array.length()) {
+                        normalizeOriginKey(array.optString(i)).takeIf { it.isNotBlank() }?.let(set::add)
+                    }
+                    set
+                } ?: config.amapLocationH5AssistantAllowedOrigins
+        )
+    }
+
     fun getWebPreloadEnabled(context: Context): Boolean {
         return prefs(context).getBoolean("web_preload_enabled", false)
     }
@@ -1116,13 +1152,13 @@ object KioskPrefs {
         prefs(context).getBoolean(KEY_AMAP_LOCATION_ENABLED, false)
 
     fun setAmapLocationEnabled(context: Context, enabled: Boolean) =
-        customEditor(context).putBoolean(KEY_AMAP_LOCATION_ENABLED, enabled).apply()
+        customEditor(context).putBoolean(KEY_AMAP_LOCATION_ENABLED, enabled).applyAmapLocationRuntimeConfig(context)
 
     fun getAmapLocationApiKey(context: Context): String =
         prefs(context).getString(KEY_AMAP_LOCATION_API_KEY, "")?.trim().orEmpty()
 
     fun setAmapLocationApiKey(context: Context, apiKey: String) =
-        customEditor(context).putString(KEY_AMAP_LOCATION_API_KEY, apiKey.trim()).apply()
+        customEditor(context).putString(KEY_AMAP_LOCATION_API_KEY, apiKey.trim()).applyAmapLocationRuntimeConfig(context)
 
     fun maskedAmapLocationApiKey(context: Context): String {
         val key = getAmapLocationApiKey(context)
@@ -1137,7 +1173,7 @@ object KioskPrefs {
         prefs(context).getBoolean(KEY_AMAP_LOCATION_PRIVACY_AGREED, false)
 
     fun setAmapLocationPrivacyAgreed(context: Context, agreed: Boolean) =
-        customEditor(context).putBoolean(KEY_AMAP_LOCATION_PRIVACY_AGREED, agreed).apply()
+        customEditor(context).putBoolean(KEY_AMAP_LOCATION_PRIVACY_AGREED, agreed).applyAmapLocationRuntimeConfig(context)
 
     fun getAmapLocationProviderStrategy(context: Context): String {
         return when (prefs(context).getString(KEY_AMAP_LOCATION_PROVIDER_STRATEGY, NATIVE_LOCATION_PROVIDER_AMAP_FIRST)) {
@@ -1148,19 +1184,17 @@ object KioskPrefs {
     }
 
     fun setAmapLocationProviderStrategy(context: Context, strategy: String) {
-        val normalized = when (strategy) {
-            NATIVE_LOCATION_PROVIDER_SYSTEM -> NATIVE_LOCATION_PROVIDER_SYSTEM
-            NATIVE_LOCATION_PROVIDER_AMAP_ONLY -> NATIVE_LOCATION_PROVIDER_AMAP_ONLY
-            else -> NATIVE_LOCATION_PROVIDER_AMAP_FIRST
-        }
-        customEditor(context).putString(KEY_AMAP_LOCATION_PROVIDER_STRATEGY, normalized).apply()
+        customEditor(context)
+            .putString(KEY_AMAP_LOCATION_PROVIDER_STRATEGY, normalizeAmapLocationProviderStrategy(strategy))
+            .applyAmapLocationRuntimeConfig(context)
     }
 
     fun isAmapLocationH5AssistantEnabled(context: Context): Boolean =
         prefs(context).getBoolean(KEY_AMAP_LOCATION_H5_ASSISTANT_ENABLED, false)
 
     fun setAmapLocationH5AssistantEnabled(context: Context, enabled: Boolean) =
-        customEditor(context).putBoolean(KEY_AMAP_LOCATION_H5_ASSISTANT_ENABLED, enabled).apply()
+        customEditor(context).putBoolean(KEY_AMAP_LOCATION_H5_ASSISTANT_ENABLED, enabled)
+            .applyAmapLocationRuntimeConfig(context)
 
     fun getAmapLocationH5AssistantAllowedOrigins(context: Context): Set<String> {
         return normalizeStringSet(
@@ -1176,6 +1210,7 @@ object KioskPrefs {
                 normalizeStringSet(origins, ::normalizeOriginKey)
             )
             .apply()
+        writeAmapLocationRuntimeConfig(context.applicationContext)
     }
 
     fun addAmapLocationH5AssistantAllowedOrigin(context: Context, origin: String) {
@@ -1466,6 +1501,59 @@ object KioskPrefs {
                 trimmed.lowercase()
             }
         }.getOrDefault(trimmed.lowercase())
+    }
+
+    private fun normalizeAmapLocationProviderStrategy(strategy: String): String {
+        return when (strategy) {
+            NATIVE_LOCATION_PROVIDER_SYSTEM -> NATIVE_LOCATION_PROVIDER_SYSTEM
+            NATIVE_LOCATION_PROVIDER_AMAP_ONLY -> NATIVE_LOCATION_PROVIDER_AMAP_ONLY
+            else -> NATIVE_LOCATION_PROVIDER_AMAP_FIRST
+        }
+    }
+
+    private fun SharedPreferences.Editor.applyAmapLocationRuntimeConfig(context: Context) {
+        apply()
+        writeAmapLocationRuntimeConfig(context.applicationContext)
+    }
+
+    private fun amapLocationRuntimeConfigFile(context: Context): AtomicFile {
+        return AtomicFile(java.io.File(context.filesDir, AMAP_LOCATION_RUNTIME_CONFIG_FILE))
+    }
+
+    private fun readAmapLocationRuntimeConfig(context: Context): JSONObject? {
+        return runCatching {
+            val file = amapLocationRuntimeConfigFile(context)
+            if (!file.baseFile.exists()) return@runCatching null
+            val raw = String(file.readFully(), Charsets.UTF_8)
+            JSONObject(raw)
+        }.getOrNull()
+    }
+
+    private fun writeAmapLocationRuntimeConfig(context: Context) {
+        val appContext = context.applicationContext
+        val json = JSONObject()
+            .put("updatedAt", System.currentTimeMillis())
+            .put("amapLocationEnabled", isAmapLocationEnabled(appContext))
+            .put("amapLocationApiKey", getAmapLocationApiKey(appContext))
+            .put("amapLocationPrivacyAgreed", isAmapLocationPrivacyAgreed(appContext))
+            .put("amapLocationProviderStrategy", getAmapLocationProviderStrategy(appContext))
+            .put("amapLocationH5AssistantEnabled", isAmapLocationH5AssistantEnabled(appContext))
+            .put(
+                "amapLocationH5AssistantAllowedOrigins",
+                org.json.JSONArray(getAmapLocationH5AssistantAllowedOrigins(appContext))
+            )
+        val file = amapLocationRuntimeConfigFile(appContext)
+        runCatching {
+            file.baseFile.parentFile?.mkdirs()
+            val stream = file.startWrite()
+            try {
+                stream.write(json.toString().toByteArray(Charsets.UTF_8))
+                file.finishWrite(stream)
+            } catch (e: Exception) {
+                file.failWrite(stream)
+                throw e
+            }
+        }
     }
 
     private fun customEditor(context: Context): SharedPreferences.Editor =

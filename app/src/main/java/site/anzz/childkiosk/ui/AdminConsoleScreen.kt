@@ -54,6 +54,7 @@ import site.anzz.childkiosk.data.WebAppEntity
 import site.anzz.childkiosk.util.HashUtils
 import site.anzz.childkiosk.util.AmapLocationProviderFactory
 import site.anzz.childkiosk.util.KioskPrefs
+import site.anzz.childkiosk.util.NativeLocationAuditRecord
 import site.anzz.childkiosk.util.NativeLocationManager
 import site.anzz.childkiosk.util.NativeLocationResult
 import site.anzz.childkiosk.util.WebAppIconCache
@@ -1546,6 +1547,9 @@ fun AdminConsoleScreen(
                     var nativeLocationDiagnostics by remember {
                         mutableStateOf(nativeLocationManager.diagnosticSummary())
                     }
+                    var nativeLocationAuditRecords by remember {
+                        mutableStateOf(nativeLocationManager.auditRecords())
+                    }
                     var showNativeLocationDiagnosticsDialog by remember { mutableStateOf(false) }
                     var nativeLocationTesting by remember { mutableStateOf(false) }
                     val nativeLocationBridgeRuntimeReady = remember {
@@ -1555,6 +1559,14 @@ fun AdminConsoleScreen(
 
                     fun refreshNativeLocationDiagnostics() {
                         nativeLocationDiagnostics = nativeLocationManager.diagnosticSummary()
+                        nativeLocationAuditRecords = nativeLocationManager.auditRecords()
+                    }
+
+                    fun clearNativeLocationAuditRecords() {
+                        nativeLocationManager.clearAuditRecords()
+                        nativeLocationAuditRecords = emptyList()
+                        nativeLocationDiagnostics = nativeLocationManager.diagnosticSummary()
+                        Toast.makeText(context, "定位记录已清空", Toast.LENGTH_SHORT).show()
                     }
 
                     fun onNativeLocationConfigChanged(recreateWebViews: Boolean = true) {
@@ -1584,8 +1596,9 @@ fun AdminConsoleScreen(
                             purpose = "admin_test"
                         ) { result: NativeLocationResult ->
                             nativeLocationTesting = false
+                            refreshNativeLocationDiagnostics()
                             nativeLocationDiagnostics = result.toDiagnosticLine(redactCoordinates = true) +
-                                "\n\n" + nativeLocationManager.diagnosticSummary()
+                                "\n\n" + nativeLocationDiagnostics
                         }
                     }
 
@@ -3130,19 +3143,17 @@ fun AdminConsoleScreen(
                                                 overflow = TextOverflow.Ellipsis,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
+                                            Text(
+                                                text = "最近定位记录 ${nativeLocationAuditRecords.size} 条，测试、刷新、复制和清空在详情页操作",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .horizontalScroll(rememberScrollState()),
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                                             ) {
-                                                AssistChip(
-                                                    onClick = { refreshNativeLocationDiagnostics() },
-                                                    label = { Text("刷新") },
-                                                    leadingIcon = {
-                                                        Icon(Icons.Default.Refresh, contentDescription = "刷新", modifier = Modifier.size(18.dp))
-                                                    }
-                                                )
                                                 AssistChip(
                                                     onClick = {
                                                         refreshNativeLocationDiagnostics()
@@ -3153,30 +3164,16 @@ fun AdminConsoleScreen(
                                                         Icon(Icons.Default.OpenInFull, contentDescription = "查看定位诊断", modifier = Modifier.size(18.dp))
                                                     }
                                                 )
-                                                AssistChip(
-                                                    enabled = !nativeLocationTesting,
-                                                    onClick = { testNativeLocationWithPermission() },
-                                                    label = { Text(if (nativeLocationTesting) "测试中" else "测试定位") },
-                                                    leadingIcon = {
-                                                        Icon(Icons.Default.LocationOn, contentDescription = "测试定位", modifier = Modifier.size(18.dp))
-                                                    }
-                                                )
-                                                AssistChip(
-                                                    onClick = {
-                                                        clipboardManager.setText(AnnotatedString(nativeLocationDiagnostics))
-                                                        Toast.makeText(context, "定位诊断已复制", Toast.LENGTH_SHORT).show()
-                                                    },
-                                                    label = { Text("复制诊断") },
-                                                    leadingIcon = {
-                                                        Icon(Icons.Default.ContentCopy, contentDescription = "复制诊断", modifier = Modifier.size(18.dp))
-                                                    }
-                                                )
                                             }
                                         }
                                         if (showNativeLocationDiagnosticsDialog) {
                                             NativeLocationDiagnosticsDialog(
                                                 diagnostics = nativeLocationDiagnostics,
+                                                records = nativeLocationAuditRecords,
+                                                testing = nativeLocationTesting,
                                                 onRefresh = { refreshNativeLocationDiagnostics() },
+                                                onTest = { testNativeLocationWithPermission() },
+                                                onClear = { clearNativeLocationAuditRecords() },
                                                 onCopy = {
                                                     clipboardManager.setText(AnnotatedString(nativeLocationDiagnostics))
                                                     Toast.makeText(context, "定位诊断已复制", Toast.LENGTH_SHORT).show()
@@ -6762,10 +6759,18 @@ private fun openInstallUnknownAppsSettings(context: Context) {
 @Composable
 fun NativeLocationDiagnosticsDialog(
     diagnostics: String,
+    records: List<NativeLocationAuditRecord>,
+    testing: Boolean,
     onRefresh: () -> Unit,
+    onTest: () -> Unit,
+    onClear: () -> Unit,
     onCopy: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val latest = records.firstOrNull()
+    val successCount = records.count { it.success }
+    val amapCount = records.count { it.provider == "amap" }
+    val failedCount = records.size - successCount
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -6796,30 +6801,75 @@ fun NativeLocationDiagnosticsDialog(
                     }
                 }
 
-                Box(
+                Column(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
-                        .padding(12.dp)
-                        .verticalScroll(rememberScrollState())
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(
-                        text = diagnostics.ifBlank { "暂无定位诊断" },
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("状态摘要", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        DiagnosticItem(label = "最近结果", value = latest?.let { if (it.success) "成功" else "失败" } ?: "暂无")
+                        DiagnosticItem(label = "最近来源", value = latest?.origin ?: "暂无")
+                        DiagnosticItem(label = "最近 provider", value = latest?.provider ?: "暂无")
+                        DiagnosticItem(label = "最近精度", value = latest?.accuracyMeters?.let { "${it}m" } ?: "未知")
+                        DiagnosticItem(label = "记录统计", value = "共 ${records.size} 条，成功 $successCount，失败 $failedCount，高德 $amapCount")
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f))
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("最近定位记录", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        if (records.isEmpty()) {
+                            Text("暂无定位记录", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            records.take(30).forEachIndexed { index, record ->
+                                NativeLocationAuditRecordItem(index + 1, record)
+                            }
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("原始诊断", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        SelectionContainer {
+                            Text(
+                                text = diagnostics.ifBlank { "暂无定位诊断" },
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
                 }
 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     OutlinedButton(
                         onClick = onRefresh,
-                        modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = "刷新定位诊断", modifier = Modifier.size(18.dp))
@@ -6827,17 +6877,34 @@ fun NativeLocationDiagnosticsDialog(
                         Text("刷新")
                     }
                     OutlinedButton(
+                        onClick = onTest,
+                        enabled = !testing,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.LocationOn, contentDescription = "测试定位", modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(if (testing) "测试中" else "测试定位")
+                    }
+                    OutlinedButton(
                         onClick = onCopy,
-                        modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Icon(Icons.Default.ContentCopy, contentDescription = "复制定位诊断", modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("复制")
                     }
+                    OutlinedButton(
+                        onClick = onClear,
+                        enabled = records.isNotEmpty(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Icon(Icons.Default.DeleteSweep, contentDescription = "清空定位记录", modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("清空记录")
+                    }
                     Button(
                         onClick = onDismiss,
-                        modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Text("关闭")
@@ -6846,6 +6913,85 @@ fun NativeLocationDiagnosticsDialog(
             }
         }
     }
+}
+
+@Composable
+private fun NativeLocationAuditRecordItem(index: Int, record: NativeLocationAuditRecord) {
+    val statusColor = if (record.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f), RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f))
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "#$index ${record.purpose}",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    record.origin,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Text(
+                if (record.success) "成功" else "失败",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = statusColor
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            NativeLocationRecordChip(formatTimestamp(record.timestamp))
+            NativeLocationRecordChip(record.provider)
+            NativeLocationRecordChip(record.accuracyMeters?.let { "${it}m" } ?: "精度未知")
+            NativeLocationRecordChip("${record.elapsedMs}ms")
+            NativeLocationRecordChip(if (record.cached) "缓存" else "实时")
+        }
+        if (record.error != "无" || record.message.isNotBlank()) {
+            Text(
+                text = listOfNotNull(
+                    record.error.takeIf { it != "无" }?.let { "错误=$it" },
+                    record.message.takeIf { it.isNotBlank() }
+                ).joinToString("；"),
+                fontSize = 11.sp,
+                color = if (record.error != "无") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun NativeLocationRecordChip(text: String) {
+    Text(
+        text = text,
+        fontSize = 10.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f))
+            .padding(horizontal = 8.dp, vertical = 3.dp)
+    )
 }
 
 @Composable

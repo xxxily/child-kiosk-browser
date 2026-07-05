@@ -1562,7 +1562,7 @@ class WebViewActivity : ComponentActivity() {
     }
 
     internal fun maybeStartAmapAssistantLocation(webView: WebView, url: String?) {
-        val latestConfig = latestRuntimeConfig()
+        val latestConfig = KioskPrefs.mergeFreshAmapLocationRuntimeConfig(this, latestRuntimeConfig())
         if (!latestConfig.amapLocationEnabled || !latestConfig.amapLocationH5AssistantEnabled) return
         if (latestConfig.limitGeolocation) return
         val origin = normalizePermissionOrigin(originForWebStorage(url.orEmpty()).orEmpty())
