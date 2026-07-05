@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-07-05
+
+### Fixed — 修复
+
+- **高德定位 SDK 服务声明补齐**：
+  - enhanced 版本补充声明高德定位 SDK 要求的 `com.amap.api.location.APSService`。
+  - 继续保持高德 Key 由管理员在后台动态填写，不在 Manifest、源码或发布包中内置公共 Key。
+  - 已复核 GitHub Release enhanced APK 的实际包名为 `site.anzz.childkiosk`，发布签名 SHA1 为 `7F:C2:48:26:64:BF:D1:B3:79:CA:72:6F:BE:BA:E3:01:B9:61:F5:7D`。
+
 ## [0.3.1] - 2026-07-05
 
 ### Fixed — 修复

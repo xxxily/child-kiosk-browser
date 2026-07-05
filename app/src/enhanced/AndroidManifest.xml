@@ -4,4 +4,12 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
+    <application>
+        <!-- AMap Location SDK requires each app to declare its own APSService.
+             The API key is still supplied at runtime via AMapLocationClient.setApiKey(). -->
+        <service
+            android:name="com.amap.api.location.APSService"
+            android:exported="false" />
+    </application>
+
 </manifest>

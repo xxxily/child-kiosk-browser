@@ -1,3 +1,21 @@
+## Child Kiosk Browser v0.3.2
+
+本版本修复 enhanced APK 的高德定位 SDK Manifest 集成缺口。经复核，GitHub Release APK 的实际包名和发布签名 SHA1 与文档一致；本轮补齐高德定位 SDK 要求的 `APSService` 声明，避免 SDK 初始化后仍出现鉴权/定位服务异常。
+
+### 本轮核心变化
+
+* **补齐高德定位服务声明**：enhanced 版本 Manifest 新增 `com.amap.api.location.APSService`。
+* **保持动态 Key 策略**：高德 Key 仍由管理员在后台填写，并通过 `AMapLocationClient.setApiKey()` 设置；发布包不内置公共 Key。
+* **复核包名与签名**：enhanced release APK 实际包名为 `site.anzz.childkiosk`，发布签名 SHA1 为 `7F:C2:48:26:64:BF:D1:B3:79:CA:72:6F:BE:BA:E3:01:B9:61:F5:7D`。
+
+### 建议验证
+
+1. 安装 `child-kiosk-browser-0.3.2-enhanced-release.apk`。
+2. 进入后台高德 Key 配置区，确认应用内显示的包名和 SHA1 与高德控制台 Android Key 绑定值一致。
+3. 启用隐私确认和高德 provider 后测试定位，确认不再出现 `INVALID_USER_KEY#SHA1AndPackage`。
+
+---
+
 ## Child Kiosk Browser v0.3.1
 
 本版本修复增强定位接入后的几个实际配置和诊断问题。enhanced APK 现在会在高德 Key 输入区域直接显示当前安装包的包名和签名 SHA1，管理员可以直接复制到高德开放平台申请 Android Key，不再需要从 README 里找静态值。定位诊断也改为摘要 + 详情弹窗，并新增最近定位记录，方便排查网页是否频繁或异常调用定位。
