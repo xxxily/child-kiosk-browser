@@ -1,3 +1,24 @@
+## Child Kiosk Browser v0.3.4
+
+本版本继续修复高德增强定位在真实网页中的稳定性。后台测试高德定位正常、网页请求偶发 `INVALID_USER_KEY` 的主要风险点在于 WebView 运行在独立 `:webview` 进程，已打开页面可能持有旧的高德 Key 配置；本轮改为定位前读取最新高德运行时快照，降低旧配置和进程缓存造成的偶发鉴权失败。
+
+### 本轮核心变化
+
+* **WebView 进程读取最新高德配置**：网页单次定位、页面预热、`watchPosition` 和高德 H5 辅助定位发起前都会合并最新 Key、隐私确认和 provider 策略。
+* **避免旧进程覆盖新 Key**：只有主进程会刷新高德运行时快照，`webview` 进程不会用陈旧 SharedPreferences 反向覆盖配置。
+* **定位诊断更易读**：详情页改为状态摘要、最近定位记录卡片和原始诊断三段展示。
+* **诊断操作收纳**：刷新、测试定位、复制诊断和清空定位记录都移动到详情页。
+* **可清空定位审计**：管理员可以清空最近定位记录，便于开始新一轮排查网页是否滥用定位。
+
+### 建议验证
+
+1. 安装 `child-kiosk-browser-0.3.4-enhanced-release.apk`。
+2. 后台确认高德 Key、隐私确认和 provider 策略后，直接用网页反复调用 `navigator.geolocation`。
+3. 打开定位诊断详情，确认网页请求记录中的 provider 稳定为 `amap` 或按策略回退，不再交替出现旧 Key 的 `INVALID_USER_KEY`。
+4. 使用“清空记录”后重新测试，确认详情页只展示新一轮定位记录。
+
+---
+
 ## Child Kiosk Browser v0.3.3
 
 本版本继续修复高德定位 Key 初始化时机。由于本项目的 enhanced APK 面向不同用户分发，不能在 Manifest 中内置某一个公共高德 Key，因此继续使用高德官方支持的 `AMapLocationClient.setApiKey(String)` 动态设置方式；本轮把 `setApiKey` 提前到所有高德 SDK 调用之前，并在应用启动和后台保存 Key 时主动刷新。
