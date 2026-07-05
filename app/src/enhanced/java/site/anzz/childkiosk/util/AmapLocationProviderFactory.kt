@@ -581,7 +581,11 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
             coordinateSystem = coordinateSystem,
             precisePermission = true,
             elapsedMs = System.currentTimeMillis() - startedAt,
-            message = providerDebugMessage("$successMessage type=${location.locationType}", config, debugExtra)
+            message = providerDebugMessage(
+                "$successMessage ${AmapLocationDebug.locationTypeDisplay(location.locationType)}",
+                config,
+                debugExtra
+            )
         )
     }
 

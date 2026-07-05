@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import site.anzz.childkiosk.util.AmapLocationDebug
 import site.anzz.childkiosk.util.NativeLocationAuditRecord
 
 @Composable
@@ -116,6 +117,14 @@ internal fun NativeLocationDiagnosticsDialog(
                         DiagnosticItem(label = "最近结果", value = latest?.let { if (it.success) "成功" else "失败" } ?: "暂无")
                         DiagnosticItem(label = "最近来源", value = latest?.origin ?: "暂无")
                         DiagnosticItem(label = "最近 provider", value = latest?.provider ?: "暂无")
+                        DiagnosticItem(
+                            label = "高德定位类型",
+                            value = latest
+                                ?.message
+                                ?.let { AmapLocationDebug.locationTypeFromMessage(it) }
+                                ?.let { AmapLocationDebug.locationTypeDisplay(it) }
+                                ?: "暂无"
+                        )
                         DiagnosticItem(label = "最近精度", value = latest?.accuracyMeters?.let { "${it}m" } ?: "未知")
                         DiagnosticItem(label = "记录统计", value = "共 ${records.size} 条，成功 $successCount，失败 $failedCount，高德 $amapCount")
                     }
@@ -335,7 +344,7 @@ private fun NativeLocationAuditRecordItem(index: Int, record: NativeLocationAudi
 }
 
 private fun conciseLocationMessage(message: String): String {
-    return message
+    return AmapLocationDebug.humanizeLocationTypeInMessage(message)
         .substringBefore("；SDK调试:")
         .substringBefore("；高德调试:")
         .replace("；主进程定位代理", "")

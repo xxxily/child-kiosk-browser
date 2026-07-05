@@ -918,7 +918,10 @@ private object NativeLocationAuditStore {
             val status = if (record.success) "成功" else "失败"
             val accuracy = record.accuracyMeters?.let { "${it}m" } ?: "未知"
             val cached = if (record.cached) "缓存" else "实时"
-            val message = record.message.takeIf { it.isNotBlank() }?.let { "，说明=$it" }.orEmpty()
+            val message = record.message
+                .takeIf { it.isNotBlank() }
+                ?.let { "，说明=${AmapLocationDebug.humanizeLocationTypeInMessage(it)}" }
+                .orEmpty()
             "${index + 1}. $time，来源=${record.origin}，类型=${record.purpose}，状态=$status，provider=${record.provider}，精度=$accuracy，耗时=${record.elapsedMs}ms，$cached，错误=${record.error}$message"
         }.joinToString("\n")
     }
@@ -979,7 +982,7 @@ private object NativeLocationAuditStore {
                 cached = json.optBoolean("cached"),
                 coordinateSystem = json.optString("coordinateSystem", NativeLocationCoordinateSystem.UNKNOWN),
                 error = json.optString("error", "无"),
-                message = json.optString("message", "")
+                message = AmapLocationDebug.humanizeLocationTypeInMessage(json.optString("message", ""))
             )
         }.getOrNull()
     }

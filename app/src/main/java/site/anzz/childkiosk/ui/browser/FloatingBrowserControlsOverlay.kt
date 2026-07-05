@@ -115,6 +115,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     private var isDraggingBubble = false
     private var isBubbleHiddenAtEdge = false
     private var isAttachedToRightEdge = true
+    private var consumingOutsidePanelTap = false
     private var downRawX = 0f
     private var downRawY = 0f
     private var startBubbleX = 0f
@@ -346,11 +347,6 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         isClickable = false
         clipChildren = false
         clipToPadding = false
-        setOnClickListener {
-            if (panelExpanded) {
-                setPanelExpanded(expanded = false, animated = true)
-            }
-        }
 
         addView(
             panelView,
@@ -443,7 +439,6 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     fun setPanelExpanded(expanded: Boolean, animated: Boolean = true) {
         if (panelExpanded == expanded && panelView.isVisible == expanded) return
         panelExpanded = expanded
-        isClickable = expanded
         callbacks.onPanelExpandedChanged(expanded)
         removeCallbacks(hideRunnable)
 
@@ -489,6 +484,34 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         bubbleButton.animate().cancel()
         panelView.animate().cancel()
         super.onDetachedFromWindow()
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (
+            panelExpanded &&
+            event.actionMasked == MotionEvent.ACTION_DOWN &&
+            !isPointInsideView(panelView, event.x, event.y) &&
+            !isPointInsideView(bubbleButton, event.x, event.y)
+        ) {
+            consumingOutsidePanelTap = true
+            setPanelExpanded(expanded = false, animated = true)
+            return true
+        }
+        if (consumingOutsidePanelTap) {
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                consumingOutsidePanelTap = false
+            }
+            return true
+        }
+        return super.dispatchTouchEvent(event)
+    }
+
+    private fun isPointInsideView(view: View, x: Float, y: Float): Boolean {
+        if (!view.isVisible) return false
+        return x >= view.x &&
+            x <= view.x + view.width &&
+            y >= view.y &&
+            y <= view.y + view.height
     }
 
     private fun handleBubbleTouch(event: MotionEvent): Boolean {
