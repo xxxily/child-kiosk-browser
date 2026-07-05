@@ -26,6 +26,17 @@ These rules apply to the whole repository.
 - Keep touch targets large enough for children and kiosk operation. Use at least 72dp touch targets for primary kiosk controls where practical, matching the project requirement.
 - Avoid overlapping text, clipped labels, or layout shifts caused by long Chinese text. Prefer wrapping, smaller local text, or responsive stacking over fixed-width rows.
 
+## Code Organization And Modularization
+
+- Do not grow `AdminConsoleScreen.kt` or any other screen into a catch-all file. New settings pages, complex cards, dialogs, diagnostic views, and reusable controls must be split into focused files under the same package or a clearly named subpackage.
+- Keep screen files responsible for state orchestration and navigation. Move feature-specific UI into dedicated Composables, move reusable controls into small component files, and move platform/helpers such as signing identity or formatters into non-UI utility files.
+- When adding an admin option with more than a simple row and switch, create or reuse a feature screen/card component instead of embedding the whole implementation directly in the parent screen.
+- Avoid creating a new giant file while extracting code. A feature with multiple responsibilities should be split by role, for example: screen orchestration, detail dialog, repeated controls, data/diagnostic helpers.
+- Prefer package-private (`internal`/`private`) APIs by default. Expose only the Composables or helpers that are actually reused across files.
+- Keep state ownership explicit. Parent screens should pass callbacks and stable data down; child components should not silently mutate unrelated global runtime state unless that is their documented responsibility.
+- Shared formatting, diagnostics rows, chip controls, and identity readers should live in reusable modules instead of being copied into individual screens.
+- Before finishing substantial UI work, review the changed file sizes and responsibilities. If a file now mixes navigation, persistence, platform calls, dialogs, and repeated controls, split it before committing.
+
 ## Settings And Runtime Behavior
 
 - When adding or changing a setting, decide explicitly whether it must apply immediately, on the next opened web page, or only after restart.
