@@ -41,9 +41,12 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
     private val assistantClients = Collections.synchronizedMap(WeakHashMap<WebView, AMapLocationClient>())
 
     private var runningSingleRequestId: String? = null
+    private var lastBackgroundRefreshQueuedAtMs: Long = 0L
 
     @Volatile
     private var lastDiagnostic: String = "暂无高德定位诊断"
+    @Volatile
+    private var lastSuccessResult: NativeLocationResult? = null
 
     override fun isUsable(config: WebViewRuntimeConfig): Boolean {
         return config.amapLocationEnabled &&
@@ -69,6 +72,7 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
         config: WebViewRuntimeConfig,
         timeoutMs: Long,
         allowCached: Boolean,
+        refreshAfterCache: Boolean,
         origin: String?,
         callback: (NativeLocationResult) -> Unit
     ): String {
@@ -84,12 +88,43 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
             return ""
         }
 
+        if (allowCached) {
+            cachedResult(latestConfig.nativeLocationMaxCacheAgeMs)?.let { cached ->
+                val result = cached.copy(
+                    cached = true,
+                    elapsedMs = 0L,
+                    message = cached.message.stripProviderDebug().ifBlank { "命中近期高德定位缓存" }
+                )
+                AmapLocationDebug.log(
+                    appContext,
+                    "single_cache_hit",
+                    latestConfig,
+                    "origin=${origin.orEmpty()}, ageMs=${result.cacheAgeMillis ?: -1}, refresh=$refreshAfterCache"
+                )
+                dispatch(result, callback)
+                maybeQueueBackgroundRefresh(latestConfig, timeoutMs, origin, result.cacheAgeMillis, refreshAfterCache)
+                return ""
+            }
+        }
+
+        return enqueueSingleRequest(latestConfig, timeoutMs, allowCached, refreshAfterCache, origin, callback)
+    }
+
+    private fun enqueueSingleRequest(
+        config: WebViewRuntimeConfig,
+        timeoutMs: Long,
+        allowCached: Boolean,
+        refreshAfterCache: Boolean,
+        origin: String?,
+        callback: ((NativeLocationResult) -> Unit)?
+    ): String {
         val requestId = UUID.randomUUID().toString()
         activeRequests[requestId] = ActiveAmapRequest(
             single = SingleAmapRequest(
-                config = latestConfig,
+                config = config,
                 timeoutMs = timeoutMs,
                 allowCached = allowCached,
+                refreshAfterCache = refreshAfterCache,
                 origin = origin,
                 callback = callback
             )
@@ -97,7 +132,7 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
         AmapLocationDebug.log(
             appContext,
             "single_enqueue",
-            latestConfig,
+            config,
             "request=${shortId(requestId)}, origin=${origin.orEmpty()}, timeoutMs=$timeoutMs, allowCached=$allowCached"
         )
         mainHandler.post {
@@ -114,6 +149,21 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
             val requestId = singleRequestQueue.removeFirst()
             val active = activeRequests[requestId] ?: continue
             val single = active.single ?: continue
+            if (single.allowCached) {
+                val cached = cachedResult(single.config.nativeLocationMaxCacheAgeMs)
+                if (cached != null) {
+                    activeRequests.remove(requestId)?.destroy()
+                    dispatch(cached, single.callback)
+                    maybeQueueBackgroundRefresh(
+                        config = single.config,
+                        timeoutMs = single.timeoutMs,
+                        origin = single.origin,
+                        cacheAgeMs = cached.cacheAgeMillis,
+                        refreshAfterCache = single.refreshAfterCache
+                    )
+                    continue
+                }
+            }
             runningSingleRequestId = requestId
             startSingleAttempt(requestId, active, single, retryAuthFailure = true, attempt = 1)
             return
@@ -174,7 +224,7 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
         val option = AMapLocationClientOption().apply {
             locationMode = modeFor(single.config)
             isOnceLocation = true
-            isOnceLocationLatest = single.allowCached
+            isOnceLocationLatest = false
             httpTimeOut = single.timeoutMs.coerceIn(1_000L, 60_000L)
         }
         client.setLocationListener { location ->
@@ -241,6 +291,29 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
             runningSingleRequestId = null
             startNextSingleRequestIfIdle()
         }
+    }
+
+    private fun maybeQueueBackgroundRefresh(
+        config: WebViewRuntimeConfig,
+        timeoutMs: Long,
+        origin: String?,
+        cacheAgeMs: Long?,
+        refreshAfterCache: Boolean
+    ) {
+        if (!refreshAfterCache) return
+        val age = cacheAgeMs ?: return
+        if (age < MIN_BACKGROUND_REFRESH_CACHE_AGE_MS) return
+        val now = System.currentTimeMillis()
+        if (now - lastBackgroundRefreshQueuedAtMs < BACKGROUND_REFRESH_THROTTLE_MS) return
+        lastBackgroundRefreshQueuedAtMs = now
+        enqueueSingleRequest(
+            config = config,
+            timeoutMs = timeoutMs,
+            allowCached = false,
+            refreshAfterCache = false,
+            origin = origin,
+            callback = null
+        )
     }
 
     override fun startWatch(
@@ -433,6 +506,8 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
 
     companion object : AmapLocationApiKeyConfigurator {
         private const val AUTH_FAILURE_RETRY_DELAY_MS = 450L
+        private const val MIN_BACKGROUND_REFRESH_CACHE_AGE_MS = 5_000L
+        private const val BACKGROUND_REFRESH_THROTTLE_MS = 15_000L
 
         @Volatile
         private var lastConfiguredApiKey: String = ""
@@ -513,7 +588,7 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
     private fun dispatchError(
         error: NativeLocationError,
         message: String,
-        callback: (NativeLocationResult) -> Unit,
+        callback: ((NativeLocationResult) -> Unit)?,
         startedAt: Long = System.currentTimeMillis()
     ) {
         dispatch(
@@ -528,13 +603,40 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
         )
     }
 
-    private fun dispatch(result: NativeLocationResult, callback: (NativeLocationResult) -> Unit) {
+    private fun dispatch(result: NativeLocationResult, callback: ((NativeLocationResult) -> Unit)?) {
         lastDiagnostic = result.toDiagnosticLine(redactCoordinates = true)
+        if (result.success && result.provider == "amap" && !result.cached) {
+            lastSuccessResult = result.copy(cached = false, cacheAgeMillis = 0L)
+        }
+        if (callback == null) return
         if (Looper.myLooper() == Looper.getMainLooper()) {
             callback(result)
         } else {
             mainHandler.post { callback(result) }
         }
+    }
+
+    private fun cachedResult(maxAgeMs: Long): NativeLocationResult? {
+        if (maxAgeMs <= 0L) return null
+        val result = lastSuccessResult ?: return null
+        val ageMs = cacheAgeMillis(result) ?: return null
+        if (ageMs !in 0..maxAgeMs) return null
+        return result.copy(
+            cached = true,
+            cacheAgeMillis = ageMs,
+            elapsedMs = 0L,
+            message = result.message.stripProviderDebug().ifBlank { "命中近期高德定位缓存" }
+        )
+    }
+
+    private fun cacheAgeMillis(result: NativeLocationResult): Long? {
+        result.elapsedRealtimeNanos
+            ?.takeIf { it > 0L }
+            ?.let { return ((android.os.SystemClock.elapsedRealtimeNanos() - it) / 1_000_000L).coerceAtLeast(0L) }
+        result.wallTimeMillis
+            ?.takeIf { it > 0L }
+            ?.let { return (System.currentTimeMillis() - it).coerceAtLeast(0L) }
+        return null
     }
 
     private fun amapFailureMessage(location: AMapLocation): String {
@@ -584,6 +686,12 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
 
     private fun shortId(id: String): String = id.take(8)
 
+    private fun String.stripProviderDebug(): String {
+        return substringBefore("；SDK调试:")
+            .substringBefore("; SDK debug:")
+            .trim()
+    }
+
     private fun isAuthFailure(result: NativeLocationResult): Boolean {
         return !result.success &&
             result.provider == "amap" &&
@@ -594,8 +702,9 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
         val config: WebViewRuntimeConfig,
         val timeoutMs: Long,
         val allowCached: Boolean,
+        val refreshAfterCache: Boolean,
         val origin: String?,
-        val callback: (NativeLocationResult) -> Unit
+        val callback: ((NativeLocationResult) -> Unit)?
     )
 
     private inner class ActiveAmapRequest(

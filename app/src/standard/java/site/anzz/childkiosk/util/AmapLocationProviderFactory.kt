@@ -25,6 +25,7 @@ private object NoOpAmapLocationProvider : AmapLocationProvider {
         config: WebViewRuntimeConfig,
         timeoutMs: Long,
         allowCached: Boolean,
+        refreshAfterCache: Boolean,
         origin: String?,
         callback: (NativeLocationResult) -> Unit
     ): String {

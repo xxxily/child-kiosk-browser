@@ -407,6 +407,7 @@ class WebViewActivity : ComponentActivity() {
     private val nativeLocationBridgeWatchIds = ConcurrentHashMap<String, String>()
     private val nativeLocationBridgeNativeRequestIds = ConcurrentHashMap<String, String>()
     private val nativeLocationBridgeWebViewRequests = ConcurrentHashMap<WebView, MutableSet<String>>()
+    private val nativeLocationWarmupTimestamps = ConcurrentHashMap<String, Long>()
     private val filterControlsUpdateScheduled = AtomicBoolean(false)
     private val nativeLocationManager by lazy { NativeLocationManager(this) }
     private val nativeLocationMainProcessClient by lazy { NativeLocationMainProcessClient(this) }
@@ -1221,9 +1222,33 @@ class WebViewActivity : ComponentActivity() {
         if (origin.isBlank()) return
         if (isOriginBlacklisted(latestConfig.geolocationBlacklist, origin)) return
         if (!hasLocationPermission()) return
-        nativeLocationManager.warmup(latestConfig, origin) { result ->
+        if (!shouldWarmupNativeLocation(origin, latestConfig.nativeLocationWarmupTimeoutMs)) return
+        nativeLocationMainProcessClient.requestSingleLocation(
+            config = latestConfig.copy(
+                nativeLocationRequestTimeoutMs = latestConfig.nativeLocationWarmupTimeoutMs
+            ),
+            timeoutMs = latestConfig.nativeLocationWarmupTimeoutMs,
+            allowCached = true,
+            purpose = "warmup:$origin",
+            origin = origin
+        ) { result ->
             Log.d("ChildKioskLocation", "Warmup result: ${result.toDiagnosticLine(redactCoordinates = true)}")
         }
+    }
+
+    private fun shouldWarmupNativeLocation(origin: String, timeoutMs: Long): Boolean {
+        val now = System.currentTimeMillis()
+        val minIntervalMs = timeoutMs.coerceAtLeast(3_000L)
+        val previous = nativeLocationWarmupTimestamps[origin] ?: 0L
+        if (now - previous < minIntervalMs) return false
+        nativeLocationWarmupTimestamps[origin] = now
+        if (nativeLocationWarmupTimestamps.size > 24) {
+            nativeLocationWarmupTimestamps.entries
+                .sortedBy { it.value }
+                .take(nativeLocationWarmupTimestamps.size - 24)
+                .forEach { nativeLocationWarmupTimestamps.remove(it.key) }
+        }
+        return true
     }
 
     private fun stopAllNativeLocationRequests(reason: String) {

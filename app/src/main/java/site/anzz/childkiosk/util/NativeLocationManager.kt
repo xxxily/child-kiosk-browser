@@ -262,6 +262,7 @@ class NativeLocationManager(private val context: Context) {
             config = config,
             timeoutMs = timeoutMs,
             allowCached = allowCached,
+            refreshAfterCache = purpose.startsWith("bridge_get:") || purpose.startsWith("warmup:"),
             origin = origin
         ) { result ->
             if (!routedRequests.containsKey(routeId)) return@requestSingleLocation
@@ -357,13 +358,11 @@ class NativeLocationManager(private val context: Context) {
         callback: ((NativeLocationResult) -> Unit)? = null
     ): String {
         if (!config.nativeLocationOptimizationEnabled || !config.nativeLocationWarmupEnabled) return ""
-        val effectiveConfig = KioskPrefs
-            .mergeFreshAmapLocationRuntimeConfig(appContext, config)
-            .copy(amapLocationProviderStrategy = KioskPrefs.NATIVE_LOCATION_PROVIDER_SYSTEM)
-        return requestSystemSingleLocation(
+        val effectiveConfig = KioskPrefs.mergeFreshAmapLocationRuntimeConfig(appContext, config)
+        return requestSingleLocation(
             config = effectiveConfig,
             timeoutMs = config.nativeLocationWarmupTimeoutMs,
-            allowCached = false,
+            allowCached = true,
             purpose = "warmup:$origin",
             origin = origin
         ) { result ->
@@ -1036,6 +1035,7 @@ private object NativeLocationAuditStore {
             .replace(Regex("#csid#[^#，\\s]+"), "#csid#<hidden>")
             .take(MAX_MESSAGE_CHARS)
     }
+
 }
 
 data class CoordinatePoint(val latitude: Double, val longitude: Double)

@@ -418,8 +418,8 @@ internal fun CapabilityEnhancementsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("预热系统定位缓存", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Text("页面开始加载时提前刷新系统定位，普通 navigator.geolocation 仍走 WebView 默认路径", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("预热原生定位缓存", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("页面开始加载时提前刷新当前 provider 缓存；启用托管后网页定位可优先复用近期结果", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(
                         checked = nativeLocationWarmupEnabled,

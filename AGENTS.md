@@ -37,6 +37,14 @@ These rules apply to the whole repository.
 - Shared formatting, diagnostics rows, chip controls, and identity readers should live in reusable modules instead of being copied into individual screens.
 - Before finishing substantial UI work, review the changed file sizes and responsibilities. If a file now mixes navigation, persistence, platform calls, dialogs, and repeated controls, split it before committing.
 
+## Debugging Knowledge Capture
+
+- When a bug takes multiple investigation cycles, involves platform behavior, SDK integration, release signing, cross-process state, or non-obvious runtime ordering, add or update a focused runbook under `docs/runbooks/`.
+- Runbooks should capture symptoms, root cause, verification signals, fix strategy, and future troubleshooting steps. Keep them operational and specific enough for the next agent to avoid repeating the same investigation.
+- Do not bury incident notes in broad requirements documents. Use a dedicated runbook or troubleshooting document, then link or reference it from related requirements only when useful.
+- Preserve useful diagnostics while keeping user-facing UI readable. Prefer concise default summaries with expandable raw diagnostics and copyable full logs.
+- Before closing a difficult fix, check whether the new lesson changes project rules, architecture constraints, or release procedure; if it does, update `AGENTS.md` or the relevant docs in the same change.
+
 ## Settings And Runtime Behavior
 
 - When adding or changing a setting, decide explicitly whether it must apply immediately, on the next opened web page, or only after restart.

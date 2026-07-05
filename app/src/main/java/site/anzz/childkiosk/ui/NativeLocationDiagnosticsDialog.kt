@@ -20,6 +20,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
@@ -31,6 +33,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,6 +60,7 @@ internal fun NativeLocationDiagnosticsDialog(
     onCopy: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    var rawDiagnosticsExpanded by remember { mutableStateOf(false) }
     val latest = records.firstOrNull()
     val successCount = records.count { it.success }
     val amapCount = records.count { it.provider == "amap" }
@@ -137,14 +144,31 @@ internal fun NativeLocationDiagnosticsDialog(
                             .padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("原始诊断", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        SelectionContainer {
-                            Text(
-                                text = diagnostics.ifBlank { "暂无定位诊断" },
-                                fontSize = 12.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("原始诊断", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Text("包含调试信息，复制按钮仍复制完整原文", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            IconButton(onClick = { rawDiagnosticsExpanded = !rawDiagnosticsExpanded }) {
+                                Icon(
+                                    if (rawDiagnosticsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = if (rawDiagnosticsExpanded) "折叠原始诊断" else "展开原始诊断"
+                                )
+                            }
+                        }
+                        if (rawDiagnosticsExpanded) {
+                            SelectionContainer {
+                                Text(
+                                    text = diagnostics.ifBlank { "暂无定位诊断" },
+                                    fontSize = 12.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
                         }
                     }
                 }
@@ -257,13 +281,22 @@ private fun NativeLocationAuditRecordItem(index: Int, record: NativeLocationAudi
             Text(
                 text = listOfNotNull(
                     record.error.takeIf { it != "无" }?.let { "错误=$it" },
-                    record.message.takeIf { it.isNotBlank() }
+                    conciseLocationMessage(record.message).takeIf { it.isNotBlank() }
                 ).joinToString("；"),
                 fontSize = 11.sp,
                 color = if (record.error != "无") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
+}
+
+private fun conciseLocationMessage(message: String): String {
+    return message
+        .substringBefore("；SDK调试:")
+        .substringBefore("；高德调试:")
+        .replace("；主进程定位代理", "")
+        .trim()
+        .ifBlank { message.take(80).trim() }
 }
 
 @Composable
