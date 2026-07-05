@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -61,6 +62,7 @@ internal fun NativeLocationDiagnosticsDialog(
     onDismiss: () -> Unit
 ) {
     var rawDiagnosticsExpanded by remember { mutableStateOf(false) }
+    var confirmClearVisible by remember { mutableStateOf(false) }
     val latest = records.firstOrNull()
     val successCount = records.count { it.success }
     val amapCount = records.count { it.provider == "amap" }
@@ -205,7 +207,7 @@ internal fun NativeLocationDiagnosticsDialog(
                         Text("复制")
                     }
                     OutlinedButton(
-                        onClick = onClear,
+                        onClick = { confirmClearVisible = true },
                         enabled = records.isNotEmpty(),
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
@@ -219,6 +221,48 @@ internal fun NativeLocationDiagnosticsDialog(
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Text("关闭")
+                    }
+                }
+            }
+        }
+    }
+
+    if (confirmClearVisible) {
+        Dialog(
+            onDismissRequest = { confirmClearVisible = false }
+        ) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text("清空定位记录？", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "清空后将无法在本机诊断中查看之前的网页定位和测试定位记录。",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = { confirmClearVisible = false }) {
+                            Text("取消")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                confirmClearVisible = false
+                                onClear()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text("确认清空")
+                        }
                     }
                 }
             }

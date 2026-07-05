@@ -346,6 +346,11 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         isClickable = false
         clipChildren = false
         clipToPadding = false
+        setOnClickListener {
+            if (panelExpanded) {
+                setPanelExpanded(expanded = false, animated = true)
+            }
+        }
 
         addView(
             panelView,
@@ -438,6 +443,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     fun setPanelExpanded(expanded: Boolean, animated: Boolean = true) {
         if (panelExpanded == expanded && panelView.isVisible == expanded) return
         panelExpanded = expanded
+        isClickable = expanded
         callbacks.onPanelExpandedChanged(expanded)
         removeCallbacks(hideRunnable)
 
@@ -1123,8 +1129,14 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             }
             ACTION_BROWSER_BACK -> callbacks.onBack()
             ACTION_BROWSER_FORWARD -> callbacks.onForward()
-            ACTION_BROWSER_REFRESH -> callbacks.onRefresh()
-            ACTION_BROWSER_FORCE_REFRESH -> callbacks.onForceRefresh()
+            ACTION_BROWSER_REFRESH -> {
+                setPanelExpanded(expanded = false, animated = true)
+                callbacks.onRefresh()
+            }
+            ACTION_BROWSER_FORCE_REFRESH -> {
+                setPanelExpanded(expanded = false, animated = true)
+                callbacks.onForceRefresh()
+            }
             ACTION_BROWSER_STOP -> callbacks.onStopLoading()
             ACTION_BROWSER_BOOKMARK -> callbacks.onBookmarkCurrentPage()
             ACTION_PANEL_CLOSE -> setPanelExpanded(expanded = false, animated = true)
