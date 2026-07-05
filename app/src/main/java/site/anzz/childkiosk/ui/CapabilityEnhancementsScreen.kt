@@ -55,7 +55,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.webkit.WebViewFeature
 import site.anzz.childkiosk.BuildConfig
-import site.anzz.childkiosk.util.AmapLocationProviderFactory
 import site.anzz.childkiosk.util.KioskPrefs
 import site.anzz.childkiosk.util.NativeLocationManager
 import site.anzz.childkiosk.util.NativeLocationResult
@@ -322,7 +321,6 @@ internal fun CapabilityEnhancementsScreen(
                             onValueChange = {
                                 amapLocationApiKey = it.trim()
                                 KioskPrefs.setAmapLocationApiKey(context, amapLocationApiKey)
-                                AmapLocationProviderFactory.configureApiKey(context, amapLocationApiKey)
                                 refreshNativeLocationDiagnostics()
                             },
                             enabled = !limitGeolocation,

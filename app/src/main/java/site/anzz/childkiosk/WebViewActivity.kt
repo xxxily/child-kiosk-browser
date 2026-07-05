@@ -90,6 +90,7 @@ import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsState
 import site.anzz.childkiosk.util.AdBlocker
 import site.anzz.childkiosk.util.HashUtils
 import site.anzz.childkiosk.util.KioskPrefs
+import site.anzz.childkiosk.util.NativeLocationMainProcessClient
 import site.anzz.childkiosk.util.NativeLocationError
 import site.anzz.childkiosk.util.NativeLocationManager
 import site.anzz.childkiosk.util.NativeLocationResult
@@ -408,6 +409,7 @@ class WebViewActivity : ComponentActivity() {
     private val nativeLocationBridgeWebViewRequests = ConcurrentHashMap<WebView, MutableSet<String>>()
     private val filterControlsUpdateScheduled = AtomicBoolean(false)
     private val nativeLocationManager by lazy { NativeLocationManager(this) }
+    private val nativeLocationMainProcessClient by lazy { NativeLocationMainProcessClient(this) }
 
     private fun showCustomComposeDialog(content: @Composable () -> Unit) {
         val root = webViewRoot ?: return
@@ -649,6 +651,7 @@ class WebViewActivity : ComponentActivity() {
             tab.webView?.let { destroyWebViewSafely(it) }
         }
         nativeLocationManager.destroy()
+        nativeLocationMainProcessClient.destroy()
         nativeLocationBridgeWatchIds.clear()
         nativeLocationBridgeNativeRequestIds.clear()
         nativeLocationBridgeWebViewRequests.clear()
@@ -1230,6 +1233,7 @@ class WebViewActivity : ComponentActivity() {
         nativeLocationBridgeWatchIds.clear()
         nativeLocationBridgeNativeRequestIds.clear()
         nativeLocationManager.destroy()
+        nativeLocationMainProcessClient.destroy()
         Log.d("ChildKioskLocation", "Stopped native location requests: $reason")
     }
 
@@ -1315,7 +1319,7 @@ class WebViewActivity : ComponentActivity() {
                 nativeLocationMaxCacheAgeMs = maximumAgeMs?.coerceIn(0L, 10 * 60_000L)
                     ?: latestConfig.nativeLocationMaxCacheAgeMs
             )
-            val nativeRequestId = nativeLocationManager.requestSingleLocation(
+            val nativeRequestId = nativeLocationMainProcessClient.requestSingleLocation(
                 config = requestConfig,
                 timeoutMs = requestConfig.nativeLocationRequestTimeoutMs,
                 allowCached = true,
@@ -1397,11 +1401,11 @@ class WebViewActivity : ComponentActivity() {
         registerNativeLocationBridgeRequest(webView, requestId)
         val runRequest: () -> Unit = runRequest@{
             if (!isNativeLocationBridgeRequestActive(webView, requestId)) return@runRequest
-            val watchId = nativeLocationManager.startWatch(latestRuntimeConfig(), origin = origin) { result ->
+            val watchId = nativeLocationMainProcessClient.startWatch(latestRuntimeConfig(), origin = origin) { result ->
                 dispatchNativeLocationBridgeResult(webView, requestId, result, isWatch = true)
                 if (!result.success) {
                     nativeLocationBridgeWatchIds.remove(requestId)?.let { nativeId ->
-                        nativeLocationManager.cancelRequest(nativeId)
+                        nativeLocationMainProcessClient.cancelRequest(nativeId)
                     }
                     unregisterNativeLocationBridgeRequest(webView, requestId)
                 }
@@ -1457,10 +1461,10 @@ class WebViewActivity : ComponentActivity() {
         if (requestId.isBlank()) return
         unregisterNativeLocationBridgeRequest(webView, requestId)
         nativeLocationBridgeNativeRequestIds.remove(requestId)?.let { nativeId ->
-            nativeLocationManager.cancelRequest(nativeId)
+            nativeLocationMainProcessClient.cancelRequest(nativeId)
         }
         nativeLocationBridgeWatchIds.remove(requestId)?.let { nativeId ->
-            nativeLocationManager.cancelRequest(nativeId)
+            nativeLocationMainProcessClient.cancelRequest(nativeId)
         }
     }
 
@@ -1537,10 +1541,10 @@ class WebViewActivity : ComponentActivity() {
     internal fun clearNativeLocationBridgeRequests(webView: WebView) {
         nativeLocationBridgeWebViewRequests.remove(webView)?.forEach { requestId ->
             nativeLocationBridgeNativeRequestIds.remove(requestId)?.let { nativeId ->
-                nativeLocationManager.cancelRequest(nativeId)
+                nativeLocationMainProcessClient.cancelRequest(nativeId)
             }
             nativeLocationBridgeWatchIds.remove(requestId)?.let { nativeId ->
-                nativeLocationManager.cancelRequest(nativeId)
+                nativeLocationMainProcessClient.cancelRequest(nativeId)
             }
         }
     }

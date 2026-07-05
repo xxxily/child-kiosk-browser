@@ -6,7 +6,6 @@ import android.os.Build
 import android.os.Handler
 import android.util.Log
 import android.webkit.WebView
-import site.anzz.childkiosk.util.AmapLocationProviderFactory
 import site.anzz.childkiosk.util.KioskPrefs
 import site.anzz.childkiosk.util.ProcessUtils
 import site.anzz.childkiosk.util.WebDataManager
@@ -38,12 +37,6 @@ class ChildKioskApplication : Application(), ComponentCallbacks2 {
         if (!isWebViewProcess) {
             KioskPrefs.refreshAmapLocationRuntimeConfig(this)
         }
-        AmapLocationProviderFactory.configureApiKey(
-            this,
-            KioskPrefs.mergeFreshAmapLocationRuntimeConfig(this, KioskPrefs.getWebViewRuntimeConfig(this))
-                .amapLocationApiKey
-        )
-
         // 1. 初始化 WebView 预加载池
         WebViewPool.init(this)
 

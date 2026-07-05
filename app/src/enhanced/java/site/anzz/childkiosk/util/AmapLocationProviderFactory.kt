@@ -401,9 +401,9 @@ private class RealAmapLocationProvider(private val appContext: Context) : AmapLo
                 config,
                 "source=$debugSource, lastConfigured=${configuredKeyLabel()}"
             )
-            configureApiKey(config.amapLocationApiKey, force = true)
             AMapLocationClient.updatePrivacyShow(appContext, true, true)
             AMapLocationClient.updatePrivacyAgree(appContext, true)
+            configureApiKey(config.amapLocationApiKey, force = true)
             AMapLocationClient(appContext).also {
                 AmapLocationDebug.log(
                     appContext,
