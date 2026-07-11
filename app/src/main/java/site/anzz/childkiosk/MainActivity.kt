@@ -19,7 +19,6 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,6 +54,7 @@ class MainActivity : ComponentActivity() {
     private var isSoftLockDeferred = false
     private var filterEventReceiver: site.anzz.childkiosk.util.filter.FilterEventReceiver? = null
     private var pendingEditRequest by mutableStateOf<PendingWebAppEdit?>(null)
+    private var currentScreen by mutableStateOf(SCREEN_MAIN)
 
     private data class PendingWebAppEdit(
         val app: WebAppEntity?,
@@ -71,6 +71,11 @@ class MainActivity : ComponentActivity() {
 
         dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         adminComponent = ComponentName(this, MyDeviceAdminReceiver::class.java)
+        currentScreen = savedInstanceState
+            ?.getString(STATE_CURRENT_SCREEN)
+            ?.takeIf { it == SCREEN_MAIN || it == SCREEN_ADMIN }
+            ?: SCREEN_MAIN
+        consumeSafeHomeIntent(intent)
 
         // 1. 设置 FLAG_SECURE 防截屏逃逸 (根据配置)
         if (KioskPrefs.isLimitFlagSecureEnabled(this)) {
@@ -129,7 +134,6 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    var currentScreen by remember { mutableStateOf("MAIN") }
                     val systemConfig by db.systemConfigDao()
                         .getSystemConfigFlow()
                         .collectAsState(initial = null)
@@ -143,7 +147,7 @@ class MainActivity : ComponentActivity() {
                     }
 
                     when (currentScreen) {
-                        "MAIN" -> {
+                        SCREEN_MAIN -> {
                             val context = LocalContext.current
                             val floatingEnabled = remember(currentScreen) {
                                 KioskPrefs.isFloatingBrowserControlsEnabled(context)
@@ -158,7 +162,7 @@ class MainActivity : ComponentActivity() {
                                     onEditWebApp = { app ->
                                         pendingEditRequest = PendingWebAppEdit(app = app)
                                     },
-                                    onEnterAdmin = { currentScreen = "ADMIN" },
+                                    onEnterAdmin = { currentScreen = SCREEN_ADMIN },
                                     onExitKiosk = { stopLockTaskMode() }
                                 )
                                 if (floatingEnabled) {
@@ -169,6 +173,7 @@ class MainActivity : ComponentActivity() {
                                                     onNavigateToUrl = { url ->
                                                         val intent = Intent(ctx, WebViewActivity::class.java).apply {
                                                             putExtra(WebViewActivity.EXTRA_CUSTOM_URL, url)
+                                                            putExtra(WebViewActivity.EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART, true)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
                                                             putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, orientationMode)
                                                             KioskPrefs.putWebViewRuntimeConfig(this, ctx)
@@ -178,6 +183,7 @@ class MainActivity : ComponentActivity() {
                                                     onNewTab = {
                                                         val intent = Intent(ctx, WebViewActivity::class.java).apply {
                                                             putExtra(WebViewActivity.EXTRA_CUSTOM_URL, "about:blank")
+                                                            putExtra(WebViewActivity.EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART, true)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
                                                             putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, orientationMode)
                                                             KioskPrefs.putWebViewRuntimeConfig(this, ctx)
@@ -187,6 +193,7 @@ class MainActivity : ComponentActivity() {
                                                     onOpenWebApp = { webApp ->
                                                         val intent = Intent(ctx, WebViewActivity::class.java).apply {
                                                             putExtra(WebViewActivity.EXTRA_WEB_APP_ID, webApp.id)
+                                                            putExtra(WebViewActivity.EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART, true)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
                                                             putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, orientationMode)
                                                             KioskPrefs.putWebViewRuntimeConfig(this, ctx)
@@ -196,6 +203,7 @@ class MainActivity : ComponentActivity() {
                                                     onSwitchTab = { tabId ->
                                                         val intent = Intent(ctx, WebViewActivity::class.java).apply {
                                                             putExtra(WebViewActivity.EXTRA_SWITCH_TAB_ID, tabId)
+                                                            putExtra(WebViewActivity.EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART, true)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
                                                             putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, orientationMode)
                                                             KioskPrefs.putWebViewRuntimeConfig(this, ctx)
@@ -205,6 +213,7 @@ class MainActivity : ComponentActivity() {
                                                     onCloseTab = { tabId ->
                                                         val intent = Intent(ctx, WebViewActivity::class.java).apply {
                                                             putExtra(WebViewActivity.EXTRA_CLOSE_TAB_ID, tabId)
+                                                            putExtra(WebViewActivity.EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART, false)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
                                                             putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, orientationMode)
                                                             KioskPrefs.putWebViewRuntimeConfig(this, ctx)
@@ -220,10 +229,10 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
-                        "ADMIN" -> AdminConsoleScreen(
+                        SCREEN_ADMIN -> AdminConsoleScreen(
                             config = systemConfig,
                             isDeviceOwner = dpm.isDeviceOwnerApp(packageName),
-                            onBack = { currentScreen = "MAIN" },
+                            onBack = { currentScreen = SCREEN_MAIN },
                             onExitKiosk = { stopLockTaskMode() },
                             onGoToHomeSettings = { openHomeSettings() },
                             onProtectionModeChanged = { mode ->
@@ -318,6 +327,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        consumeSafeHomeIntent(intent)
         consumePendingWebAppEditIntent(intent)
         applyRequestedOrientation()
         applySystemUiMode()
@@ -328,7 +338,22 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
+        consumeSafeHomeIntent(intent)
         consumePendingWebAppEditIntent(intent)
+    }
+
+    private fun consumeSafeHomeIntent(intent: Intent?) {
+        intent ?: return
+        if (intent.getBooleanExtra(EXTRA_FORCE_SAFE_HOME, false)) {
+            currentScreen = SCREEN_MAIN
+            pendingEditRequest = null
+            intent.removeExtra(EXTRA_FORCE_SAFE_HOME)
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_CURRENT_SCREEN, currentScreen)
+        super.onSaveInstanceState(outState)
     }
 
     private fun consumePendingWebAppEditIntent(intent: Intent?) {
@@ -600,9 +625,13 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+        private const val STATE_CURRENT_SCREEN = "main_activity.current_screen"
+        private const val SCREEN_MAIN = "MAIN"
+        private const val SCREEN_ADMIN = "ADMIN"
         const val EXTRA_EDIT_WEB_APP_REQUEST = "site.anzz.childkiosk.extra.EDIT_WEB_APP_REQUEST"
         const val EXTRA_EDIT_WEB_APP_TITLE = "site.anzz.childkiosk.extra.EDIT_WEB_APP_TITLE"
         const val EXTRA_EDIT_WEB_APP_URL = "site.anzz.childkiosk.extra.EDIT_WEB_APP_URL"
+        const val EXTRA_FORCE_SAFE_HOME = "site.anzz.childkiosk.extra.FORCE_SAFE_HOME"
     }
 
     private fun normalizeWebUrlForCompare(url: String): String {

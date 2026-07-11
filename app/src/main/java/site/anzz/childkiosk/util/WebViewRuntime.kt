@@ -90,9 +90,7 @@ object WebViewRuntime {
         if (webView.layerType != targetLayerType) {
             webView.setLayerType(targetLayerType, null)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, true)
-        }
+        applyRendererPriorityPolicy(webView, highPerformance = false)
 
         val metrics = context.resources.displayMetrics
         Log.d(
@@ -115,6 +113,20 @@ object WebViewRuntime {
     }
 
     private const val BYTES_PER_MB = 1024L * 1024L
+
+    /**
+     * Requests the renderer policy for a managed page. This is an OOM-priority hint only;
+     * Chromium can still throttle or recreate a renderer. Every high-performance exit path
+     * must call this with [highPerformance] set to false before recycling or destroying a view.
+     */
+    fun applyRendererPriorityPolicy(webView: WebView, highPerformance: Boolean) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            webView.setRendererPriorityPolicy(
+                WebView.RENDERER_PRIORITY_IMPORTANT,
+                !highPerformance
+            )
+        }
+    }
 
     fun webViewDiagnosticSummary(
         context: Context,

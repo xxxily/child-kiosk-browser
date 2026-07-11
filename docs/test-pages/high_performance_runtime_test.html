@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>高性能网页运行测试页</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0 auto; max-width: 920px; padding: 20px; line-height: 1.5; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+    section { border: 1px solid #8886; border-radius: 12px; padding: 14px; }
+    label { display: block; margin: 8px 0; }
+    input { box-sizing: border-box; width: 100%; min-height: 40px; }
+    button { min-height: 44px; margin: 4px; padding: 0 14px; }
+    pre { max-height: 50vh; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+    .warn { color: #b45309; }
+  </style>
+</head>
+<body>
+  <h1>高性能网页运行测试页</h1>
+  <p class="warn">本页测量容器和浏览器的真实行为，不把 timer 批处理或页面重载伪装成连续运行。</p>
+
+  <div class="grid">
+    <section>
+      <strong>页面身份</strong>
+      <div>loadId: <code id="loadId"></code></div>
+      <div>visibility: <code id="visibility"></code></div>
+      <div>online: <code id="online"></code></div>
+      <div>checkpoint: <code id="checkpoint"></code></div>
+    </section>
+    <section>
+      <strong>Timer</strong>
+      <div>tick: <code id="tick">0</code></div>
+      <div>最近间隔: <code id="interval">-</code> ms</div>
+      <div>最大漂移: <code id="drift">0</code> ms</div>
+    </section>
+    <section>
+      <strong>网络计数</strong>
+      <div>fetch 成功/失败: <code id="fetchCount">0/0</code></div>
+      <div>WebSocket 重连: <code id="reconnects">0</code></div>
+      <div>最后事件序号: <code id="sequence">-</code></div>
+    </section>
+  </div>
+
+  <section>
+    <label>定时 fetch URL（留空则不请求）<input id="heartbeatUrl" type="url" placeholder="https://example.com/heartbeat"></label>
+    <label>WebSocket URL（留空则不连接）<input id="websocketUrl" type="url" placeholder="wss://example.com/runtime-test"></label>
+    <button id="apply">应用网络配置</button>
+    <button id="checkpointNow">写入 IndexedDB 检查点</button>
+    <button id="copy">复制 JSON 记录</button>
+    <button id="clear">清空本页记录</button>
+  </section>
+
+  <h2>事件</h2>
+  <pre id="log"></pre>
+
+  <script>
+    (() => {
+      'use strict';
+      const loadId = `${Date.now().toString(36)}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
+      const records = [];
+      const $ = id => document.getElementById(id);
+      let tick = 0;
+      let maxDrift = 0;
+      let previousPerf = performance.now();
+      let previousWall = Date.now();
+      let fetchOk = 0;
+      let fetchFailed = 0;
+      let reconnects = 0;
+      let socket = null;
+      let reconnectTimer = null;
+      let networkGeneration = 0;
+
+      const safeText = value => String(value ?? '').slice(0, 500);
+      function record(type, detail = {}) {
+        const entry = {
+          at: new Date().toISOString(),
+          elapsedMs: Math.round(performance.now()),
+          loadId,
+          visibility: document.visibilityState,
+          online: navigator.onLine,
+          type,
+          detail
+        };
+        records.push(entry);
+        if (records.length > 1000) records.splice(0, records.length - 1000);
+        $('log').textContent = records.slice(-120).map(item => JSON.stringify(item)).join('\n');
+        $('log').scrollTop = $('log').scrollHeight;
+      }
+
+      $('loadId').textContent = loadId;
+      $('visibility').textContent = document.visibilityState;
+      $('online').textContent = String(navigator.onLine);
+      record('page_loaded', { userAgent: navigator.userAgent });
+
+      setInterval(() => {
+        const nowPerf = performance.now();
+        const nowWall = Date.now();
+        const perfDelta = nowPerf - previousPerf;
+        const wallDelta = nowWall - previousWall;
+        const drift = Math.abs(wallDelta - perfDelta);
+        maxDrift = Math.max(maxDrift, drift);
+        previousPerf = nowPerf;
+        previousWall = nowWall;
+        tick += 1;
+        $('tick').textContent = String(tick);
+        $('interval').textContent = wallDelta.toFixed(0);
+        $('drift').textContent = maxDrift.toFixed(1);
+        if (wallDelta > 2500 || tick % 60 === 0) {
+          record('timer_sample', { expectedMs: 1000, wallDeltaMs: wallDelta, perfDeltaMs: perfDelta, driftMs: drift });
+        }
+      }, 1000);
+
+      document.addEventListener('visibilitychange', () => {
+        $('visibility').textContent = document.visibilityState;
+        record('visibility_changed');
+      });
+      window.addEventListener('online', () => { $('online').textContent = 'true'; record('network_online'); });
+      window.addEventListener('offline', () => { $('online').textContent = 'false'; record('network_offline'); });
+      window.addEventListener('pageshow', event => record('pageshow', { persisted: event.persisted }));
+      window.addEventListener('pagehide', event => record('pagehide', { persisted: event.persisted }));
+
+      function openDb() {
+        return new Promise((resolve, reject) => {
+          const request = indexedDB.open('child-kiosk-runtime-test', 1);
+          request.onupgradeneeded = () => request.result.createObjectStore('checkpoints');
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      }
+
+      async function readCheckpoint() {
+        try {
+          const db = await openDb();
+          const value = await new Promise((resolve, reject) => {
+            const request = db.transaction('checkpoints').objectStore('checkpoints').get('latest');
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => reject(request.error);
+          });
+          $('checkpoint').textContent = value ? `${value.loadId} @ ${value.at}` : '无';
+          record('checkpoint_read', { found: Boolean(value), previousLoadId: value?.loadId || null });
+          db.close();
+        } catch (error) {
+          record('checkpoint_read_failed', { error: safeText(error) });
+        }
+      }
+
+      async function writeCheckpoint() {
+        try {
+          const db = await openDb();
+          const value = { loadId, at: new Date().toISOString(), tick, lastSequence: $('sequence').textContent };
+          await new Promise((resolve, reject) => {
+            const request = db.transaction('checkpoints', 'readwrite').objectStore('checkpoints').put(value, 'latest');
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+          });
+          $('checkpoint').textContent = `${value.loadId} @ ${value.at}`;
+          record('checkpoint_written', value);
+          db.close();
+        } catch (error) {
+          record('checkpoint_write_failed', { error: safeText(error) });
+        }
+      }
+
+      async function heartbeat(generation) {
+        const url = $('heartbeatUrl').value.trim();
+        if (!url || generation !== networkGeneration) return;
+        const started = performance.now();
+        try {
+          const response = await fetch(url, { cache: 'no-store', credentials: 'omit' });
+          fetchOk += 1;
+          record('fetch_result', { ok: response.ok, status: response.status, durationMs: performance.now() - started });
+        } catch (error) {
+          fetchFailed += 1;
+          record('fetch_failed', { error: safeText(error), durationMs: performance.now() - started });
+        }
+        $('fetchCount').textContent = `${fetchOk}/${fetchFailed}`;
+        setTimeout(() => heartbeat(generation), 15000);
+      }
+
+      function connectSocket(generation) {
+        const url = $('websocketUrl').value.trim();
+        if (!url || generation !== networkGeneration) return;
+        try {
+          socket = new WebSocket(url);
+          socket.onopen = () => {
+            record('websocket_open');
+            socket.send(JSON.stringify({ type: 'ping', loadId, sentAt: Date.now(), lastSequence: $('sequence').textContent }));
+          };
+          socket.onmessage = event => {
+            let payload;
+            try { payload = JSON.parse(event.data); } catch (_) { payload = { raw: safeText(event.data) }; }
+            if (!payload || typeof payload !== 'object') payload = { raw: safeText(event.data) };
+            const sequence = payload.sequence ?? payload.seq ?? '-';
+            $('sequence').textContent = safeText(sequence);
+            record('websocket_message', { sequence, type: payload.type || null });
+          };
+          socket.onerror = () => record('websocket_error');
+          socket.onclose = event => {
+            record('websocket_close', { code: event.code, reason: safeText(event.reason), clean: event.wasClean });
+            if (generation === networkGeneration) {
+              reconnects += 1;
+              $('reconnects').textContent = String(reconnects);
+              reconnectTimer = setTimeout(() => connectSocket(generation), Math.min(30000, 1000 * 2 ** Math.min(reconnects, 5)));
+            }
+          };
+        } catch (error) {
+          record('websocket_create_failed', { error: safeText(error) });
+        }
+      }
+
+      $('apply').onclick = () => {
+        networkGeneration += 1;
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        if (socket) socket.close(1000, 'configuration changed');
+        reconnects = 0;
+        $('reconnects').textContent = '0';
+        record('network_configuration_applied', {
+          fetchEnabled: Boolean($('heartbeatUrl').value.trim()),
+          websocketEnabled: Boolean($('websocketUrl').value.trim())
+        });
+        heartbeat(networkGeneration);
+        connectSocket(networkGeneration);
+      };
+      $('checkpointNow').onclick = writeCheckpoint;
+      $('copy').onclick = async () => {
+        const text = JSON.stringify({ exportedAt: new Date().toISOString(), loadId, records }, null, 2);
+        try { await navigator.clipboard.writeText(text); record('records_copied'); }
+        catch (error) { record('records_copy_failed', { error: safeText(error) }); }
+      };
+      $('clear').onclick = () => { records.splice(0); $('log').textContent = ''; record('records_cleared'); };
+
+      readCheckpoint();
+    })();
+  </script>
+</body>
+</html>

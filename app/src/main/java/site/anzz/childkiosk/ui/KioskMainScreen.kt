@@ -349,6 +349,7 @@ fun KioskMainScreen(
                                     onClick = {
                                         val intent = Intent(context, WebViewActivity::class.java).apply {
                                             putExtra(WebViewActivity.EXTRA_WEB_APP_ID, app.id)
+                                            putExtra(WebViewActivity.EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART, true)
                                             putExtra(
                                                 WebViewActivity.EXTRA_ORIENTATION_MODE,
                                                 KioskPrefs.getOrientationMode(context)

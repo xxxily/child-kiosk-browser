@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.activity.compose.BackHandler
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,6 +89,10 @@ import java.util.Locale
 import site.anzz.childkiosk.WebViewActivity
 import site.anzz.childkiosk.data.BrowserHistoryEntity
 
+private const val CAPABILITY_ENHANCEMENTS = "CAPABILITY_ENHANCEMENTS"
+private const val CAPABILITY_LOCATION = "CAPABILITY_LOCATION"
+private const val CAPABILITY_HIGH_PERFORMANCE = "CAPABILITY_HIGH_PERFORMANCE"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdminConsoleScreen(
@@ -139,17 +144,19 @@ fun AdminConsoleScreen(
     var latestReleaseInfo by remember { mutableStateOf<ReleaseInfo?>(null) }
     var isCheckingUpdate by remember { mutableStateOf(false) }
 
-    // 当前二级子页面导航状态：null 代表首页目录
-    var currentSubPage by remember { mutableStateOf<String?>(null) }
+    // 当前后台路由：null 代表后台首页；能力增强详情页拥有独立的第三级返回层级。
+    var currentSubPage by rememberSaveable { mutableStateOf<String?>(null) }
 
-    // 接管返回键/手势：如果在二级子页面则返回后台主页，如果在后台主页则退出后台
-    BackHandler(enabled = true) {
-        if (currentSubPage != null) {
-            currentSubPage = null
-        } else {
-            onBack()
+    fun navigateUp() {
+        when (currentSubPage) {
+            CAPABILITY_LOCATION,
+            CAPABILITY_HIGH_PERFORMANCE -> currentSubPage = CAPABILITY_ENHANCEMENTS
+            null -> onBack()
+            else -> currentSubPage = null
         }
     }
+
+    BackHandler(enabled = true) { navigateUp() }
 
     val currentVersion = remember {
         try {
@@ -302,7 +309,9 @@ fun AdminConsoleScreen(
                          "VERIFICATION" -> "认证设置"
                         "INTERFACE" -> "界面与显示配置"
                         "WEB_FILTERING" -> "网页过滤管理"
-                        "CAPABILITY_ENHANCEMENTS" -> "能力增强"
+                        CAPABILITY_ENHANCEMENTS -> "能力增强"
+                        CAPABILITY_LOCATION -> "网页定位增强"
+                        CAPABILITY_HIGH_PERFORMANCE -> "高性能持续运行"
                         "SANDBOX_LIMITS" -> "安全沙箱与限制"
                         "PERFORMANCE" -> "网页性能优化"
                         "WEBVIEW_PROVIDER" -> "WebView 内核环境"
@@ -313,13 +322,7 @@ fun AdminConsoleScreen(
                     Text(titleText, fontWeight = FontWeight.Bold)
                 },
                 navigationIcon = {
-                    IconButton(onClick = {
-                        if (currentSubPage != null) {
-                            currentSubPage = null
-                        } else {
-                            onBack()
-                        }
-                    }) {
+                    IconButton(onClick = ::navigateUp) {
                         Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "返回")
                     }
                 },
@@ -408,7 +411,7 @@ fun AdminConsoleScreen(
                                         icon = Icons.Default.Extension,
                                         title = "能力增强",
                                         summary = "定位增强${if (KioskPrefs.isNativeLocationOptimizationEnabled(context)) "已开启" else "未开启"}，后续增强能力统一在这里配置",
-                                        onClick = { currentSubPage = "CAPABILITY_ENHANCEMENTS" }
+                                        onClick = { currentSubPage = CAPABILITY_ENHANCEMENTS }
                                     )
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
@@ -1418,9 +1421,25 @@ fun AdminConsoleScreen(
                         }
                     )
                 }
-                "CAPABILITY_ENHANCEMENTS" -> {
-                    CapabilityEnhancementsScreen(
+                CAPABILITY_ENHANCEMENTS -> {
+                    CapabilityEnhancementsOverviewScreen(
+                        onOpenLocationEnhancement = { currentSubPage = CAPABILITY_LOCATION },
+                        onOpenHighPerformance = { currentSubPage = CAPABILITY_HIGH_PERFORMANCE }
+                    )
+                }
+                CAPABILITY_LOCATION -> {
+                    LocationEnhancementDetailScreen(
                         currentSigningIdentity = currentSigningIdentity,
+                        onCapabilityChanged = { recreateWebViews ->
+                            quickMode = KioskPrefs.getQuickMode(context)
+                            if (recreateWebViews) WebViewPool.clear()
+                            onSandboxLimitsChanged()
+                        }
+                    )
+                }
+                CAPABILITY_HIGH_PERFORMANCE -> {
+                    HighPerformanceDetailScreen(
+                        webApps = webApps,
                         onCapabilityChanged = { recreateWebViews ->
                             quickMode = KioskPrefs.getQuickMode(context)
                             if (recreateWebViews) WebViewPool.clear()
@@ -2912,6 +2931,7 @@ fun AdminConsoleScreen(
                         onOpen = { item ->
                             val intent = Intent(context, WebViewActivity::class.java).apply {
                                 putExtra(WebViewActivity.EXTRA_CUSTOM_URL, item.url)
+                                putExtra(WebViewActivity.EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART, true)
                                 putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, KioskPrefs.getOrientationMode(context))
                                 KioskPrefs.putWebViewRuntimeConfig(this, context, normalSystemBars)
                             }

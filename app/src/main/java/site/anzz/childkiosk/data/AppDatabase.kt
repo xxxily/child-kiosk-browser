@@ -9,10 +9,19 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import site.anzz.childkiosk.performance.HighPerformanceConfigDao
+import site.anzz.childkiosk.performance.HighPerformanceConfigEntity
+import site.anzz.childkiosk.performance.HighPerformanceOriginRuleEntity
 
 @Database(
-    entities = [WebAppEntity::class, SystemConfigEntity::class, BrowserHistoryEntity::class],
-    version = 6,
+    entities = [
+        WebAppEntity::class,
+        SystemConfigEntity::class,
+        BrowserHistoryEntity::class,
+        HighPerformanceConfigEntity::class,
+        HighPerformanceOriginRuleEntity::class
+    ],
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -20,6 +29,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun webAppDao(): WebAppDao
     abstract fun systemConfigDao(): SystemConfigDao
     abstract fun browserHistoryDao(): BrowserHistoryDao
+    abstract fun highPerformanceConfigDao(): HighPerformanceConfigDao
 
     companion object {
         @Volatile
@@ -33,7 +43,7 @@ abstract class AppDatabase : RoomDatabase() {
                     "child_kiosk_database"
                 )
                 .enableMultiInstanceInvalidation()
-                .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                 .fallbackToDestructiveMigration()
                 .addCallback(DatabaseCallback(context.applicationContext))
                 .build()
@@ -211,6 +221,50 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_browser_history_visited_at ON browser_history(visited_at)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_browser_history_host ON browser_history(host)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_browser_history_url ON browser_history(url)")
+            }
+        }
+
+        internal val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS high_performance_configs (
+                        id INTEGER NOT NULL,
+                        enabled INTEGER NOT NULL DEFAULT 0,
+                        risk_acknowledged_at INTEGER,
+                        config_version INTEGER NOT NULL DEFAULT 0,
+                        updated_at INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(id)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS high_performance_origin_rules (
+                        id TEXT NOT NULL,
+                        origin TEXT NOT NULL,
+                        enabled INTEGER NOT NULL DEFAULT 1,
+                        include_subdomains INTEGER NOT NULL DEFAULT 0,
+                        display_name TEXT,
+                        session_policy TEXT NOT NULL DEFAULT 'FOLLOW_PAGE',
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        PRIMARY KEY(id)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_high_performance_origin_rules_origin " +
+                        "ON high_performance_origin_rules(origin)"
+                )
+                db.execSQL(
+                    """
+                    INSERT OR IGNORE INTO high_performance_configs (
+                        id, enabled, risk_acknowledged_at, config_version, updated_at
+                    ) VALUES (1, 0, NULL, 0, 0)
+                    """.trimIndent()
+                )
             }
         }
 

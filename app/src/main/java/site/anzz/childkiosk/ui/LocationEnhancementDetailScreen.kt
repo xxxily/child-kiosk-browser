@@ -41,6 +41,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,7 +62,7 @@ import site.anzz.childkiosk.util.NativeLocationResult
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun CapabilityEnhancementsScreen(
+internal fun LocationEnhancementDetailScreen(
     currentSigningIdentity: AppSigningIdentity,
     onCapabilityChanged: (recreateWebViews: Boolean) -> Unit
 ) {
@@ -93,7 +94,7 @@ internal fun CapabilityEnhancementsScreen(
     var nativeLocationAllowedOrigins by remember {
         mutableStateOf(KioskPrefs.getNativeLocationBridgeAllowedOrigins(context))
     }
-    var nativeLocationOriginInput by remember { mutableStateOf("") }
+    var nativeLocationOriginInput by rememberSaveable { mutableStateOf("") }
     var amapLocationEnabled by remember { mutableStateOf(KioskPrefs.isAmapLocationEnabled(context)) }
     var amapLocationApiKey by remember { mutableStateOf(KioskPrefs.getAmapLocationApiKey(context)) }
     var amapLocationPrivacyAgreed by remember {
@@ -114,8 +115,8 @@ internal fun CapabilityEnhancementsScreen(
     var nativeLocationGcj02AllowedOrigins by remember {
         mutableStateOf(KioskPrefs.getNativeLocationGcj02AllowedOrigins(context))
     }
-    var amapH5OriginInput by remember { mutableStateOf("") }
-    var nativeLocationGcj02OriginInput by remember { mutableStateOf("") }
+    var amapH5OriginInput by rememberSaveable { mutableStateOf("") }
+    var nativeLocationGcj02OriginInput by rememberSaveable { mutableStateOf("") }
     val nativeLocationManager = remember { NativeLocationManager(context) }
     var nativeLocationDiagnostics by remember { mutableStateOf(nativeLocationManager.diagnosticSummary()) }
     var nativeLocationAuditRecords by remember { mutableStateOf(nativeLocationManager.auditRecords()) }

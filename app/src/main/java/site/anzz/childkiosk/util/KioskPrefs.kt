@@ -9,6 +9,8 @@ import site.anzz.childkiosk.util.filter.FilterPreset
 import site.anzz.childkiosk.util.filter.FilterRepository
 import site.anzz.childkiosk.util.filter.FilterRuntimeSnapshot
 import org.json.JSONObject
+import site.anzz.childkiosk.performance.HighPerformanceRuntimeSnapshot
+import site.anzz.childkiosk.performance.HighPerformanceRuntimePublisher
 import site.anzz.childkiosk.ui.browser.BrowserTab
 import site.anzz.childkiosk.ui.browser.TabStateInfo
 
@@ -72,7 +74,8 @@ data class WebViewRuntimeConfig(
     val amapLocationH5AssistantEnabled: Boolean,
     val amapLocationH5AssistantAllowedOrigins: Set<String>,
     val nativeLocationCoordinateMode: String,
-    val nativeLocationGcj02AllowedOrigins: Set<String>
+    val nativeLocationGcj02AllowedOrigins: Set<String>,
+    val highPerformanceSnapshot: HighPerformanceRuntimeSnapshot = HighPerformanceRuntimeSnapshot.disabled()
 ) {
     fun toJson(): JSONObject {
         return JSONObject()
@@ -137,6 +140,7 @@ data class WebViewRuntimeConfig(
             .put("amapLocationH5AssistantAllowedOrigins", org.json.JSONArray(amapLocationH5AssistantAllowedOrigins))
             .put("nativeLocationCoordinateMode", nativeLocationCoordinateMode)
             .put("nativeLocationGcj02AllowedOrigins", org.json.JSONArray(nativeLocationGcj02AllowedOrigins))
+            .put("highPerformanceSnapshot", highPerformanceSnapshot.toJson())
     }
 
     companion object {
@@ -293,7 +297,15 @@ data class WebViewRuntimeConfig(
                         set.add(array.getString(i))
                     }
                     set
-                } ?: fallback.nativeLocationGcj02AllowedOrigins
+                } ?: fallback.nativeLocationGcj02AllowedOrigins,
+                highPerformanceSnapshot = if (json.has("highPerformanceSnapshot")) {
+                    HighPerformanceRuntimeSnapshot.parseOrDisabled(
+                        json.optJSONObject("highPerformanceSnapshot")?.toString(),
+                        minimumConfigVersion = fallback.highPerformanceSnapshot.configVersion
+                    )
+                } else {
+                    fallback.highPerformanceSnapshot
+                }
             )
         }
     }
@@ -793,7 +805,8 @@ object KioskPrefs {
             amapLocationH5AssistantEnabled = isAmapLocationH5AssistantEnabled(context),
             amapLocationH5AssistantAllowedOrigins = getAmapLocationH5AssistantAllowedOrigins(context),
             nativeLocationCoordinateMode = getNativeLocationCoordinateMode(context),
-            nativeLocationGcj02AllowedOrigins = getNativeLocationGcj02AllowedOrigins(context)
+            nativeLocationGcj02AllowedOrigins = getNativeLocationGcj02AllowedOrigins(context),
+            highPerformanceSnapshot = HighPerformanceRuntimePublisher.readPublishedSnapshot(context)
         )
     }
 

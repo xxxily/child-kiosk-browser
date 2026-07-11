@@ -327,6 +327,9 @@ object WebViewPool {
     }
 
     private fun resetToBlank(webView: WebView) {
+        runCatching {
+            WebViewRuntime.applyRendererPriorityPolicy(webView, highPerformance = false)
+        }
         webView.stopLoading()
         webView.webChromeClient = null
         webView.webViewClient = WebViewClient()

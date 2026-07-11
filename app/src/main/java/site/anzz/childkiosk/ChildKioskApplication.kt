@@ -11,6 +11,9 @@ import site.anzz.childkiosk.util.ProcessUtils
 import site.anzz.childkiosk.util.WebDataManager
 import site.anzz.childkiosk.util.WebViewPool
 import site.anzz.childkiosk.util.WhitelistSubscriptionRepository
+import site.anzz.childkiosk.performance.HighPerformanceRuntimeBridge
+import site.anzz.childkiosk.performance.HighPerformanceSessionController
+import site.anzz.childkiosk.performance.HighPerformanceDiagnostics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -34,6 +37,10 @@ class ChildKioskApplication : Application(), ComponentCallbacks2 {
             }
         }
         Log.d("ChildKioskApp", "Process started: $processName, webViewProcess=$isWebViewProcess")
+        if (isWebViewProcess) {
+            HighPerformanceSessionController.initialize(this)
+            HighPerformanceRuntimeBridge.register(this)
+        }
         if (!isWebViewProcess) {
             KioskPrefs.refreshAmapLocationRuntimeConfig(this)
         }
@@ -92,6 +99,12 @@ class ChildKioskApplication : Application(), ComponentCallbacks2 {
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        if (ProcessUtils.isWebViewProcess(this)) {
+            HighPerformanceDiagnostics.record(
+                type = "trim_memory",
+                result = "level_$level"
+            )
+        }
         // 根据内存紧张等级裁减或清理预加载池，防止 OOM
         when {
             level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> {

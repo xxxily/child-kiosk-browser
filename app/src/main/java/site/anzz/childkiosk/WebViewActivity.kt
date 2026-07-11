@@ -102,6 +102,11 @@ import site.anzz.childkiosk.util.WebAppIconCache
 import site.anzz.childkiosk.util.WebViewRuntime
 import site.anzz.childkiosk.util.WebViewRuntimeConfig
 import site.anzz.childkiosk.util.WebViewPool
+import site.anzz.childkiosk.performance.HighPerformanceActivityState
+import site.anzz.childkiosk.performance.HighPerformanceRuntimePublisher
+import site.anzz.childkiosk.performance.HighPerformanceSessionController
+import site.anzz.childkiosk.performance.HighPerformanceTabMemoryCandidate
+import site.anzz.childkiosk.performance.HighPerformanceTabMemoryPolicy
 import site.anzz.childkiosk.ui.theme.ChildKioskTheme
 import site.anzz.childkiosk.util.filter.CosmeticFilterMatch
 import site.anzz.childkiosk.util.filter.FilterAction
@@ -376,13 +381,21 @@ private class MutablePageFilterDiagnostics {
 
 class WebViewActivity : ComponentActivity() {
 
+    private val highPerformanceOwnerId = java.util.UUID.randomUUID().toString()
     private val tabList = mutableListOf<BrowserTab>()
+    private val pendingHighPerformanceRecoveries = mutableMapOf<String, PendingRendererRecovery>()
     internal var activeTabId: String? = null
     private val MAX_ACTIVE_WEBVIEWS = 2
     private var rootWebView: WebView? = null
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var fullscreenView: View? = null
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
+
+    private data class PendingRendererRecovery(
+        val attemptId: String = java.util.UUID.randomUUID().toString(),
+        val fallbackUrl: String?,
+        var replacement: WebView? = null
+    )
     private val webViewStack = mutableListOf<WebView>()
     private var webViewRoot: FrameLayout? = null
     private var topProgress: ProgressBar? = null
@@ -544,6 +557,12 @@ class WebViewActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         runtimeConfig = KioskPrefs.getWebViewRuntimeConfig(intent, this)
+        runtimeConfig = runtimeConfig.copy(
+            highPerformanceSnapshot = HighPerformanceRuntimePublisher.readPublishedSnapshot(
+                this,
+                runtimeConfig.highPerformanceSnapshot.configVersion
+            )
+        )
 
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
             window.attributes.layoutInDisplayCutoutMode =
@@ -556,6 +575,11 @@ class WebViewActivity : ComponentActivity() {
         requestedOrientation = KioskPrefs.requestedOrientationForMode(orientationMode)
 
         super.onCreate(savedInstanceState)
+        HighPerformanceSessionController.initialize(this, runtimeConfig.highPerformanceSnapshot)
+        HighPerformanceSessionController.onActivityStateChanged(
+            highPerformanceOwnerId,
+            HighPerformanceActivityState.CREATED
+        )
 
         // 防截屏逃逸 (根据配置)
         if (runtimeConfig.limitFlagSecure) {
@@ -615,7 +639,22 @@ class WebViewActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        HighPerformanceSessionController.onActivityStateChanged(
+            highPerformanceOwnerId,
+            HighPerformanceActivityState.RESUMED
+        )
+        HighPerformanceSessionController.refreshSystemConditions(
+            source = "activity_resume"
+        )
         applySystemUiMode()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        HighPerformanceSessionController.onActivityStateChanged(
+            highPerformanceOwnerId,
+            HighPerformanceActivityState.STARTED
+        )
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -644,11 +683,20 @@ class WebViewActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        HighPerformanceSessionController.onActivityStateChanged(
+            highPerformanceOwnerId,
+            HighPerformanceActivityState.STOPPED
+        )
         stopAllNativeLocationRequests("activity_stop")
         super.onStop()
     }
 
     override fun onDestroy() {
+        failPendingHighPerformanceRecoveries("activity_destroyed_before_recovery_completed")
+        HighPerformanceSessionController.onActivityStateChanged(
+            highPerformanceOwnerId,
+            HighPerformanceActivityState.DESTROYED
+        )
         timeLimitJob?.cancel()
         timeLimitJob = null
         filterRuntimeInitializationJob?.cancel()
@@ -673,7 +721,10 @@ class WebViewActivity : ComponentActivity() {
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
         tabList.forEach { tab ->
-            tab.webView?.let { destroyWebViewSafely(it) }
+            tab.webView?.let {
+                HighPerformanceSessionController.unregisterWebView(it, "activity_destroyed")
+                destroyWebViewSafely(it)
+            }
         }
         pendingPopupWebViews.entries.toList().forEach { (webView, pending) ->
             popupMainHandler.removeCallbacks(pending.timeout)
@@ -1849,7 +1900,16 @@ class WebViewActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
-        runtimeConfig = KioskPrefs.getWebViewRuntimeConfig(intent, this)
+        val launchedConfig = KioskPrefs.getWebViewRuntimeConfig(intent, this)
+        val publishedSnapshot = HighPerformanceRuntimePublisher.readPublishedSnapshot(
+            this,
+            launchedConfig.highPerformanceSnapshot.configVersion
+        )
+        runtimeConfig = launchedConfig.copy(highPerformanceSnapshot = publishedSnapshot)
+        HighPerformanceSessionController.applySnapshot(
+            publishedSnapshot,
+            source = "activity_new_intent"
+        )
         prepareFilterRuntimeThenHandle(intent)
     }
 
@@ -1859,6 +1919,11 @@ class WebViewActivity : ComponentActivity() {
         val customUrl = intent.getStringExtra(EXTRA_CUSTOM_URL)
         val switchTabId = intent.getStringExtra(EXTRA_SWITCH_TAB_ID)
         val closeTabId = intent.getStringExtra(EXTRA_CLOSE_TAB_ID)
+        val allowHighPerformanceResourceRestart = intent.getBooleanExtra(
+            EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART,
+            false
+        )
+        intent.removeExtra(EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART)
 
         if (TabMemoryCache.tabList.isNotEmpty() && tabList.isEmpty()) {
             tabList.clear()
@@ -1877,7 +1942,10 @@ class WebViewActivity : ComponentActivity() {
         }
 
         if (!switchTabId.isNullOrBlank()) {
-            switchToTab(switchTabId)
+            switchToTab(
+                switchTabId,
+                allowHighPerformanceResourceRestart = allowHighPerformanceResourceRestart
+            )
             return
         }
 
@@ -1899,17 +1967,31 @@ class WebViewActivity : ComponentActivity() {
                     launchedWebAppId = webApp.id
                     val existing = tabList.firstOrNull { it.url == webApp.url }
                     if (existing != null) {
-                        switchToTab(existing.id)
+                        switchToTab(
+                            existing.id,
+                            allowHighPerformanceResourceRestart = allowHighPerformanceResourceRestart
+                        )
                     } else {
-                        createNewTab(webApp.url, focus = true)
+                        createNewTab(
+                            webApp.url,
+                            focus = true,
+                            allowHighPerformanceResourceRestart = allowHighPerformanceResourceRestart
+                        )
                     }
                 } else if (!customUrl.isNullOrBlank()) {
                     launchedWebAppId = null
                     val existing = tabList.firstOrNull { it.url == customUrl }
                     if (existing != null) {
-                        switchToTab(existing.id)
+                        switchToTab(
+                            existing.id,
+                            allowHighPerformanceResourceRestart = allowHighPerformanceResourceRestart
+                        )
                     } else {
-                        createNewTab(customUrl, focus = true)
+                        createNewTab(
+                            customUrl,
+                            focus = true,
+                            allowHighPerformanceResourceRestart = allowHighPerformanceResourceRestart
+                        )
                     }
                 } else {
                     val activeId = activeTabId
@@ -1974,10 +2056,9 @@ class WebViewActivity : ComponentActivity() {
         initializeWebViewFilterRuntimeThenHandle(intent)
     }
 
-    private fun buildWebViewFilterRuntime(
-        fallbackRequest: site.anzz.childkiosk.util.filter.FilterRuntimeSnapshot
-    ): WebViewFilterRuntime {
-        // Always retain a deterministic local safety baseline for future enabled snapshots.
+    private fun buildWebViewFilterRuntime(fallbackRequest: site.anzz.childkiosk.util.filter.FilterRuntimeSnapshot): WebViewFilterRuntime {
+        // Keep a deterministic local safety baseline even when filtering is currently disabled;
+        // the same Activity can later receive an enabled snapshot through onNewIntent().
         val fallbackSnapshot = FilterRepository.bundledFallbackSnapshot(fallbackRequest)
         val fallbackEngine = FilterRepository.getBundledFallbackEngine(fallbackRequest)
         return WebViewFilterRuntime(
@@ -2034,7 +2115,9 @@ class WebViewActivity : ComponentActivity() {
 
         pendingFilterNavigationIntent = nextIntent
         val generation = webViewFilterRuntime.prepare(requestedSnapshot) { handle ->
-            runOnUiThread { onWebViewFilterRuntimeChanged(handle) }
+            runOnUiThread {
+                onWebViewFilterRuntimeChanged(handle)
+            }
         }
         pendingFilterNavigationGeneration = generation
     }
@@ -2116,6 +2199,7 @@ class WebViewActivity : ComponentActivity() {
 
     private fun setWebViewVisible(webView: WebView, visible: Boolean) {
         webView.visibility = if (visible) View.VISIBLE else View.GONE
+        HighPerformanceSessionController.onVisibilityChanged(webView, visible)
     }
 
     private fun installPullToRefreshIndicator(root: FrameLayout) {
@@ -2274,6 +2358,10 @@ class WebViewActivity : ComponentActivity() {
                         view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                         startPullToRefreshIndicator()
                         currentPageLoading = true
+                        HighPerformanceSessionController.allowResourceRestart(
+                            webView,
+                            "pull_to_refresh"
+                        )
                         webView.reload()
                         updateFloatingControlsState(loading = true)
                     } else {
@@ -2330,6 +2418,7 @@ class WebViewActivity : ComponentActivity() {
         url: String,
         focus: Boolean = true,
         existingWebView: WebView? = null,
+        allowHighPerformanceResourceRestart: Boolean = false,
         popupFilterContext: PopupFilterContext? = null
     ): BrowserTab {
         val cleanUrl = url.trim()
@@ -2344,11 +2433,21 @@ class WebViewActivity : ComponentActivity() {
             originalHost = originalHost,
             onSslError = { sslUrl ->
                 Log.w("ChildKioskWebView", "Native WebView SSL error: $sslUrl")
+                webViewRef?.let { failedWebView ->
+                    tabList.firstOrNull { it.webView === failedWebView }?.let { currentTab ->
+                        recordHighPerformanceRecoveryFailure(currentTab, failedWebView, sslUrl)
+                    }
+                }
                 Toast.makeText(this, "SSL 证书异常：$sslUrl", Toast.LENGTH_LONG).show()
                 if (rootWebView?.url == sslUrl) hideTopProgress()
             },
             onBlocked = { blockedUrl ->
                 Log.w("ChildKioskWebView", "Native WebView blocked navigation: $blockedUrl")
+                webViewRef?.let { failedWebView ->
+                    tabList.firstOrNull { it.webView === failedWebView }?.let { currentTab ->
+                        recordHighPerformanceRecoveryFailure(currentTab, failedWebView, blockedUrl)
+                    }
+                }
                 Toast.makeText(this, "已拦截跳转：$blockedUrl", Toast.LENGTH_LONG).show()
                 if (rootWebView?.url == blockedUrl) hideTopProgress()
             },
@@ -2395,15 +2494,30 @@ class WebViewActivity : ComponentActivity() {
             onPageStartedInActivity = { webView, pageUrl ->
                 pullToRefreshPageOptOut[webView] = false
                 maybeWarmupNativeLocation(pageUrl)
+                HighPerformanceSessionController.onNavigationStarted(webView, pageUrl)
+            },
+            onPageCommitVisibleInActivity = { webView, pageUrl ->
+                HighPerformanceSessionController.onPageCommitted(webView, pageUrl)
+                tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
+                    recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
+                }
             },
             onPageFinishedInActivity = { webView, pageUrl ->
                 updatePullToRefreshPagePolicy(webView, pageUrl)
+                HighPerformanceSessionController.onPageFinishedFallback(webView, pageUrl)
+                tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
+                    recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
+                }
+            },
+            onRendererProcessGoneInActivity = { webView, detail ->
+                handleHighPerformanceRendererGone(webView, detail)
             },
             onError = { error ->
                 Log.w("ChildKioskWebView", "Native WebView main frame error: $error")
                 Toast.makeText(this, "网页加载异常：$error", Toast.LENGTH_LONG).show()
                 val currentTab = tabList.firstOrNull { it.webView === webViewRef }
                 if (currentTab != null) {
+                    recordHighPerformanceRecoveryFailure(currentTab, webViewRef, currentTab.url)
                     currentTab.isLoading = false
                 }
                 if (rootWebView === webViewRef) {
@@ -2421,6 +2535,7 @@ class WebViewActivity : ComponentActivity() {
                     url = popupTargetUrl.ifBlank { "about:blank" },
                     focus = true,
                     existingWebView = newWebView,
+                    allowHighPerformanceResourceRestart = false,
                     popupFilterContext = childPopupContext
                 )
                 Log.d("ChildKioskWebView", "Native child window created via onCreateWindow, newTabId=${newTab.id}")
@@ -2439,6 +2554,15 @@ class WebViewActivity : ComponentActivity() {
         registerFilterDiagnosticsWebView(webView, tab.id)
         
         addWebViewToRoot(webView)
+        HighPerformanceSessionController.registerWebView(
+            context = this,
+            ownerId = highPerformanceOwnerId,
+            tabId = tab.id,
+            webView = webView,
+            initialCommittedUrl = webView.url?.takeIf { WebViewRuntime.isWebUrl(it) },
+            visible = focus,
+            allowResourceRestart = allowHighPerformanceResourceRestart
+        )
         
         if (focus) {
             switchToTab(tab.id)
@@ -2457,7 +2581,10 @@ class WebViewActivity : ComponentActivity() {
         return tab
     }
 
-    private fun switchToTab(tabId: String) {
+    private fun switchToTab(
+        tabId: String,
+        allowHighPerformanceResourceRestart: Boolean = false
+    ) {
         val targetTab = tabList.firstOrNull { it.id == tabId } ?: return
         
         tabList.forEach { tab ->
@@ -2470,9 +2597,18 @@ class WebViewActivity : ComponentActivity() {
         targetTab.lastActiveTimeMs = System.currentTimeMillis()
         
         if (targetTab.webView == null) {
-            restoreTab(targetTab)
+            restoreTab(targetTab, allowHighPerformanceResourceRestart)
         } else {
-            targetTab.webView?.let { setWebViewVisible(it, true) }
+            targetTab.webView?.let { webView ->
+                if (allowHighPerformanceResourceRestart) {
+                    HighPerformanceSessionController.allowResourceRestart(
+                        webView,
+                        "explicit_page_open"
+                    )
+                    HighPerformanceSessionController.onPageCommitted(webView, webView.url)
+                }
+                setWebViewVisible(webView, true)
+            }
         }
         
         rootWebView = targetTab.webView
@@ -2494,12 +2630,14 @@ class WebViewActivity : ComponentActivity() {
 
     private fun closeTab(tabId: String) {
         val targetTab = tabList.firstOrNull { it.id == tabId } ?: return
+        recordHighPerformanceRecoveryFailure(targetTab, targetTab.webView, targetTab.url)
         
         tabList.remove(targetTab)
         currentPageFilterDiagnostics.remove(tabId)
         
         val webView = targetTab.webView
         if (webView != null) {
+            HighPerformanceSessionController.unregisterWebView(webView, "tab_closed")
             clearNativeLocationBridgeRequests(webView)
             stopAmapAssistantLocation(webView)
             unregisterFilterDiagnosticsWebView(webView)
@@ -2522,9 +2660,21 @@ class WebViewActivity : ComponentActivity() {
         }
     }
 
-    private fun freezeTab(tab: BrowserTab) {
-        val webView = tab.webView ?: return
-        Log.d("ChildKioskWebView", "Freezing tab: id=${tab.id}, url=${tab.url}")
+    private fun freezeTab(tab: BrowserTab): Boolean {
+        val webView = tab.webView ?: return false
+        if (HighPerformanceSessionController.isProtected(webView)) {
+            Log.w(
+                "ChildKioskWebView",
+                "Skipped automatic freeze for protected tab: id=${tab.id}"
+            )
+            return false
+        }
+        Log.d(
+            "ChildKioskWebView",
+            "Freezing tab: id=${tab.id}, url=${redactWebUrlForLog(tab.url)}"
+        )
+        recordHighPerformanceRecoveryFailure(tab, webView, tab.url)
+        HighPerformanceSessionController.unregisterWebView(webView, "tab_frozen_memory_limit")
         
         val stateBundle = Bundle()
         webView.saveState(stateBundle)
@@ -2536,10 +2686,17 @@ class WebViewActivity : ComponentActivity() {
         destroyWebViewSafely(webView)
         unregisterFilterDiagnosticsWebView(webView)
         tab.webView = null
+        return true
     }
 
-    private fun restoreTab(tab: BrowserTab) {
-        Log.d("ChildKioskWebView", "Restoring frozen tab: id=${tab.id}, url=${tab.url}")
+    private fun restoreTab(
+        tab: BrowserTab,
+        allowHighPerformanceResourceRestart: Boolean = false
+    ) {
+        Log.d(
+            "ChildKioskWebView",
+            "Restoring frozen tab: id=${tab.id}, url=${redactWebUrlForLog(tab.url)}"
+        )
         val cleanUrl = tab.url
         val originalHost = WebViewRuntime.hostOf(cleanUrl)
         val shouldClearHistoryOnFirstFinish = false
@@ -2551,11 +2708,21 @@ class WebViewActivity : ComponentActivity() {
             originalHost = originalHost,
             onSslError = { sslUrl ->
                 Log.w("ChildKioskWebView", "Native WebView SSL error: $sslUrl")
+                webViewRef?.let { failedWebView ->
+                    tabList.firstOrNull { it.webView === failedWebView }?.let { currentTab ->
+                        recordHighPerformanceRecoveryFailure(currentTab, failedWebView, sslUrl)
+                    }
+                }
                 Toast.makeText(this, "SSL 证书异常：$sslUrl", Toast.LENGTH_LONG).show()
                 if (rootWebView?.url == sslUrl) hideTopProgress()
             },
             onBlocked = { blockedUrl ->
                 Log.w("ChildKioskWebView", "Native WebView blocked navigation: $blockedUrl")
+                webViewRef?.let { failedWebView ->
+                    tabList.firstOrNull { it.webView === failedWebView }?.let { currentTab ->
+                        recordHighPerformanceRecoveryFailure(currentTab, failedWebView, blockedUrl)
+                    }
+                }
                 Toast.makeText(this, "已拦截跳转：$blockedUrl", Toast.LENGTH_LONG).show()
                 if (rootWebView?.url == blockedUrl) hideTopProgress()
             },
@@ -2602,15 +2769,30 @@ class WebViewActivity : ComponentActivity() {
             onPageStartedInActivity = { webView, pageUrl ->
                 pullToRefreshPageOptOut[webView] = false
                 maybeWarmupNativeLocation(pageUrl)
+                HighPerformanceSessionController.onNavigationStarted(webView, pageUrl)
+            },
+            onPageCommitVisibleInActivity = { webView, pageUrl ->
+                HighPerformanceSessionController.onPageCommitted(webView, pageUrl)
+                tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
+                    recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
+                }
             },
             onPageFinishedInActivity = { webView, pageUrl ->
                 updatePullToRefreshPagePolicy(webView, pageUrl)
+                HighPerformanceSessionController.onPageFinishedFallback(webView, pageUrl)
+                tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
+                    recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
+                }
+            },
+            onRendererProcessGoneInActivity = { webView, detail ->
+                handleHighPerformanceRendererGone(webView, detail)
             },
             onError = { error ->
                 Log.w("ChildKioskWebView", "Native WebView main frame error: $error")
                 Toast.makeText(this, "网页加载异常：$error", Toast.LENGTH_LONG).show()
                 val currentTab = tabList.firstOrNull { it.webView === webViewRef }
                 if (currentTab != null) {
+                    recordHighPerformanceRecoveryFailure(currentTab, webViewRef, currentTab.url)
                     currentTab.isLoading = false
                 }
                 if (rootWebView === webViewRef) {
@@ -2628,6 +2810,7 @@ class WebViewActivity : ComponentActivity() {
                     url = popupTargetUrl.ifBlank { "about:blank" },
                     focus = true,
                     existingWebView = newWebView,
+                    allowHighPerformanceResourceRestart = false,
                     popupFilterContext = childPopupContext
                 )
                 Log.d("ChildKioskWebView", "Native child window created via onCreateWindow, newTabId=${newTab.id}")
@@ -2638,6 +2821,15 @@ class WebViewActivity : ComponentActivity() {
         tab.webView = webView
         registerFilterDiagnosticsWebView(webView, tab.id)
         addWebViewToRoot(webView)
+        HighPerformanceSessionController.registerWebView(
+            context = this,
+            ownerId = highPerformanceOwnerId,
+            tabId = tab.id,
+            webView = webView,
+            initialCommittedUrl = webView.url?.takeIf { WebViewRuntime.isWebUrl(it) },
+            visible = tab.id == activeTabId,
+            allowResourceRestart = allowHighPerformanceResourceRestart
+        )
         
         val state = tab.savedState
         if (state != null) {
@@ -2650,14 +2842,175 @@ class WebViewActivity : ComponentActivity() {
         }
     }
 
+    private fun recordHighPerformanceRecoverySuccess(
+        tab: BrowserTab,
+        replacement: WebView,
+        committedUrl: String?
+    ) {
+        if (tab.webView !== replacement || committedUrl.isNullOrBlank() ||
+            !WebViewRuntime.isWebUrl(committedUrl)
+        ) {
+            return
+        }
+        val currentUrl = runCatching { replacement.url }.getOrNull()
+        if (!currentUrl.isNullOrBlank() && currentUrl != committedUrl) return
+        val pending = pendingHighPerformanceRecoveries[tab.id] ?: return
+        if (pending.replacement != null && pending.replacement !== replacement) return
+        pending.replacement = replacement
+        if (pendingHighPerformanceRecoveries[tab.id] !== pending) return
+        pendingHighPerformanceRecoveries.remove(tab.id)
+        HighPerformanceSessionController.recordRendererRecoveryResult(
+            tab.id,
+            committedUrl,
+            success = true
+        )
+    }
+
+    private fun recordHighPerformanceRecoveryFailure(
+        tab: BrowserTab,
+        replacement: WebView?,
+        originOrUrl: String?,
+        expectedAttemptId: String? = null
+    ) {
+        val pending = pendingHighPerformanceRecoveries[tab.id] ?: return
+        if (expectedAttemptId != null && pending.attemptId != expectedAttemptId) return
+        if (replacement != null && pending.replacement != null && pending.replacement !== replacement) return
+        if (replacement != null && tab.webView !== replacement && pending.replacement !== replacement) return
+        if (replacement != null) pending.replacement = replacement
+        if (pendingHighPerformanceRecoveries[tab.id] !== pending) return
+        pendingHighPerformanceRecoveries.remove(tab.id)
+        HighPerformanceSessionController.recordRendererRecoveryResult(
+            tab.id,
+            originOrUrl ?: pending.fallbackUrl,
+            success = false
+        )
+    }
+
+    private fun failPendingHighPerformanceRecoveries(reason: String) {
+        pendingHighPerformanceRecoveries.toList().forEach { (tabId, pending) ->
+            if (pendingHighPerformanceRecoveries[tabId] !== pending) return@forEach
+            pendingHighPerformanceRecoveries.remove(tabId)
+            HighPerformanceSessionController.recordRendererRecoveryResult(
+                tabId = tabId,
+                originOrUrl = pending.fallbackUrl,
+                success = false,
+                failureReason = reason
+            )
+        }
+    }
+
+    private fun handleHighPerformanceRendererGone(
+        webView: WebView,
+        detail: RenderProcessGoneDetail?
+    ) {
+        val tab = tabList.firstOrNull { it.webView === webView }
+        val priorityAtExit = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            detail?.rendererPriorityAtExit() ?: WebView.RENDERER_PRIORITY_WAIVED
+        } else {
+            WebView.RENDERER_PRIORITY_WAIVED
+        }
+        val interruption = HighPerformanceSessionController.onRendererGone(
+            webView = webView,
+            didCrash = detail?.didCrash() == true,
+            rendererPriorityAtExit = priorityAtExit
+        )
+        val fallbackUrl = interruption?.lastCommittedUrl
+            ?.takeIf { WebViewRuntime.isWebUrl(it) }
+            ?: tab?.url?.takeIf { WebViewRuntime.isWebUrl(it) }
+
+        if (tab == null) {
+            destroyWebViewSafely(webView)
+            return
+        }
+        recordHighPerformanceRecoveryFailure(tab, webView, fallbackUrl)
+
+        val wasActive = activeTabId == tab.id
+        unregisterFilterDiagnosticsWebView(webView)
+        clearNativeLocationBridgeRequests(webView)
+        removeWebViewFromRoot(webView)
+        webViewStack.remove(webView)
+        if (rootWebView === webView) rootWebView = null
+        tab.webView = null
+        tab.savedState = null
+        tab.isLoading = false
+        tab.progress = 0
+        fallbackUrl?.let { tab.url = it }
+        destroyWebViewSafely(webView)
+
+        val recovery = PendingRendererRecovery(fallbackUrl = fallbackUrl)
+        pendingHighPerformanceRecoveries[tab.id] = recovery
+        HighPerformanceSessionController.recordRendererRecoveryStarted(tab.id, fallbackUrl)
+        runCatching {
+            restoreTab(tab)
+            val replacement = checkNotNull(tab.webView) {
+                "Renderer recovery did not create a replacement WebView"
+            }
+            recovery.replacement = replacement
+            if (wasActive) switchToTab(tab.id)
+            replacement.postDelayed(
+                {
+                    recordHighPerformanceRecoveryFailure(
+                        tab = tab,
+                        replacement = replacement,
+                        originOrUrl = fallbackUrl,
+                        expectedAttemptId = recovery.attemptId
+                    )
+                },
+                HIGH_PERFORMANCE_RECOVERY_TIMEOUT_MS
+            )
+        }.onFailure { error ->
+            Log.e("ChildKioskWebView", "Failed to rebuild WebView after renderer exit", error)
+            val replacement = tab.webView
+            recordHighPerformanceRecoveryFailure(
+                tab = tab,
+                replacement = replacement,
+                originOrUrl = fallbackUrl,
+                expectedAttemptId = recovery.attemptId
+            )
+            replacement?.let { failedWebView ->
+                HighPerformanceSessionController.unregisterWebView(
+                    failedWebView,
+                    "renderer_recovery_failed"
+                )
+                unregisterFilterDiagnosticsWebView(failedWebView)
+                clearNativeLocationBridgeRequests(failedWebView)
+                removeWebViewFromRoot(failedWebView)
+                webViewStack.remove(failedWebView)
+                if (rootWebView === failedWebView) rootWebView = null
+                destroyWebViewSafely(failedWebView)
+            }
+            tab.webView = null
+        }
+    }
+
     private fun checkAndFreezeTabsIfNeeded() {
         val activeWebViews = tabList.filter { it.webView != null && it.id != activeTabId }
         val maxBackgroundWebViews = (MAX_ACTIVE_WEBVIEWS - 1).coerceAtLeast(0)
-        if (activeWebViews.size > maxBackgroundWebViews) {
-            val tabsToFreeze = activeWebViews.sortedBy { it.lastActiveTimeMs }
-                .take(activeWebViews.size - maxBackgroundWebViews)
-            tabsToFreeze.forEach { freezeTab(it) }
+        val decision = HighPerformanceTabMemoryPolicy.decide(
+            backgroundTabs = activeWebViews.map { tab ->
+                HighPerformanceTabMemoryCandidate(
+                    tabId = tab.id,
+                    lastActiveTimeMs = tab.lastActiveTimeMs,
+                    protected = tab.webView?.let(HighPerformanceSessionController::isProtected) == true
+                )
+            },
+            maxBackgroundWebViews = maxBackgroundWebViews
+        )
+        val tabsById = activeWebViews.associateBy(BrowserTab::id)
+        decision.tabIdsToFreeze.forEach { tabId ->
+            tabsById[tabId]?.let(::freezeTab)
         }
+
+        val retainedBackgroundTabs = tabList.filter { it.webView != null && it.id != activeTabId }
+        val retainedProtectedCount = retainedBackgroundTabs.count { tab ->
+            tab.webView?.let(HighPerformanceSessionController::isProtected) == true
+        }
+        HighPerformanceSessionController.onBackgroundWebViewMemoryLimitEvaluated(
+            ownerId = highPerformanceOwnerId,
+            activeBackgroundCount = retainedBackgroundTabs.size,
+            maxBackgroundCount = maxBackgroundWebViews,
+            protectedRetainedCount = retainedProtectedCount
+        )
     }
 
     private fun handleNativeBack() {
@@ -2667,6 +3020,7 @@ class WebViewActivity : ComponentActivity() {
                 "ChildKioskWebView",
                 "Native back: webView.goBack, url=${redactWebUrlForLog(current.url)}"
             )
+            HighPerformanceSessionController.allowResourceRestart(current, "native_back_navigation")
             current.goBack()
             updateFloatingControlsState(loading = true)
             return
@@ -2678,6 +3032,7 @@ class WebViewActivity : ComponentActivity() {
                 "ChildKioskWebView",
                 "Native back: destroy child webview, url=${redactWebUrlForLog(removed.url)}"
             )
+            HighPerformanceSessionController.unregisterWebView(removed, "child_webview_closed")
             clearNativeLocationBridgeRequests(removed)
             destroyWebViewSafely(removed)
             rootWebView = webViewStack.lastOrNull()
@@ -2726,14 +3081,26 @@ class WebViewActivity : ComponentActivity() {
                         Log.d("ChildKioskWebView", "Floating browser action: $actionId")
                     }
                 },
-                onNewTab = { createNewTab("about:blank", focus = true) },
+                onNewTab = {
+                    createNewTab(
+                        "about:blank",
+                        focus = true,
+                        allowHighPerformanceResourceRestart = true
+                    )
+                },
                 onCloseTab = { id -> closeTab(id) },
-                onSwitchTab = { id -> switchToTab(id) },
+                onSwitchTab = { id ->
+                    switchToTab(id, allowHighPerformanceResourceRestart = true)
+                },
                 onHome = {
                     finish()
                 },
                 onOpenWebApp = { webApp ->
-                    createNewTab(webApp.url, focus = true)
+                    createNewTab(
+                        webApp.url,
+                        focus = true,
+                        allowHighPerformanceResourceRestart = true
+                    )
                 },
                 onShowSiteInfoPanel = { url ->
                     showSiteInfoPanel(url)
@@ -2828,7 +3195,8 @@ class WebViewActivity : ComponentActivity() {
     }
 
     private fun currentFloatingControlExtraSections(): List<FloatingControlSection> {
-        if (!runtimeConfig.limitAdBlock || !runtimeConfig.filterSnapshot.enabled) return emptyList()
+        val filterHandle = currentWebViewFilterHandleOrNull()
+        if (!runtimeConfig.limitAdBlock || filterHandle?.snapshot?.enabled != true) return emptyList()
         val currentUrl = rootWebView?.url.orEmpty()
         if (!WebViewRuntime.isWebUrl(currentUrl)) return emptyList()
 
@@ -3035,6 +3403,7 @@ class WebViewActivity : ComponentActivity() {
         }
         currentPageLoading = true
         currentPageProgress = 0
+        HighPerformanceSessionController.allowResourceRestart(current, "floating_url_navigation")
         loadFilteredMainFrame(current, url)
         updateFloatingControlsState()
     }
@@ -3043,6 +3412,7 @@ class WebViewActivity : ComponentActivity() {
         val current = rootWebView ?: return
         if (!current.canGoBack()) return
         currentPageLoading = true
+        HighPerformanceSessionController.allowResourceRestart(current, "floating_back_navigation")
         current.goBack()
         updateFloatingControlsState()
     }
@@ -3051,6 +3421,7 @@ class WebViewActivity : ComponentActivity() {
         val current = rootWebView ?: return
         if (!current.canGoForward()) return
         currentPageLoading = true
+        HighPerformanceSessionController.allowResourceRestart(current, "floating_forward_navigation")
         current.goForward()
         updateFloatingControlsState()
     }
@@ -3058,6 +3429,7 @@ class WebViewActivity : ComponentActivity() {
     private fun refreshFromFloatingControls() {
         val current = rootWebView ?: return
         currentPageLoading = true
+        HighPerformanceSessionController.allowResourceRestart(current, "floating_refresh")
         current.reload()
         updateFloatingControlsState()
     }
@@ -3130,6 +3502,7 @@ class WebViewActivity : ComponentActivity() {
     private fun reloadBypassingCache(webView: WebView, url: String) {
         currentPageLoading = true
         currentPageProgress = 0
+        HighPerformanceSessionController.allowResourceRestart(webView, "force_refresh")
         loadFilteredMainFrame(
             webView = webView,
             url = url,
@@ -3352,6 +3725,10 @@ class WebViewActivity : ComponentActivity() {
 
     private fun showTimeoutDialog(config: SystemConfigEntity?) {
         if (timeoutDialog?.isShowing == true || isFinishing || isDestroyed) return
+        HighPerformanceSessionController.stopOwnerUntilParentAuthorization(
+            ownerId = highPerformanceOwnerId,
+            source = "health_time_limit"
+        )
         val dialog = AlertDialog.Builder(this)
             .setTitle("休息时间到了")
             .setMessage("当前网页使用时间已到，请休息一下。")
@@ -3391,6 +3768,10 @@ class WebViewActivity : ComponentActivity() {
                 )
             }
             sessionStartTimeMs = System.currentTimeMillis()
+            HighPerformanceSessionController.resumeOwnerAfterParentAuthorization(
+                highPerformanceOwnerId,
+                "health_time_extended"
+            )
             timeoutDialog?.dismiss()
             timeoutDialog = null
             startTimeLimitTracking()
@@ -3909,7 +4290,10 @@ class WebViewActivity : ComponentActivity() {
         const val EXTRA_CUSTOM_URL = "CUSTOM_URL"
         const val EXTRA_SWITCH_TAB_ID = "SWITCH_TAB_ID"
         const val EXTRA_CLOSE_TAB_ID = "CLOSE_TAB_ID"
+        const val EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART =
+            "ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART"
         private const val HISTORY_RETENTION_MS = 90L * 24L * 60L * 60L * 1000L
+        private const val HIGH_PERFORMANCE_RECOVERY_TIMEOUT_MS = 30_000L
         private const val POPUP_TARGET_TIMEOUT_MS = 10_000L
         private const val MAX_PENDING_POPUPS = 4
     }
@@ -3933,7 +4317,11 @@ private fun createSecureWebView(
     onNavigationStateChanged: () -> Unit,
     onPageCommitted: (url: String, title: String?) -> Unit,
     onPageStartedInActivity: (WebView, String?) -> Unit = { _, _ -> },
+    onPageCommitVisibleInActivity: (WebView, String?) -> Unit = { _, _ -> },
     onPageFinishedInActivity: (WebView, String?) -> Unit = { _, _ -> },
+    onRendererProcessGoneInActivity: (WebView, RenderProcessGoneDetail?) -> Unit = { view, _ ->
+        destroyWebViewSafely(view)
+    },
     onError: (String) -> Unit,
     existingWebView: WebView? = null,
     runtimeConfig: WebViewRuntimeConfig,
@@ -4059,6 +4447,10 @@ private fun createSecureWebView(
                     if (view != null && !url.isNullOrBlank()) {
                         onPendingMainFrameCommit?.invoke(view, url)
                     }
+                    return
+                }
+                if (view != null) {
+                    onPageCommitVisibleInActivity(view, url)
                 }
             }
 
@@ -4118,6 +4510,14 @@ private fun createSecureWebView(
                 ) {
                     onBlocked(urlStr)
                     return true
+                }
+                if (view != null && request.isForMainFrame && request.hasGesture() &&
+                    WebViewRuntime.isWebUrl(urlStr)
+                ) {
+                    HighPerformanceSessionController.allowResourceRestart(
+                        view,
+                        "web_navigation_gesture"
+                    )
                 }
 
                 if (WebViewRuntime.isInternalWebViewUrl(urlStr)) {
@@ -4286,7 +4686,7 @@ private fun createSecureWebView(
                 }
                 view?.let {
                     (ctx as? WebViewActivity)?.clearNativeLocationBridgeRequests(it)
-                    destroyWebViewSafely(it)
+                    onRendererProcessGoneInActivity(it, detail)
                 }
                 Toast.makeText(ctx, "网页渲染进程异常退出，正在尝试重构页面", Toast.LENGTH_SHORT).show()
                 return true
@@ -4479,7 +4879,9 @@ private fun createSecureWebView(
                     onNavigationStateChanged = onNavigationStateChanged,
                     onPageCommitted = onPageCommitted,
                     onPageStartedInActivity = onPageStartedInActivity,
+                    onPageCommitVisibleInActivity = onPageCommitVisibleInActivity,
                     onPageFinishedInActivity = onPageFinishedInActivity,
+                    onRendererProcessGoneInActivity = onRendererProcessGoneInActivity,
                     onError = onError,
                     runtimeConfig = runtimeConfig,
                     onShowFileChooser = onShowFileChooser,
@@ -5061,6 +5463,7 @@ private fun destroyWebViewSafely(webView: WebView) {
     // failure never prevents detaching and destroying the unusable view.
     runCatching { (webView.context as? WebViewActivity)?.cancelPendingPopup(webView) }
     runCatching { (webView.context as? WebViewActivity)?.stopAmapAssistantLocation(webView) }
+    runCatching { WebViewRuntime.applyRendererPriorityPolicy(webView, highPerformance = false) }
     runCatching { webView.stopLoading() }
     runCatching { webView.webChromeClient = null }
     runCatching { webView.webViewClient = WebViewClient() }
