@@ -128,7 +128,7 @@ internal fun HighPerformanceEnableCard(
             }
         }
         OutlinedButton(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp),
             onClick = onClearRules,
             enabled = !busy
         ) {
@@ -197,7 +197,7 @@ private fun SetupRow(title: String, status: String, action: String?, onClick: ()
                 SetupText(title = title, status = status)
                 if (action != null) {
                     OutlinedButton(
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp),
                         onClick = onClick
                     ) {
                         Text(action)
@@ -215,7 +215,7 @@ private fun SetupRow(title: String, status: String, action: String?, onClick: ()
                 }
                 if (action != null) {
                     OutlinedButton(
-                        modifier = Modifier.heightIn(min = 48.dp),
+                        modifier = Modifier.heightIn(min = 38.dp),
                         onClick = onClick
                     ) {
                         Text(action)

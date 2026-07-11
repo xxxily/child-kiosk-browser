@@ -28,6 +28,7 @@ import android.widget.TextView
 import androidx.annotation.DrawableRes
 import androidx.core.view.ViewCompat
 import androidx.core.view.doOnLayout
+import site.anzz.childkiosk.ui.WebAppSelectDialog
 import androidx.core.view.isVisible
 import site.anzz.childkiosk.R
 import kotlinx.coroutines.*
@@ -905,164 +906,17 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     }
 
     private fun renderAddTabDialog(ctx: Context, webApps: List<site.anzz.childkiosk.data.WebAppEntity>) {
-        var dialogRef: android.app.AlertDialog? = null
-        val builder = android.app.AlertDialog.Builder(ctx)
-        
-        val rootLayout = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-            background = roundedBackground(PanelBackgroundColor, dp(16))
-        }
-        
-        val newTabBtn = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            background = roundedBackground(AccentColor, dp(12))
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            
-            addView(
-                android.widget.ImageView(ctx).apply {
-                    setImageResource(R.drawable.ic_browser_add_24)
-                    imageTintList = ColorStateList.valueOf(Color.WHITE)
-                    scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
-                },
-                LinearLayout.LayoutParams(dp(22), dp(22)).apply {
-                    rightMargin = dp(8)
-                }
-            )
-            
-            addView(
-                TextView(ctx).apply {
-                    text = "新建空白标签页"
-                    textSize = 14f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(Color.WHITE)
-                }
-            )
-        }
-        
-        rootLayout.addView(newTabBtn, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply {
-            bottomMargin = dp(16)
-        })
-        
-        val categories = listOf(
-            site.anzz.childkiosk.data.WebAppEntity.CATEGORY_STUDY,
-            site.anzz.childkiosk.data.WebAppEntity.CATEGORY_BOOK,
-            site.anzz.childkiosk.data.WebAppEntity.CATEGORY_GAME,
-            site.anzz.childkiosk.data.WebAppEntity.CATEGORY_VIDEO,
-            site.anzz.childkiosk.data.WebAppEntity.CATEGORY_TOOL,
-            site.anzz.childkiosk.data.WebAppEntity.CATEGORY_OTHER
+        WebAppSelectDialog.show(
+            context = ctx,
+            webApps = webApps,
+            showNewTabButton = true,
+            onNewTabClick = {
+                callbacks.onNewTab()
+            },
+            onWebAppSelect = { app ->
+                callbacks.onOpenWebApp(app)
+            }
         )
-        
-        val appsByCategory = webApps.groupBy { it.category }
-        
-        val scrollView = ScrollView(ctx).apply {
-            overScrollMode = OVER_SCROLL_IF_CONTENT_SCROLLS
-            isVerticalScrollBarEnabled = false
-            
-            addView(
-                LinearLayout(ctx).apply {
-                    orientation = LinearLayout.VERTICAL
-                    
-                    categories.forEach { cat ->
-                        val apps = appsByCategory[cat] ?: emptyList()
-                        if (apps.isNotEmpty()) {
-                            addView(
-                                TextView(ctx).apply {
-                                    val emoji = site.anzz.childkiosk.data.WebAppEntity.getCategoryEmoji(cat)
-                                    val name = site.anzz.childkiosk.data.WebAppEntity.getCategoryDisplayName(cat)
-                                    text = "$emoji $name"
-                                    textSize = 13f
-                                    typeface = Typeface.DEFAULT_BOLD
-                                    setTextColor(PanelMutedTextColor)
-                                    setPadding(0, dp(12), 0, dp(6))
-                                },
-                                LinearLayout.LayoutParams(
-                                    LinearLayout.LayoutParams.MATCH_PARENT,
-                                    LinearLayout.LayoutParams.WRAP_CONTENT
-                                )
-                            )
-                            
-                            val chunked = apps.chunked(2)
-                            chunked.forEach { rowApps ->
-                                val rowLayout = LinearLayout(ctx).apply {
-                                    orientation = LinearLayout.HORIZONTAL
-                                    weightSum = 2f
-                                }
-                                
-                                rowApps.forEach { app ->
-                                    val appCard = LinearLayout(ctx).apply {
-                                        orientation = LinearLayout.HORIZONTAL
-                                        gravity = Gravity.CENTER_VERTICAL
-                                        background = roundedBackground(ActionBackgroundColor, dp(10))
-                                        setPadding(dp(8), dp(8), dp(8), dp(8))
-                                        setOnClickListener {
-                                            callbacks.onOpenWebApp(app)
-                                            dialogRef?.dismiss()
-                                        }
-                                        
-                                        addView(createAppIconView(ctx, app))
-                                        
-                                        addView(
-                                            TextView(ctx).apply {
-                                                text = app.title
-                                                textSize = 12f
-                                                setTextColor(PanelTextColor)
-                                                maxLines = 1
-                                                ellipsize = TextUtils.TruncateAt.END
-                                                setPadding(dp(8), 0, 0, 0)
-                                            },
-                                            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                                        )
-                                    }
-                                    
-                                    rowLayout.addView(
-                                        appCard,
-                                        LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-                                            rightMargin = dp(4)
-                                        }
-                                    )
-                                }
-                                
-                                repeat(2 - rowApps.size) {
-                                    rowLayout.addView(
-                                        View(ctx),
-                                        LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-                                            rightMargin = dp(4)
-                                        }
-                                    )
-                                }
-                                
-                                addView(rowLayout, LinearLayout.LayoutParams(
-                                    LinearLayout.LayoutParams.MATCH_PARENT,
-                                    LinearLayout.LayoutParams.WRAP_CONTENT
-                                ).apply {
-                                    bottomMargin = dp(6)
-                                })
-                            }
-                        }
-                    }
-                }
-            )
-        }
-        
-        rootLayout.addView(scrollView, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            dp(300)
-        ))
-        
-        val dialog = builder.setView(rootLayout).create()
-        dialogRef = dialog
-        
-        newTabBtn.setOnClickListener {
-            callbacks.onNewTab()
-            dialog.dismiss()
-        }
-        
-        dialog.show()
     }
 
     private fun actionStripView(section: FloatingControlSection): HorizontalScrollView {

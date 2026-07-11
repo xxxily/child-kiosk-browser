@@ -113,30 +113,23 @@ internal fun HighPerformanceOriginRulesCard(
         }
 
         if (webApps.isNotEmpty()) {
-            Text("从已启用的 Web App 选择", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                val chipMaxWidth = if (maxWidth > 280.dp) 280.dp else maxWidth
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    webApps.forEach { app ->
-                        AssistChip(
-                            modifier = Modifier.widthIn(max = chipMaxWidth),
-                            enabled = !busy,
-                            onClick = { onAddWebApp(app) },
-                            label = {
-                                Text(
-                                    app.title,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            },
-                            leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) }
-                        )
-                    }
-                }
+            val context = androidx.compose.ui.platform.LocalContext.current
+            OutlinedButton(
+                onClick = {
+                    WebAppSelectDialog.show(
+                        context = context,
+                        webApps = webApps,
+                        showNewTabButton = false,
+                        onWebAppSelect = { app -> onAddWebApp(app) }
+                    )
+                },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("从已启用的 Web App 选择")
             }
         }
 
@@ -187,7 +180,7 @@ private fun AddManualRuleButton(
     modifier: Modifier = Modifier
 ) {
     OutlinedButton(
-        modifier = modifier.heightIn(min = 48.dp),
+        modifier = modifier.heightIn(min = 38.dp),
         enabled = enabled,
         onClick = onClick
     ) {
@@ -248,7 +241,7 @@ private fun HighPerformanceRuleItem(
                             )
                         }
                         OutlinedButton(
-                            modifier = Modifier.heightIn(min = 48.dp),
+                            modifier = Modifier.heightIn(min = 38.dp),
                             enabled = !busy,
                             onClick = { onRemove(rule) }
                         ) {

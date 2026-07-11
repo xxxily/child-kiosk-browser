@@ -67,7 +67,7 @@ internal fun HighPerformanceSessionsCard(
             }
         }
         Button(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
             enabled = !busy && !status?.sessions.isNullOrEmpty(),
             onClick = onStopAll
         ) {
