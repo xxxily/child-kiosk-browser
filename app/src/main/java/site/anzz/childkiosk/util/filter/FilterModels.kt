@@ -2,7 +2,6 @@ package site.anzz.childkiosk.util.filter
 
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.URI
 import java.util.Locale
 
 enum class FilterPreset(val storageValue: String, val label: String) {
@@ -39,12 +38,59 @@ enum class FilterResourceType(val optionName: String) {
         }
 
         fun infer(url: String?, acceptHeader: String?, isMainFrame: Boolean): FilterResourceType {
+            return infer(
+                url = url,
+                acceptHeader = acceptHeader,
+                isMainFrame = isMainFrame,
+                requestHeaders = emptyMap(),
+                method = "GET"
+            )
+        }
+
+        fun infer(
+            url: String?,
+            acceptHeader: String?,
+            isMainFrame: Boolean,
+            requestHeaders: Map<String, String>,
+            method: String = "GET"
+        ): FilterResourceType {
             if (isMainFrame) return DOCUMENT
             val lowerUrl = url.orEmpty().lowercase(Locale.US)
             val lowerUrlPath = lowerUrl.substringBefore('#').substringBefore('?')
-            val lowerAccept = acceptHeader.orEmpty().lowercase(Locale.US)
+            val normalizedHeaders = requestHeaders.entries.associate { (name, value) ->
+                name.lowercase(Locale.US) to value.lowercase(Locale.US)
+            }
+            val lowerAccept = acceptHeader
+                .orEmpty()
+                .ifBlank { normalizedHeaders["accept"].orEmpty() }
+                .lowercase(Locale.US)
+            val fetchDestination = normalizedHeaders["sec-fetch-dest"].orEmpty()
+            val fetchMode = normalizedHeaders["sec-fetch-mode"].orEmpty()
+            val requestedWith = normalizedHeaders["x-requested-with"].orEmpty()
+            val contentType = normalizedHeaders["content-type"].orEmpty()
+            val purpose = normalizedHeaders["purpose"].orEmpty()
+            val upperMethod = method.uppercase(Locale.US)
             return when {
                 lowerUrl.startsWith("ws://") || lowerUrl.startsWith("wss://") -> WEBSOCKET
+                fetchDestination == "iframe" ||
+                    fetchDestination == "frame" ||
+                    fetchDestination == "embed" ||
+                    fetchDestination == "object" ||
+                    fetchDestination == "document" -> SUBDOCUMENT
+                fetchDestination == "script" || fetchDestination == "worker" ||
+                    fetchDestination == "sharedworker" || fetchDestination == "serviceworker" -> SCRIPT
+                fetchDestination == "style" -> STYLESHEET
+                fetchDestination == "image" -> IMAGE
+                fetchDestination == "font" -> FONT
+                fetchDestination == "audio" || fetchDestination == "video" || fetchDestination == "track" -> MEDIA
+                upperMethod == "POST" && (
+                    normalizedHeaders.containsKey("ping-to") ||
+                        purpose == "ping" ||
+                        contentType.startsWith("text/ping")
+                    ) -> PING
+                fetchMode == "navigate" ||
+                    "text/html" in lowerAccept ||
+                    "application/xhtml+xml" in lowerAccept -> SUBDOCUMENT
                 lowerUrlPath.endsWith(".js") || "javascript" in lowerAccept -> SCRIPT
                 lowerUrlPath.endsWith(".css") || "text/css" in lowerAccept -> STYLESHEET
                 lowerUrlPath.endsWith(".png") || lowerUrlPath.endsWith(".jpg") || lowerUrlPath.endsWith(".jpeg") ||
@@ -54,7 +100,10 @@ enum class FilterResourceType(val optionName: String) {
                     lowerUrlPath.endsWith(".otf") || "font/" in lowerAccept -> FONT
                 lowerUrlPath.endsWith(".mp4") || lowerUrlPath.endsWith(".webm") || lowerUrlPath.endsWith(".mp3") ||
                     lowerUrlPath.endsWith(".m3u8") || "video/" in lowerAccept || "audio/" in lowerAccept -> MEDIA
-                lowerUrl.contains("xhr") || "application/json" in lowerAccept -> XMLHTTPREQUEST
+                requestedWith == "xmlhttprequest" ||
+                    lowerUrl.contains("xhr") ||
+                    "application/json" in lowerAccept ||
+                    (fetchDestination.isBlank() && (fetchMode == "cors" || fetchMode == "same-origin")) -> XMLHTTPREQUEST
                 else -> OTHER
             }
         }
@@ -75,7 +124,8 @@ data class FilterSubscription(
     val enabledRuleCount: Int = 0,
     val unsupportedCount: Int = 0,
     val lastUpdatedAt: Long = 0L,
-    val lastError: String = ""
+    val lastError: String = "",
+    val contentGeneration: String = ""
 ) {
     fun toJson(): JSONObject {
         return JSONObject()
@@ -90,6 +140,7 @@ data class FilterSubscription(
             .put("enabledRuleCount", enabledRuleCount)
             .put("unsupportedCount", unsupportedCount)
             .put("lastError", lastError)
+            .put("contentGeneration", contentGeneration)
     }
 
     companion object {
@@ -113,7 +164,8 @@ data class FilterSubscription(
                 enabledRuleCount = json.optInt("enabledRuleCount", builtIn?.enabledRuleCount ?: 0),
                 unsupportedCount = json.optInt("unsupportedCount", builtIn?.unsupportedCount ?: 0),
                 lastUpdatedAt = json.optLong("lastUpdatedAt", builtIn?.lastUpdatedAt ?: 0L),
-                lastError = json.optString("lastError", builtIn?.lastError.orEmpty())
+                lastError = json.optString("lastError", builtIn?.lastError.orEmpty()),
+                contentGeneration = json.optString("contentGeneration", builtIn?.contentGeneration.orEmpty())
             )
         }
     }
@@ -358,20 +410,11 @@ internal fun JSONArray?.toSubscriptionList(): List<FilterSubscription> {
 }
 
 internal fun String.hostFromUrl(): String {
-    if (isBlank()) return ""
-    return runCatching {
-        URI(this).host.orEmpty().normalizeHost()
-    }.getOrDefault("")
+    return DomainPartyClassifier.normalize(this).orEmpty()
 }
 
 fun String.normalizeHost(): String {
-    return trim()
-        .removePrefix("http://")
-        .removePrefix("https://")
-        .substringBefore("/")
-        .substringBefore(":")
-        .trim('.')
-        .lowercase(Locale.US)
+    return DomainPartyClassifier.normalize(this).orEmpty()
 }
 
 internal fun isSameOrSubdomain(host: String, domain: String): Boolean {
@@ -380,23 +423,9 @@ internal fun isSameOrSubdomain(host: String, domain: String): Boolean {
 }
 
 internal fun isThirdPartyHost(requestHost: String, topLevelHost: String): Boolean {
-    if (requestHost.isBlank() || topLevelHost.isBlank()) return false
-    val requestBase = registrableDomainApprox(requestHost)
-    val topBase = registrableDomainApprox(topLevelHost)
-    return requestBase != topBase
+    return DomainPartyClassifier.isThirdParty(requestHost, topLevelHost)
 }
 
 internal fun registrableDomainApprox(host: String): String {
-    val parts = host.normalizeHost().split('.').filter { it.isNotBlank() }
-    if (parts.size <= 2) return parts.joinToString(".")
-    val twoPartSuffixes = setOf(
-        "com.cn", "net.cn", "org.cn", "gov.cn", "edu.cn",
-        "co.uk", "org.uk", "ac.uk", "com.au", "com.br"
-    )
-    val lastTwo = parts.takeLast(2).joinToString(".")
-    return if (lastTwo in twoPartSuffixes && parts.size >= 3) {
-        parts.takeLast(3).joinToString(".")
-    } else {
-        lastTwo
-    }
+    return DomainPartyClassifier.registrableDomain(host)
 }

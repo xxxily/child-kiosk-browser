@@ -112,6 +112,93 @@ class FilterEngineTest {
     }
 
     @Test
+    fun removeParamRulesAreTransformOnlyAndExceptionsSuppressOnlyCleanup() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    id = "test",
+                    name = "test",
+                    rulesText = """
+                        *${'$'}removeparam=utm_source|fbclid
+                        @@||safe.example^${'$'}removeparam=utm_source
+                    """.trimIndent()
+                )
+            )
+        )
+
+        assertEquals(
+            FilterAction.ALLOW,
+            engine.decide(context("https://other.example/pixel?utm_source=x", "https://top.example")).action
+        )
+        assertEquals(0, engine.report.networkRuleCount)
+        assertEquals(
+            "https://other.example/page?keep=1",
+            engine.cleanUrlForNavigation(
+                "https://other.example/page?utm_source=x&fbclid=y&keep=1",
+                "https://other.example/"
+            )
+        )
+        assertEquals(
+            "https://safe.example/page?utm_source=x&keep=1",
+            engine.cleanUrlForNavigation(
+                "https://safe.example/page?utm_source=x&fbclid=y&keep=1",
+                "https://safe.example/"
+            )
+        )
+    }
+
+    @Test
+    fun removeParamCleanupPreservesUntouchedRawBytesAndSkipsSensitiveNavigations() {
+        val engine = FilterEngine.build(
+            listOf(FilterRuleSource("test", "test", "*${'$'}removeparam=utm_source"))
+        )
+        val rawUrl =
+            "https://example.com/a%2Fb%20c/%25?utm_source=x&keep=%2F%20%25&empty=&repeat=1&repeat=2#frag%2F%20%25"
+
+        assertEquals(
+            "https://example.com/a%2Fb%20c/%25?keep=%2F%20%25&empty=&repeat=1&repeat=2#frag%2F%20%25",
+            engine.cleanUrlForNavigation(rawUrl, "https://example.com/")
+        )
+        assertNull(engine.cleanUrlForNavigation(rawUrl, "https://example.com/", method = "POST"))
+        assertNull(
+            engine.cleanUrlForNavigation(
+                rawUrl,
+                "https://example.com/",
+                isMainFrame = false
+            )
+        )
+        assertNull(
+            engine.cleanUrlForNavigation(
+                rawUrl,
+                "https://example.com/",
+                siteOverride = SiteFilterOverride(host = "example.com", networkDisabled = true)
+            )
+        )
+        assertNull(
+            engine.cleanUrlForNavigation(
+                rawUrl,
+                "https://example.com/",
+                siteOverride = SiteFilterOverride(
+                    host = "example.com",
+                    temporaryAllowUntil = System.currentTimeMillis() + 60_000L
+                )
+            )
+        )
+        assertNull(
+            engine.cleanUrlForNavigation(
+                "https://example.com/callback?utm_source=x&code=secret&keep=1",
+                "https://example.com/"
+            )
+        )
+        assertNull(
+            engine.cleanUrlForNavigation(
+                "https://storage.example/file?utm_source=x&X-Amz-Signature=secret",
+                "https://storage.example/"
+            )
+        )
+    }
+
+    @Test
     fun scriptletAllowlistGeneratesKnownScriptsOnly() {
         val engine = FilterEngine.build(
             listOf(
@@ -166,6 +253,84 @@ class FilterEngineTest {
             )
         )
         assertEquals(FilterAction.ALLOW, decision.action)
+    }
+
+    @Test
+    fun badfilterCanonicalizationIgnoresCaseAndOptionOrDomainOrdering() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    id = "test",
+                    name = "test",
+                    rulesText = """
+                        ||ADS.EXAMPLE.COM^${'$'}script,third-party,domain=b.example|a.example
+                        ||ads.example.com^${'$'}DOMAIN=a.example|B.EXAMPLE,THIRD-PARTY,SCRIPT,BADFILTER
+                    """.trimIndent()
+                )
+            )
+        )
+
+        assertEquals(
+            FilterAction.ALLOW,
+            engine.decide(
+                context(
+                    "https://ads.example.com/banner.js",
+                    "https://a.example/page",
+                    FilterResourceType.SCRIPT
+                )
+            ).action
+        )
+        assertEquals(0, engine.report.networkRuleCount)
+    }
+
+    @Test
+    fun parentAndSubscriptionExceptionsPrecedeImportantBlocks() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    id = "subscription",
+                    name = "subscription",
+                    rulesText = """
+                        ||priority.example^${'$'}important
+                        @@||priority.example/subscription^
+                    """.trimIndent()
+                ),
+                FilterRuleSource(
+                    id = "custom",
+                    name = "parent",
+                    rulesText = "@@||priority.example^"
+                )
+            )
+        )
+
+        val parentDecision = engine.decide(
+            context("https://priority.example/subscription/file.js", "https://top.example")
+        )
+        assertEquals(FilterAction.EXCEPTION, parentDecision.action)
+        assertEquals("custom", parentDecision.rule?.sourceId)
+
+        val subscriptionOnly = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    id = "subscription",
+                    name = "subscription",
+                    rulesText = """
+                        ||priority.example^${'$'}important
+                        @@||priority.example^${'$'}script
+                    """.trimIndent()
+                )
+            )
+        )
+        assertEquals(
+            FilterAction.EXCEPTION,
+            subscriptionOnly.decide(
+                context(
+                    "https://priority.example/file.js",
+                    "https://top.example",
+                    FilterResourceType.SCRIPT
+                )
+            ).action
+        )
     }
 
     @Test
@@ -291,7 +456,7 @@ class FilterEngineTest {
                     id = "test",
                     name = "test",
                     rulesText = """
-                        /adserver[0-9]+/${'$'}script
+                        adserver*file.js${'$'}script
                         ##.ad
                         example.com##+js(no-window-open-if)
                     """.trimIndent()
@@ -335,8 +500,8 @@ class FilterEngineTest {
                         ||ads.example.com^
                         ||important.example.com^${'$'}important
                         @@||ads.example.com/allowed.js${'$'}script
-                        /tracker/${'$'}image,third-party
-                        /adserver[0-9]+/${'$'}script
+                        tracker/pixel${'$'}image,third-party
+                        adserver*file.js${'$'}script
                     """.trimIndent()
                 )
             )
@@ -360,7 +525,7 @@ class FilterEngineTest {
             repeat(120) { index ->
                 appendLine("||ads$index.example.test^${'$'}script,third-party")
                 appendLine("@@||ads$index.example.test/allowed.js${'$'}script")
-                appendLine("/track$index/${'$'}image,third-party")
+                appendLine("track$index/pixel${'$'}image,third-party")
             }
         }
         val engine = FilterEngine.build(
@@ -519,13 +684,146 @@ class FilterEngineTest {
     }
 
     @Test
-    fun regexRulesUseLiteralPrefilterWhenSafe() {
+    fun strictHostsParsingDoesNotConsumeAdblockNetworkRules() {
         val engine = FilterEngine.build(
             listOf(
                 FilterRuleSource(
                     id = "test",
                     name = "test",
-                    rulesText = "/adserver[0-9]+/${'$'}script"
+                    rulesText = """
+                        0.0.0.0 mapped-host.example
+                        standalone-host.example
+                        .ads.controller.js${'$'}script
+                        -ad-sidebar.${'$'}image
+                    """.trimIndent()
+                )
+            )
+        )
+
+        assertEquals(
+            FilterAction.BLOCK,
+            engine.decide(
+                context(
+                    "https://cdn.example/assets/.ads.controller.js",
+                    "https://top.example",
+                    FilterResourceType.SCRIPT
+                )
+            ).action
+        )
+        assertEquals(
+            FilterAction.BLOCK,
+            engine.decide(
+                context(
+                    "https://cdn.example/images/-ad-sidebar.png",
+                    "https://top.example",
+                    FilterResourceType.IMAGE
+                )
+            ).action
+        )
+        assertEquals(
+            FilterAction.BLOCK,
+            engine.decide(context("https://mapped-host.example/file", "https://top.example")).action
+        )
+        assertEquals(4, engine.report.networkRuleCount)
+    }
+
+    @Test
+    fun unknownCosmeticMarkerFamiliesNeverFallThroughToNetworkParsing() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    id = "test",
+                    name = "test",
+                    rulesText = """
+                        example.com#?#.ad
+                        example.com#@?#.ad
+                        example.com#${'$'}#.ad
+                        example.com#@${'$'}#.ad
+                        example.com#%#.ad
+                        example.com##+js
+                    """.trimIndent()
+                )
+            )
+        )
+
+        assertEquals(0, engine.report.networkRuleCount)
+        assertEquals(0, engine.report.cosmeticRuleCount)
+        assertEquals(6, engine.report.unsupportedRuleCount)
+    }
+
+    @Test
+    fun anchorsWildcardsAndSeparatorsRetainIndependentSemantics() {
+        val exact = FilterEngine.build(
+            listOf(FilterRuleSource("exact", "exact", "|https://cdn.test/foo|"))
+        )
+        assertEquals(
+            FilterAction.BLOCK,
+            exact.decide(context("https://cdn.test/foo", "https://top.test")).action
+        )
+        assertEquals(
+            FilterAction.ALLOW,
+            exact.decide(context("https://cdn.test/foo?x=1", "https://top.test")).action
+        )
+
+        val domainPath = FilterEngine.build(
+            listOf(FilterRuleSource("domain", "domain", "||example.com/foo^"))
+        )
+        assertEquals(
+            FilterAction.BLOCK,
+            domainPath.decide(context("https://sub.example.com/foo?x=1", "https://top.test")).action
+        )
+        assertEquals(
+            FilterAction.ALLOW,
+            domainPath.decide(context("https://example.com/?next=/foo", "https://top.test")).action
+        )
+        assertEquals(
+            FilterAction.ALLOW,
+            domainPath.decide(context("https://example.com/foobar", "https://top.test")).action
+        )
+
+        val domainWildcard = FilterEngine.build(
+            listOf(FilterRuleSource("wildcard", "wildcard", "||example.com/ad*banner^"))
+        )
+        assertEquals(
+            FilterAction.BLOCK,
+            domainWildcard.decide(
+                context("https://example.com/ad/path/banner?x=1", "https://top.test")
+            ).action
+        )
+        assertEquals(
+            FilterAction.ALLOW,
+            domainWildcard.decide(context("https://example.com/ad/path/content", "https://top.test")).action
+        )
+
+        val schemeWildcard = FilterEngine.build(
+            listOf(FilterRuleSource("scheme", "scheme", "|http://*example.net^"))
+        )
+        assertEquals(
+            FilterAction.BLOCK,
+            schemeWildcard.decide(context("http://sub.example.net/path", "https://top.test")).action
+        )
+        assertEquals(
+            FilterAction.ALLOW,
+            schemeWildcard.decide(context("https://sub.example.net/path", "https://top.test")).action
+        )
+
+        val idnDomain = FilterEngine.build(
+            listOf(FilterRuleSource("idn", "idn", "||bücher.de^"))
+        )
+        assertEquals(
+            FilterAction.BLOCK,
+            idnDomain.decide(context("https://xn--bcher-kva.de/path", "https://top.test")).action
+        )
+    }
+
+    @Test
+    fun rawRegexRulesAreExplicitlyUnsupportedWithoutRe2j() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    id = "test",
+                    name = "test",
+                    rulesText = "/foo${'$'}/"
                 )
             )
         )
@@ -535,13 +833,12 @@ class FilterEngineTest {
             engine.decide(context("https://cdn.example.com/static/app.js", "https://site.example", FilterResourceType.SCRIPT)).action
         )
         assertEquals(0L, engine.perfSnapshot().regexEvaluationCount)
-        assertEquals(0, engine.perfSnapshot().blockingIndex.universalRuleCount)
-
+        assertEquals(0, engine.report.networkRuleCount)
+        assertEquals(1, engine.report.unsupportedRuleCount)
         assertEquals(
-            FilterAction.BLOCK,
-            engine.decide(context("https://cdn.example.com/adserver12/file.js", "https://site.example", FilterResourceType.SCRIPT)).action
+            FilterAction.ALLOW,
+            engine.decide(context("https://cdn.example.com/foo", "https://site.example", FilterResourceType.SCRIPT)).action
         )
-        assertTrue(engine.perfSnapshot().regexEvaluationCount >= 1L)
     }
 
     @Test
@@ -586,6 +883,50 @@ class FilterEngineTest {
         assertEquals(
             FilterResourceType.MEDIA,
             FilterResourceType.infer("https://cdn.example.com/video.m3u8?token=1", null, false)
+        )
+    }
+
+    @Test
+    fun resourceTypeInferenceUsesFetchHeadersMethodAndFrameSignals() {
+        assertEquals(
+            FilterResourceType.SUBDOCUMENT,
+            FilterResourceType.infer(
+                url = "https://frame.example/page",
+                acceptHeader = "text/html",
+                isMainFrame = false,
+                requestHeaders = mapOf("Sec-Fetch-Dest" to "iframe")
+            )
+        )
+        assertEquals(
+            FilterResourceType.XMLHTTPREQUEST,
+            FilterResourceType.infer(
+                url = "https://api.example/data",
+                acceptHeader = "application/json",
+                isMainFrame = false,
+                requestHeaders = mapOf(
+                    "Sec-Fetch-Dest" to "empty",
+                    "Sec-Fetch-Mode" to "cors"
+                )
+            )
+        )
+        assertEquals(
+            FilterResourceType.PING,
+            FilterResourceType.infer(
+                url = "https://metrics.example/collect",
+                acceptHeader = "*/*",
+                isMainFrame = false,
+                requestHeaders = mapOf("Ping-To" to "https://metrics.example/collect"),
+                method = "POST"
+            )
+        )
+        assertEquals(
+            FilterResourceType.DOCUMENT,
+            FilterResourceType.infer(
+                url = "https://main.example/",
+                acceptHeader = "text/html",
+                isMainFrame = true,
+                requestHeaders = mapOf("Sec-Fetch-Dest" to "iframe")
+            )
         )
     }
 
@@ -703,6 +1044,183 @@ class FilterEngineTest {
         assertFalse(skipJs.contains("window.open"))
     }
 
+    @Test
+    fun cosmeticSelectorPolicyRejectsStylesheetEscapesAndCountsThemUnsupported() {
+        val unsafeSelectors = listOf(
+            ".bad{}",
+            "@import url(https://collector.test/a)",
+            ".bad[url(https://collector.test/b)]",
+            ".bad/*comment*/",
+            ".bad\\7b color:red",
+            "div:has(.ad)",
+            ".bad\u0001control"
+        )
+        unsafeSelectors.forEach { selector ->
+            assertFalse("selector should be rejected: $selector", CssSelectorPolicy.isAllowed(selector))
+        }
+        assertTrue(CssSelectorPolicy.isAllowed("div.ad > [class*=\"sponsor\"]"))
+
+        val rules = buildString {
+            appendLine("##.safe-ad")
+            unsafeSelectors.forEach { selector -> appendLine("##$selector") }
+        }
+        val engine = FilterEngine.build(listOf(FilterRuleSource("test", "test", rules)))
+        val matches = engine.cosmeticMatchesFor("example.com")
+
+        assertEquals(listOf(".safe-ad"), matches.map { it.selector })
+        assertEquals(unsafeSelectors.size, engine.report.unsupportedRuleCount)
+    }
+
+    @Test
+    fun cosmeticSelectorLimitKeepsSiteRulesAheadOfGlobalRules() {
+        val rules = buildString {
+            repeat(805) { index -> appendLine("##.global-$index") }
+            appendLine("example.com##.site-priority")
+        }
+        val engine = FilterEngine.build(listOf(FilterRuleSource("test", "test", rules)))
+
+        val matches = engine.cosmeticMatchesFor("www.example.com")
+        assertEquals(800, matches.size)
+        assertEquals(".site-priority", matches.first().selector)
+        assertTrue(matches.any { it.selector == ".site-priority" })
+    }
+
+    @Test
+    fun partyClassificationUsesPslIdnAndExactLocalHostSemantics() {
+        assertFalse(isThirdPartyHost("cdn.family.co.jp", "www.family.co.jp"))
+        assertTrue(isThirdPartyHost("cdn.family.co.jp", "www.other.co.jp"))
+
+        assertFalse(isThirdPartyHost("assets.child.github.io", "child.github.io"))
+        assertTrue(isThirdPartyHost("child.github.io", "other.github.io"))
+        assertFalse(isThirdPartyHost("cdn.child.appspot.com", "child.appspot.com"))
+        assertTrue(isThirdPartyHost("child.appspot.com", "other.appspot.com"))
+
+        assertFalse(isThirdPartyHost("cdn.bücher.de", "www.xn--bcher-kva.de"))
+        assertFalse(isThirdPartyHost("127.0.0.1", "127.0.0.1"))
+        assertTrue(isThirdPartyHost("127.0.0.1", "127.0.0.2"))
+        assertFalse(isThirdPartyHost("localhost", "localhost"))
+        assertTrue(isThirdPartyHost("child.localhost", "localhost"))
+    }
+
+    @Test
+    fun longUrlsStillUseDomainExceptionImportantAndBlockingRulesWithoutCachingWholeUrl() {
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    id = "test",
+                    name = "test",
+                    rulesText = """
+                        ||important-long.example^${'$'}important
+                        @@||allowed-long.example^
+                        ||blocked-long.example^
+                    """.trimIndent()
+                )
+            )
+        )
+
+        val tenKiB = "x".repeat(10 * 1024)
+        val hundredKiB = "y".repeat(100 * 1024)
+        val important = engine.decide(
+            context("https://important-long.example/path?padding=$tenKiB", "https://top.example")
+        )
+        val exception = engine.decide(
+            context("https://allowed-long.example/path?padding=$hundredKiB", "https://top.example")
+        )
+        val blocked = engine.decide(
+            context("https://blocked-long.example/path?padding=$hundredKiB", "https://top.example")
+        )
+
+        assertEquals(FilterAction.BLOCK, important.action)
+        assertEquals(FilterAction.EXCEPTION, exception.action)
+        assertEquals(FilterAction.BLOCK, blocked.action)
+        assertEquals("oversized-url-partial", important.diagnostics?.cacheStatus)
+        assertEquals("oversized-url-partial", exception.diagnostics?.cacheStatus)
+        assertEquals("oversized-url-partial", blocked.diagnostics?.cacheStatus)
+        assertEquals(0L, engine.perfSnapshot().cacheHitCount)
+    }
+
+    @Test
+    fun generatedMatcherStopsAtExplicitCharacterBudget() {
+        val budget = AdblockMatchBudget(maxSteps = 64)
+
+        val result = AdblockPatternMatcher.matches(
+            target = "https://example.test/" + "a".repeat(8 * 1024),
+            pattern = "aaaaab*aaaaac",
+            startAnchored = false,
+            endAnchored = false,
+            budget = budget
+        )
+
+        assertEquals(AdblockMatchResult.BUDGET_EXHAUSTED, result)
+        assertEquals(64, budget.consumedSteps)
+    }
+
+    @Test
+    fun adversarialSharedTokenCorpusFailsSafeWithinDecisionBudget() {
+        val rules = buildString {
+            repeat(2_100) { index ->
+                appendLine("share*${"a".repeat(480)}z$index${'$'}script")
+            }
+        }
+        val engine = FilterEngine.build(
+            listOf(FilterRuleSource("adversarial", "adversarial", rules))
+        )
+
+        val decision = engine.decide(
+            context(
+                url = "https://cdn.example.test/shared/" + "a".repeat(7 * 1024),
+                topLevelUrl = "https://page.example.test",
+                type = FilterResourceType.SCRIPT
+            )
+        )
+
+        assertEquals(FilterAction.BLOCK, decision.action)
+        assertTrue(decision.reason.contains("filter match budget exhausted"))
+        assertTrue(decision.diagnostics?.matchedStage.orEmpty().endsWith("budget-exhausted"))
+        assertTrue(decision.diagnostics?.candidateCount.orZero() <= 2_048)
+        assertEquals(1L, engine.perfSnapshot().matchBudgetExhaustionCount)
+    }
+
+    @Test
+    fun parserRejectsExcessiveSingleRuleMatcherComplexity() {
+        val overlong = "token" + "a".repeat(508)
+        val wildcardHeavy = "token" + "*a".repeat(17)
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    "complexity",
+                    "complexity",
+                    "$overlong\n$wildcardHeavy"
+                )
+            )
+        )
+
+        assertEquals(0, engine.report.enabledRuleCount)
+        assertEquals(2, engine.report.unsupportedRuleCount)
+    }
+
+    @Test
+    fun parserRejectsExcessiveOptionAndDomainScopes() {
+        val tooManyOptions = "||ads.example^${'$'}" +
+            (0 until 33).joinToString(",") { "unsupported-$it" }
+        val tooManyDomains = "||ads.example^${'$'}domain=" +
+            (0 until 65).joinToString("|") { "d$it.example" }
+        val tooManyCosmeticDomains =
+            (0 until 65).joinToString(",") { "c$it.example" } + "##.ad"
+        val engine = FilterEngine.build(
+            listOf(
+                FilterRuleSource(
+                    "option-limits",
+                    "option-limits",
+                    "$tooManyOptions\n$tooManyDomains\n$tooManyCosmeticDomains"
+                )
+            )
+        )
+
+        assertEquals(0, engine.report.enabledRuleCount)
+        assertEquals(3, engine.report.unsupportedRuleCount)
+    }
+
     private fun assertIndexedMatchesLinear(
         engine: FilterEngine,
         request: FilterRequestContext
@@ -731,4 +1249,6 @@ class FilterEngineTest {
             hasGesture = false
         )
     }
+
+    private fun Int?.orZero(): Int = this ?: 0
 }

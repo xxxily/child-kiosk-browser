@@ -5,11 +5,13 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import site.anzz.childkiosk.util.filter.FilterAction
 import site.anzz.childkiosk.util.filter.FilterDecision
+import site.anzz.childkiosk.util.filter.FilterEngine
 import site.anzz.childkiosk.util.filter.FilterEvent
 import site.anzz.childkiosk.util.filter.FilterRepository
 import site.anzz.childkiosk.util.filter.FilterRequestContext
 import site.anzz.childkiosk.util.filter.FilterResourceType
 import site.anzz.childkiosk.util.filter.FilterRuntimeSnapshot
+import site.anzz.childkiosk.util.filter.WebViewFilterEngineHandle
 import site.anzz.childkiosk.util.filter.normalizeHost
 import java.io.ByteArrayInputStream
 import java.util.concurrent.atomic.AtomicInteger
@@ -17,6 +19,11 @@ import java.util.concurrent.atomic.AtomicLong
 
 object AdBlocker {
     private const val MAX_FILTER_EVENTS_PER_SECOND = 20
+    internal const val MAX_EVENT_URL_CHARS = 2_048
+    internal const val MAX_EVENT_TOP_LEVEL_URL_CHARS = 1_024
+    internal const val MAX_EVENT_RULE_CHARS = 1_024
+    internal const val MAX_EVENT_METADATA_CHARS = 256
+    private const val MAX_EVENT_JSON_BYTES = 48 * 1024
     private val eventWindowStartMs = AtomicLong(0L)
     private val eventWindowCount = AtomicInteger(0)
 
@@ -24,7 +31,23 @@ object AdBlocker {
         context: Context,
         request: WebResourceRequest?,
         topLevelUrl: String,
-        snapshot: FilterRuntimeSnapshot
+        handle: WebViewFilterEngineHandle
+    ): FilterDecision {
+        return shouldBlock(
+            context = context,
+            request = request,
+            topLevelUrl = topLevelUrl,
+            snapshot = handle.snapshot,
+            engine = handle.engine
+        )
+    }
+
+    fun shouldBlock(
+        context: Context,
+        request: WebResourceRequest?,
+        topLevelUrl: String,
+        snapshot: FilterRuntimeSnapshot,
+        engine: FilterEngine? = null
     ): FilterDecision {
         val startedAt = System.nanoTime()
         var engineForStats: site.anzz.childkiosk.util.filter.FilterEngine? = null
@@ -44,18 +67,17 @@ object AdBlocker {
                 return FilterDecision.ALLOW
             }
             val requestUrl = request.url.toString()
-            requestUrlForStats = requestUrl
-            if (requestUrl.length > 2048) {
-                parseNanos += System.nanoTime() - parseStartedAt
-                return FilterDecision.ALLOW
-            }
+            requestUrlForStats = boundEventText(requestUrl, MAX_EVENT_URL_CHARS)
             val requestUrlLower = requestUrl.lowercase(java.util.Locale.US)
             val requestHost = request.url.host.orEmpty().normalizeHost()
             val topLevelHost = WebViewRuntime.hostOf(topLevelUrl)
+            val requestHeaders = request.requestHeaders.orEmpty()
             val resourceType = FilterResourceType.infer(
                 url = requestUrl,
-                acceptHeader = request.requestHeaders?.get("Accept"),
-                isMainFrame = request.isForMainFrame
+                acceptHeader = requestHeaders.headerValue("Accept"),
+                isMainFrame = request.isForMainFrame,
+                requestHeaders = requestHeaders,
+                method = request.method.orEmpty()
             )
             resourceTypeForStats = resourceType
             val requestContext = FilterRequestContext(
@@ -70,31 +92,33 @@ object AdBlocker {
                 requestUrlLowerHint = requestUrlLower
             )
             parseNanos += System.nanoTime() - parseStartedAt
-            val engine = FilterRepository.getCachedEngine(snapshot) ?: return FilterDecision.ALLOW
-            engineForStats = engine
+            val activeEngine = engine ?: FilterRepository.getCachedEngine(snapshot) ?: return FilterDecision.ALLOW
+            engineForStats = activeEngine
             val siteOverride = FilterRepository.siteOverrideFor(snapshot, requestContext.topLevelHost)
             val engineStartedAt = System.nanoTime()
-            val decision = engine.decide(requestContext, siteOverride)
+            val decision = activeEngine.decide(requestContext, siteOverride)
             engineNanos += System.nanoTime() - engineStartedAt
             decisionForStats = decision
             if (decision.action != FilterAction.ALLOW) {
                 val eventStartedAt = System.nanoTime()
                 if (shouldRecordFilterEvent()) {
                     val diagnostics = decision.diagnostics
-                    val event = FilterEvent(
-                        timestamp = System.currentTimeMillis(),
-                        action = decision.action.name,
-                        url = requestUrl,
-                        topLevelUrl = topLevelUrl,
-                        resourceType = requestContext.resourceType.optionName,
-                        ruleText = decision.rule?.rawText.orEmpty(),
-                        sourceName = decision.rule?.sourceName.orEmpty(),
-                        reason = decision.reason,
-                        sourceId = decision.rule?.sourceId.orEmpty(),
-                        matchType = diagnostics?.ruleMatchType.orEmpty(),
-                        indexKey = diagnostics?.ruleIndexKey.orEmpty(),
-                        candidateCount = diagnostics?.candidateCount ?: 0,
-                        cacheStatus = diagnostics?.cacheStatus.orEmpty()
+                    val event = boundEvent(
+                        FilterEvent(
+                            timestamp = System.currentTimeMillis(),
+                            action = decision.action.name,
+                            url = requestUrl,
+                            topLevelUrl = topLevelUrl,
+                            resourceType = requestContext.resourceType.optionName,
+                            ruleText = decision.rule?.rawText.orEmpty(),
+                            sourceName = decision.rule?.sourceName.orEmpty(),
+                            reason = decision.reason,
+                            sourceId = decision.rule?.sourceId.orEmpty(),
+                            matchType = diagnostics?.ruleMatchType.orEmpty(),
+                            indexKey = diagnostics?.ruleIndexKey.orEmpty(),
+                            candidateCount = diagnostics?.candidateCount ?: 0,
+                            cacheStatus = diagnostics?.cacheStatus.orEmpty()
+                        )
                     )
                     if (isWebviewProcess(context)) {
                         sendFilterEventBroadcast(context, event)
@@ -120,7 +144,10 @@ object AdBlocker {
                     resourceType = resourceTypeForStats,
                     action = decisionForStats?.action,
                     url = requestUrlForStats,
-                    ruleText = decisionForStats?.rule?.rawText.orEmpty(),
+                    ruleText = boundEventText(
+                        decisionForStats?.rule?.rawText.orEmpty(),
+                        MAX_EVENT_RULE_CHARS
+                    ),
                     cacheStatus = diagnostics?.cacheStatus.orEmpty(),
                     candidateCount = diagnostics?.candidateCount ?: 0
                 )
@@ -175,8 +202,10 @@ object AdBlocker {
     }
 
     private fun sendFilterEventBroadcast(context: Context, event: FilterEvent) {
+        val eventJson = event.toJson().toString()
+        if (eventJson.toByteArray(Charsets.UTF_8).size > MAX_EVENT_JSON_BYTES) return
         val intent = android.content.Intent("site.anzz.childkiosk.action.RECORD_FILTER_EVENT").apply {
-            putExtra("event_json", event.toJson().toString())
+            putExtra("event_json", eventJson)
             setPackage(context.packageName)
         }
         context.sendBroadcast(intent)
@@ -188,6 +217,38 @@ object AdBlocker {
             eventWindowCount.set(0)
         }
         return eventWindowCount.incrementAndGet() <= MAX_FILTER_EVENTS_PER_SECOND
+    }
+
+    internal fun boundEvent(event: FilterEvent): FilterEvent {
+        return event.copy(
+            action = boundEventText(event.action, 32),
+            url = boundEventText(event.url, MAX_EVENT_URL_CHARS),
+            topLevelUrl = boundEventText(event.topLevelUrl, MAX_EVENT_TOP_LEVEL_URL_CHARS),
+            resourceType = boundEventText(event.resourceType, 48),
+            ruleText = boundEventText(event.ruleText, MAX_EVENT_RULE_CHARS),
+            sourceName = boundEventText(event.sourceName, 128),
+            reason = boundEventText(event.reason, MAX_EVENT_METADATA_CHARS),
+            sourceId = boundEventText(event.sourceId, 128),
+            matchType = boundEventText(event.matchType, 48),
+            indexKey = boundEventText(event.indexKey, 128),
+            candidateCount = event.candidateCount.coerceIn(0, 1_000_000),
+            cacheStatus = boundEventText(event.cacheStatus, 48)
+        )
+    }
+
+    internal fun boundEventText(value: String, maxChars: Int): String {
+        if (maxChars <= 0 || value.isEmpty()) return ""
+        val sanitized = buildString(minOf(value.length, maxChars)) {
+            for (char in value) {
+                if (length >= maxChars) break
+                append(if (char.isISOControl()) ' ' else char)
+            }
+        }
+        return if (sanitized.lastOrNull()?.isHighSurrogate() == true) {
+            sanitized.dropLast(1)
+        } else {
+            sanitized
+        }
     }
 
     fun isAdRequest(url: String?): Boolean {
@@ -203,4 +264,8 @@ object AdBlocker {
         )
         return FilterRepository.getEngine(snapshot).decide(requestContext).action == FilterAction.BLOCK
     }
+}
+
+private fun Map<String, String>.headerValue(name: String): String? {
+    return entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
 }

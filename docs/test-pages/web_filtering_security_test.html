@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Child Kiosk 网页过滤安全测试</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0 auto; max-width: 860px; padding: 20px; line-height: 1.5; }
+    section { border: 1px solid #8886; border-radius: 12px; margin: 14px 0; padding: 14px; }
+    button, input { box-sizing: border-box; font: inherit; min-height: 48px; margin: 4px 0; }
+    button { margin-right: 8px; padding: 8px 14px; }
+    input { padding: 8px; width: 100%; }
+    pre { background: #0001; border-radius: 8px; max-height: 320px; overflow: auto; padding: 12px; }
+    .popup-ad, .modal-ad, .cosmetic-test-ad { background: #f44336; color: white; padding: 12px; }
+  </style>
+</head>
+<body>
+  <h1>网页过滤安全测试</h1>
+  <p>建议把目标地址设为可观察请求日志的测试服务器。页面不会上传账号、Cookie 或表单数据。</p>
+
+  <label>
+    测试目标 Origin
+    <input id="origin" value="https://tracker.example.invalid">
+  </label>
+
+  <section>
+    <h2>网络资源与超长 URL</h2>
+    <button id="image">图片请求</button>
+    <button id="long-image">100KB 长 URL 图片</button>
+    <button id="fetch">Fetch</button>
+    <button id="beacon">sendBeacon</button>
+    <button id="iframe">Iframe</button>
+  </section>
+
+  <section>
+    <h2>Popup</h2>
+    <button id="popup-gesture">用户手势 Popup</button>
+    <button id="popup-timer">延迟无手势 Popup</button>
+  </section>
+
+  <section>
+    <h2>Cosmetic</h2>
+    <div class="cosmetic-test-ad">若规则 <code>##.cosmetic-test-ad</code> 生效，此块应隐藏。</div>
+    <div class="popup-ad">强力 starter 的 <code>##.popup-ad</code> 测试块。</div>
+  </section>
+
+  <section>
+    <h2>Service Worker</h2>
+    <button id="sw-register">注册测试 SW</button>
+    <button id="sw-fetch">通过 SW Fetch</button>
+    <p>仅 HTTPS/localhost 且同目录提供 <code>web_filtering_test_sw.js</code> 时可用。</p>
+  </section>
+
+  <h2>页面日志</h2>
+  <pre id="log"></pre>
+
+  <script>
+    const logNode = document.getElementById('log');
+    function log(message) {
+      logNode.textContent = `${new Date().toISOString()} ${message}\n${logNode.textContent}`;
+    }
+    function origin() {
+      return document.getElementById('origin').value.replace(/\/$/, '');
+    }
+    function target(path, query = '') {
+      return `${origin()}${path}${query}`;
+    }
+
+    document.getElementById('image').onclick = () => {
+      const image = new Image();
+      image.onload = () => log('image loaded');
+      image.onerror = () => log('image failed/blocked');
+      image.src = target('/filter-test/pixel.png', `?t=${Date.now()}`);
+      document.body.appendChild(image);
+    };
+
+    document.getElementById('long-image').onclick = () => {
+      const image = new Image();
+      image.onload = () => log('long image loaded');
+      image.onerror = () => log('long image failed/blocked');
+      image.src = target('/filter-test/long.png', `?pad=${'x'.repeat(100 * 1024)}`);
+      document.body.appendChild(image);
+    };
+
+    document.getElementById('fetch').onclick = async () => {
+      try {
+        await fetch(target('/filter-test/fetch', `?t=${Date.now()}`), { mode: 'no-cors' });
+        log('fetch completed');
+      } catch (error) {
+        log(`fetch failed/blocked: ${error}`);
+      }
+    };
+
+    document.getElementById('beacon').onclick = () => {
+      const accepted = navigator.sendBeacon(
+        target('/filter-test/beacon', `?t=${Date.now()}`),
+        new Blob(['filter-test'], { type: 'text/plain' })
+      );
+      log(`sendBeacon accepted=${accepted}`);
+    };
+
+    document.getElementById('iframe').onclick = () => {
+      const frame = document.createElement('iframe');
+      frame.src = target('/filter-test/frame.html', `?t=${Date.now()}`);
+      frame.onload = () => log('iframe loaded');
+      document.body.appendChild(frame);
+    };
+
+    document.getElementById('popup-gesture').onclick = () => {
+      const popup = window.open(target('/filter-test/popup.html', `?gesture=1&t=${Date.now()}`));
+      log(`gesture popup returned=${Boolean(popup)}`);
+    };
+
+    document.getElementById('popup-timer').onclick = () => {
+      setTimeout(() => {
+        const popup = window.open(target('/filter-test/popup.html', `?gesture=0&t=${Date.now()}`));
+        log(`timer popup returned=${Boolean(popup)}`);
+      }, 1200);
+      log('timer popup scheduled');
+    };
+
+    document.getElementById('sw-register').onclick = async () => {
+      try {
+        const registration = await navigator.serviceWorker.register('./web_filtering_test_sw.js');
+        await navigator.serviceWorker.ready;
+        log(`service worker ready: ${registration.scope}`);
+      } catch (error) {
+        log(`service worker registration failed: ${error}`);
+      }
+    };
+
+    document.getElementById('sw-fetch').onclick = async () => {
+      try {
+        await fetch(`./filter-test-through-sw?t=${Date.now()}`);
+        log('service worker fetch completed');
+      } catch (error) {
+        log(`service worker fetch failed: ${error}`);
+      }
+    };
+  </script>
+</body>
+</html>

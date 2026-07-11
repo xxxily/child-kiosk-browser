@@ -331,6 +331,7 @@ object KioskPrefs {
     private const val KEY_LIMIT_MICROPHONE_CAPTURE = "limit_microphone_capture"
     private const val KEY_LIMIT_FILE_CHOOSER = "limit_file_chooser"
     private const val KEY_LIMIT_FULLSCREEN_VIDEO = "limit_fullscreen_video"
+    private const val KEY_LIMIT_AD_BLOCK = "limit_ad_block"
     /** 屏幕固定软锁：调用 startLockTask() 触发系统「屏幕固定」，拦截 Home/最近任务。 */
     const val MODE_SOFT_LOCK = "SOFT_LOCK"
 
@@ -421,16 +422,13 @@ object KioskPrefs {
         when (normalized) {
             QUICK_MODE_CHILD -> {
                 FilterRepository.setPreset(context, FilterPreset.STANDARD_CHILD)
-                FilterRepository.setEnabled(context, true)
             }
             QUICK_MODE_DEBUG -> {
                 FilterRepository.setPreset(context, FilterPreset.LIGHT)
-                FilterRepository.setEnabled(context, false)
             }
             QUICK_MODE_CUSTOM -> Unit
             else -> {
                 FilterRepository.setPreset(context, FilterPreset.LIGHT)
-                FilterRepository.setEnabled(context, false)
             }
         }
     }
@@ -455,7 +453,7 @@ object KioskPrefs {
             .putBoolean("limit_unknown_sources", false)
             .putBoolean("limit_flag_secure", false)
             .putBoolean("limit_volume_keys", false)
-            .putBoolean("limit_ad_block", false)
+            .putBoolean(KEY_LIMIT_AD_BLOCK, false)
             .putBoolean("limit_download", false)
             .putBoolean("limit_long_click", false)
             .putBoolean("limit_url_redirect", false)
@@ -501,7 +499,7 @@ object KioskPrefs {
             .putBoolean("limit_unknown_sources", true)
             .putBoolean("limit_flag_secure", true)
             .putBoolean("limit_volume_keys", true)
-            .putBoolean("limit_ad_block", true)
+            .putBoolean(KEY_LIMIT_AD_BLOCK, true)
             .putBoolean("limit_download", true)
             .putBoolean("limit_long_click", true)
             .putBoolean("limit_url_redirect", true)
@@ -547,7 +545,7 @@ object KioskPrefs {
             .putBoolean("limit_unknown_sources", false)
             .putBoolean("limit_flag_secure", false)
             .putBoolean("limit_volume_keys", false)
-            .putBoolean("limit_ad_block", false)
+            .putBoolean(KEY_LIMIT_AD_BLOCK, false)
             .putBoolean("limit_download", false)
             .putBoolean("limit_long_click", false)
             .putBoolean("limit_url_redirect", false)
@@ -733,6 +731,8 @@ object KioskPrefs {
     }
 
     fun getWebViewRuntimeConfig(context: Context): WebViewRuntimeConfig {
+        val legacyFilterSnapshot = FilterRepository.getRuntimeSnapshot(context)
+        val filterEnabled = getOrMigrateLimitAdBlockEnabled(context, legacyFilterSnapshot.enabled)
         return WebViewRuntimeConfig(
             verifyOnWebExit = getVerifyOnWebExit(context),
             verifyAdminActions = getVerifyAdminActions(context),
@@ -754,10 +754,8 @@ object KioskPrefs {
             customUserAgent = getCustomUserAgent(context),
             useBrowserUserAgent = isUseBrowserUserAgentEnabled(context),
             limitUrlRedirect = isLimitUrlRedirectEnabled(context),
-            limitAdBlock = isLimitAdBlockEnabled(context),
-            filterSnapshot = FilterRepository.getRuntimeSnapshot(context).let { snapshot ->
-                snapshot.copy(enabled = isLimitAdBlockEnabled(context))
-            },
+            limitAdBlock = filterEnabled,
+            filterSnapshot = legacyFilterSnapshot.copy(enabled = filterEnabled),
             limitSslCheck = isLimitSslCheckEnabled(context),
             limitCameraCapture = isLimitCameraCaptureEnabled(context),
             limitMicrophoneCapture = isLimitMicrophoneCaptureEnabled(context),
@@ -1026,11 +1024,20 @@ object KioskPrefs {
         customEditor(context).putBoolean("limit_volume_keys", enabled).apply()
 
     // 3. 网页浏览器沙箱限制
-    fun isLimitAdBlockEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_ad_block", false)
-    fun setLimitAdBlockEnabled(context: Context, enabled: Boolean) =
-        customEditor(context).putBoolean("limit_ad_block", enabled).apply().also {
-            FilterRepository.setEnabled(context, enabled)
+    fun isLimitAdBlockEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_LIMIT_AD_BLOCK, false)
+
+    @Synchronized
+    internal fun getOrMigrateLimitAdBlockEnabled(context: Context, legacyEnabled: Boolean): Boolean {
+        val preferences = prefs(context)
+        if (!preferences.contains(KEY_LIMIT_AD_BLOCK)) {
+            preferences.edit().putBoolean(KEY_LIMIT_AD_BLOCK, legacyEnabled).commit()
         }
+        return preferences.getBoolean(KEY_LIMIT_AD_BLOCK, legacyEnabled)
+    }
+
+    fun setLimitAdBlockEnabled(context: Context, enabled: Boolean) =
+        customEditor(context).putBoolean(KEY_LIMIT_AD_BLOCK, enabled).apply()
 
     fun isLimitDownloadEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_download", false)
     fun setLimitDownloadEnabled(context: Context, enabled: Boolean) =

@@ -129,6 +129,7 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.webkit)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.guava)
 
     // Compose
     implementation(platform(libs.androidx.compose.bom))
@@ -150,4 +151,7 @@ dependencies {
     add("enhancedImplementation", libs.amap.location)
 
     testImplementation(libs.junit)
+    testImplementation(libs.json)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
 }

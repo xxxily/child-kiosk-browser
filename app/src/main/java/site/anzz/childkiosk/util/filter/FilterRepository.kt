@@ -5,10 +5,11 @@ import android.content.SharedPreferences
 import android.util.AtomicFile
 import org.json.JSONArray
 import org.json.JSONObject
+import site.anzz.childkiosk.util.KioskPrefs
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.FutureTask
 import java.util.concurrent.atomic.AtomicLong
 
 data class FilterPerfDiagnosticSnapshot(
@@ -18,6 +19,7 @@ data class FilterPerfDiagnosticSnapshot(
 )
 
 object FilterRepository {
+    internal const val MAX_CUSTOM_RULE_BYTES = 128 * 1024
     private const val PREFS_NAME = "kiosk_filter_prefs"
     private const val KEY_ENABLED = "enabled"
     private const val KEY_PRESET = "preset"
@@ -25,12 +27,14 @@ object FilterRepository {
     private const val KEY_CUSTOM_RULES = "custom_rules"
     private const val KEY_SITE_OVERRIDES = "site_overrides"
     private const val KEY_EVENTS = "events"
-    private const val RULE_DIR = "filter_subscriptions"
     private const val EVENTS_FILE = "filter_events.json"
     private const val EVENTS_CLEARED_FILE = "filter_events_cleared_at.txt"
     private const val PERF_SNAPSHOT_FILE = "filter_perf_snapshot.json"
     private const val DIAGNOSTICS_RESET_FILE = "filter_diagnostics_reset_at.txt"
     private const val MAX_EVENTS = 200
+    private const val MAX_ENABLED_RAW_RULE_BYTES = 60L * 1024L * 1024L
+    private const val LARGE_LIST_RULE_THRESHOLD = 1_000
+    private const val MIN_LARGE_LIST_RETAIN_PERCENT = 20
     private const val PERF_SNAPSHOT_WRITE_INTERVAL_MS = 2_000L
     private const val DIAGNOSTICS_RESET_CHECK_INTERVAL_MS = 500L
 
@@ -39,6 +43,9 @@ object FilterRepository {
             return size > 4
         }
     }
+    private val engineBuilds = ConcurrentHashMap<String, FutureTask<FilterEngine>>()
+    private val mutationLock = Any()
+    private val subscriptionIdentityEpochs = mutableMapOf<String, Long>()
     private val eventLock = Any()
     private val perfSnapshotLock = Any()
     private val eventGeneration = AtomicLong(0L)
@@ -52,10 +59,15 @@ object FilterRepository {
         Thread(task, "ChildKioskFilterPerfSnapshot").apply { isDaemon = true }
     }
 
-    fun getSettings(context: Context): FilterSettings {
+    fun getSettings(context: Context): FilterSettings = synchronized(mutationLock) {
+        readSettingsLocked(context)
+    }
+
+    private fun readSettingsLocked(context: Context): FilterSettings {
         val prefs = prefs(context)
         val preset = FilterPreset.fromStorage(prefs.getString(KEY_PRESET, FilterPreset.STANDARD_CHILD.storageValue))
-        val enabled = prefs.getBoolean(KEY_ENABLED, false)
+        val legacyEnabled = prefs.getBoolean(KEY_ENABLED, false)
+        val enabled = KioskPrefs.getOrMigrateLimitAdBlockEnabled(context, legacyEnabled)
         val subscriptionOverrides = readSubscriptionOverrides(prefs)
         val defaultSubscriptions = FilterCatalog.defaultSubscriptionsFor(preset)
         val subscriptions = defaultSubscriptions.map { subscription ->
@@ -69,7 +81,8 @@ object FilterRepository {
                     ruleCount = override.optInt("ruleCount", subscription.ruleCount),
                     enabledRuleCount = override.optInt("enabledRuleCount", subscription.enabledRuleCount),
                     unsupportedCount = override.optInt("unsupportedCount", subscription.unsupportedCount),
-                    lastError = override.optString("lastError", subscription.lastError)
+                    lastError = override.optString("lastError", subscription.lastError),
+                    contentGeneration = override.optString("contentGeneration", subscription.contentGeneration)
                 )
             }
         } + subscriptionOverrides.values
@@ -89,141 +102,264 @@ object FilterRepository {
     }
 
     fun setEnabled(context: Context, enabled: Boolean) {
-        prefs(context).edit().putBoolean(KEY_ENABLED, enabled).apply()
+        synchronized(mutationLock) {
+            if (enabled) ensureEnabledRawBudget(context, readSettingsLocked(context))
+            KioskPrefs.setLimitAdBlockEnabled(context, enabled)
+            commitOrThrow(prefs(context).edit().putBoolean(KEY_ENABLED, enabled))
+        }
         invalidate()
     }
 
     fun setPreset(context: Context, preset: FilterPreset) {
-        val existing = getSettings(context).subscriptions.associateBy { it.id }
-        val defaults = FilterCatalog.defaultSubscriptionsFor(preset)
-        val next = defaults.map { subscription ->
-            existing[subscription.id]?.let { old ->
-                subscription.copy(
-                    lastUpdatedAt = old.lastUpdatedAt,
-                    ruleCount = old.ruleCount,
-                    enabledRuleCount = old.enabledRuleCount,
-                    unsupportedCount = old.unsupportedCount,
-                    lastError = old.lastError
-                )
-            } ?: subscription
+        synchronized(mutationLock) {
+            val current = readSettingsLocked(context)
+            val currentById = current.subscriptions.associateBy { it.id }
+            val builtInIds = FilterCatalog.builtInSubscriptions.mapTo(mutableSetOf()) { it.id }
+            val next = if (preset == FilterPreset.CUSTOM) {
+                current.subscriptions
+            } else {
+                val defaultsById = FilterCatalog.defaultSubscriptionsFor(preset).associateBy { it.id }
+                val builtIns = FilterCatalog.builtInSubscriptions.map { catalogSubscription ->
+                    val defaultSubscription = defaultsById.getValue(catalogSubscription.id)
+                    currentById[catalogSubscription.id]
+                        ?.let { existing -> defaultSubscription.withStoredMetadata(existing) }
+                        ?: defaultSubscription
+                }
+                builtIns + current.subscriptions.filterNot { it.id in builtInIds }
+            }
+            ensureEnabledRawBudget(context, current.copy(preset = preset, subscriptions = next))
+            commitOrThrow(
+                prefs(context).edit()
+                    .putString(KEY_PRESET, preset.storageValue)
+                    .putString(KEY_SUBSCRIPTIONS, JSONArray(next.map { it.toJson() }).toString())
+            )
         }
-        val subscriptionsJson = JSONArray(next.map { it.toJson() })
-        prefs(context).edit()
-            .putString(KEY_PRESET, preset.storageValue)
-            .putString(KEY_SUBSCRIPTIONS, subscriptionsJson.toString())
-            .apply()
         invalidate()
     }
 
     fun setSubscriptionEnabled(context: Context, id: String, enabled: Boolean) {
-        val current = getSettings(context).subscriptions
-        val next = current.map { if (it.id == id) it.copy(enabled = enabled) else it }
-        prefs(context).edit()
-            .putString(KEY_PRESET, FilterPreset.CUSTOM.storageValue)
-            .putString(KEY_SUBSCRIPTIONS, JSONArray(next.map { it.toJson() }).toString())
-            .apply()
+        synchronized(mutationLock) {
+            val settings = readSettingsLocked(context)
+            require(settings.subscriptions.any { it.id == id }) { "Unknown subscription: $id" }
+            val next = settings.subscriptions.map { if (it.id == id) it.copy(enabled = enabled) else it }
+            ensureEnabledRawBudget(context, settings.copy(subscriptions = next))
+            commitOrThrow(
+                prefs(context).edit()
+                    .putString(KEY_PRESET, FilterPreset.CUSTOM.storageValue)
+                    .putString(KEY_SUBSCRIPTIONS, JSONArray(next.map { it.toJson() }).toString())
+            )
+        }
         invalidate()
     }
 
     fun addCustomSubscription(context: Context, title: String, url: String): FilterSubscription {
         val cleanUrl = normalizeSubscriptionUrl(url)
-        require(cleanUrl.startsWith("https://")) { "仅支持 HTTPS 订阅 URL" }
-        val subscription = FilterCatalog.customSubscription(title.trim(), cleanUrl)
-        val next = getSettings(context).subscriptions
-            .filterNot { it.id == subscription.id }
-            .plus(subscription)
-        prefs(context).edit()
-            .putString(KEY_PRESET, FilterPreset.CUSTOM.storageValue)
-            .putString(KEY_SUBSCRIPTIONS, JSONArray(next.map { it.toJson() }).toString())
-            .apply()
+        val cleanUri = runCatching { java.net.URI(cleanUrl) }.getOrNull()
+        require(
+            cleanUri?.scheme.equals("https", ignoreCase = true) &&
+                !cleanUri?.host.isNullOrBlank() &&
+                cleanUri?.userInfo == null
+        ) { "仅支持有效的 HTTPS 订阅 URL" }
+        val proposed = FilterCatalog.customSubscription(title.trim(), cleanUrl)
+        val subscription = synchronized(mutationLock) {
+            val settings = readSettingsLocked(context)
+            val existing = settings.subscriptions.firstOrNull { it.id == proposed.id }
+            val resolved = existing?.copy(
+                title = proposed.title,
+                category = proposed.category,
+                homepageUrl = proposed.homepageUrl,
+                subscriptionUrl = proposed.subscriptionUrl,
+                enabled = true
+            ) ?: proposed
+            val next = settings.subscriptions.filterNot { it.id == resolved.id }.plus(resolved)
+            ensureEnabledRawBudget(context, settings.copy(subscriptions = next))
+            commitOrThrow(
+                prefs(context).edit()
+                    .putString(KEY_PRESET, FilterPreset.CUSTOM.storageValue)
+                    .putString(KEY_SUBSCRIPTIONS, JSONArray(next.map { it.toJson() }).toString())
+            )
+            if (existing == null) bumpSubscriptionIdentityEpochLocked(resolved.id)
+            resolved
+        }
         invalidate()
         return subscription
     }
 
     fun removeCustomSubscription(context: Context, id: String) {
         if (FilterCatalog.builtInSubscriptions.any { it.id == id }) return
-        val next = getSettings(context).subscriptions.filterNot { it.id == id }
-        prefs(context).edit()
-            .putString(KEY_SUBSCRIPTIONS, JSONArray(next.map { it.toJson() }).toString())
-            .apply()
-        subscriptionFile(context, id).delete()
+        synchronized(mutationLock) {
+            val current = readSettingsLocked(context).subscriptions
+            if (current.none { it.id == id }) return
+            val next = current.filterNot { it.id == id }
+            commitOrThrow(
+                prefs(context).edit()
+                    .putString(KEY_SUBSCRIPTIONS, JSONArray(next.map { it.toJson() }).toString())
+            )
+            bumpSubscriptionIdentityEpochLocked(id)
+            FilterSubscriptionStore(context).deleteSubscription(id)
+        }
         invalidate()
     }
 
     fun updateSubscription(context: Context, id: String): FilterSubscription {
-        val current = getSettings(context).subscriptions
-        val target = current.firstOrNull { it.id == id } ?: error("Unknown subscription: $id")
-        if (!target.subscriptionUrl.startsWith("https://") && !target.subscriptionUrl.startsWith("local://")) {
+        val token = synchronized(mutationLock) {
+            val target = readSettingsLocked(context).subscriptions.firstOrNull { it.id == id }
+                ?: error("Unknown subscription: $id")
+            SubscriptionUpdateToken(
+                subscription = target,
+                normalizedUrl = normalizeSubscriptionUrl(target.subscriptionUrl),
+                identityEpoch = subscriptionIdentityEpochs[id] ?: 0L
+            )
+        }
+        val target = token.subscription
+        val targetScheme = runCatching { java.net.URI(target.subscriptionUrl).scheme }.getOrNull()
+        if (
+            !targetScheme.equals("https", ignoreCase = true) &&
+            !targetScheme.equals("local", ignoreCase = true)
+        ) {
             error("仅支持 HTTPS 订阅")
         }
-        if (target.subscriptionUrl.startsWith("local://")) {
-            return target.copy(
-                lastUpdatedAt = System.currentTimeMillis(),
-                lastError = ""
-            ).also { updated ->
-                saveSubscriptions(context, current.map { if (it.id == id) updated else it })
+        if (targetScheme.equals("local", ignoreCase = true)) {
+            return synchronized(mutationLock) {
+                val settings = readSettingsLocked(context)
+                val current = settings.subscriptions.firstOrNull { it.id == id }
+                    ?: error("订阅已被删除")
+                ensureUpdateTokenMatchesLocked(current, token)
+                val updated = current.copy(lastUpdatedAt = System.currentTimeMillis(), lastError = "")
+                saveSubscriptionsLocked(context, settings.subscriptions.map { if (it.id == id) updated else it })
+                updated
             }
         }
-        val normalizedUrl = normalizeSubscriptionUrl(target.subscriptionUrl)
-        val text = downloadRules(normalizedUrl)
-        val report = FilterEngine.build(listOf(FilterRuleSource(target.id, target.title, text))).report
-        subscriptionFile(context, target.id).apply {
-            parentFile?.mkdirs()
-            writeText(text)
+
+        val store = FilterSubscriptionStore(context)
+        val stagingFile = store.createStagingFile(target.id)
+        var staged: StagedFilterSubscription? = null
+        var publishedGeneration: String? = null
+        var metadataCommitted = false
+        try {
+            val downloaded = FilterSubscriptionDownloader.download(token.normalizedUrl, stagingFile)
+            val candidate = store.inspectStaging(target.id, stagingFile)
+            check(candidate.byteCount == downloaded.byteCount) { "订阅候选文件长度不一致" }
+            staged = candidate
+            val report = FilterEngine.build(
+                listOf(FilterRuleSource(target.id, target.title, downloaded.text))
+            ).report
+            validateCandidateReport(target, report)
+            val published = store.publish(candidate)
+            check(published.isFile) { "订阅 generation 发布失败" }
+            publishedGeneration = candidate.generation
+
+            val updated = synchronized(mutationLock) {
+                val settings = readSettingsLocked(context)
+                val current = settings.subscriptions.firstOrNull { it.id == id }
+                    ?: error("订阅已被删除，忽略过期更新")
+                ensureUpdateTokenMatchesLocked(current, token)
+                check(published.isFile) { "订阅 generation 在提交前丢失" }
+                val nextTarget = current.copy(
+                    ruleCount = report.ruleCount,
+                    enabledRuleCount = report.enabledRuleCount,
+                    unsupportedCount = report.unsupportedRuleCount,
+                    lastUpdatedAt = System.currentTimeMillis(),
+                    lastError = report.errors.firstOrNull().orEmpty(),
+                    subscriptionUrl = token.normalizedUrl,
+                    contentGeneration = candidate.generation
+                )
+                val nextSubscriptions = settings.subscriptions.map {
+                    if (it.id == id) nextTarget else it
+                }
+                ensureEnabledRawBudget(
+                    context,
+                    settings.copy(subscriptions = nextSubscriptions)
+                )
+                saveSubscriptionsLocked(context, nextSubscriptions)
+                metadataCommitted = true
+                store.cleanupAfterCommit(
+                    subscriptionId = id,
+                    currentGeneration = candidate.generation,
+                    previousGeneration = token.subscription.contentGeneration
+                )
+                nextTarget
+            }
+            invalidate()
+            return updated
+        } catch (error: Throwable) {
+            staged?.let(store::discard)
+            stagingFile.delete()
+            publishedGeneration
+                ?.takeIf { !metadataCommitted && it != token.subscription.contentGeneration }
+                ?.let { generation ->
+                    synchronized(mutationLock) {
+                        val referenced = readSettingsLocked(context).subscriptions.any { subscription ->
+                            subscription.id == target.id && subscription.contentGeneration == generation
+                        }
+                        if (!referenced) store.deleteGeneration(target.id, generation)
+                    }
+                }
+            throw error
         }
-        val updated = target.copy(
-            ruleCount = report.ruleCount,
-            enabledRuleCount = report.enabledRuleCount,
-            unsupportedCount = report.unsupportedRuleCount,
-            lastUpdatedAt = System.currentTimeMillis(),
-            lastError = report.errors.firstOrNull().orEmpty(),
-            subscriptionUrl = normalizedUrl
-        )
-        saveSubscriptions(context, current.map { if (it.id == id) updated else it })
-        invalidate()
-        return updated
     }
 
     fun setCustomRules(context: Context, rules: String) {
-        prefs(context).edit()
-            .putString(KEY_PRESET, FilterPreset.CUSTOM.storageValue)
-            .putString(KEY_CUSTOM_RULES, rules)
-            .apply()
+        require(rules.toByteArray(Charsets.UTF_8).size <= MAX_CUSTOM_RULE_BYTES) {
+            "自定义规则超过 128KiB 限制"
+        }
+        synchronized(mutationLock) {
+            val settings = readSettingsLocked(context).copy(
+                preset = FilterPreset.CUSTOM,
+                customRules = rules
+            )
+            ensureEnabledRawBudget(context, settings)
+            commitOrThrow(
+                prefs(context).edit()
+                    .putString(KEY_PRESET, FilterPreset.CUSTOM.storageValue)
+                    .putString(KEY_CUSTOM_RULES, rules)
+            )
+        }
         invalidate()
     }
 
     fun setSiteOverride(context: Context, override: SiteFilterOverride) {
-        val overrides = getSettings(context).siteOverrides
-            .filterNot { it.host == override.host }
-            .plus(override)
-            .filterNot { !it.networkDisabled && !it.cosmeticDisabled && !it.scriptletDisabled && it.temporaryAllowUntil <= 0L }
-        prefs(context).edit()
-            .putString(KEY_SITE_OVERRIDES, JSONArray(overrides.map { it.toJson() }).toString())
-            .apply()
-        invalidate()
+        synchronized(mutationLock) {
+            val normalizedOverride = override.copy(host = override.host.normalizeHost())
+            val overrides = readSettingsLocked(context).siteOverrides
+                .filterNot { it.host == normalizedOverride.host }
+                .plus(normalizedOverride)
+                .filterNot {
+                    !it.networkDisabled && !it.cosmeticDisabled && !it.scriptletDisabled &&
+                        it.temporaryAllowUntil <= 0L
+                }
+            commitOrThrow(
+                prefs(context).edit()
+                    .putString(KEY_SITE_OVERRIDES, JSONArray(overrides.map { it.toJson() }).toString())
+            )
+        }
     }
 
     fun removeSiteOverride(context: Context, host: String) {
         val normalized = host.normalizeHost()
-        val overrides = getSettings(context).siteOverrides.filterNot { it.host == normalized }
-        prefs(context).edit()
-            .putString(KEY_SITE_OVERRIDES, JSONArray(overrides.map { it.toJson() }).toString())
-            .apply()
-        invalidate()
+        synchronized(mutationLock) {
+            val overrides = readSettingsLocked(context).siteOverrides.filterNot { it.host == normalized }
+            commitOrThrow(
+                prefs(context).edit()
+                    .putString(KEY_SITE_OVERRIDES, JSONArray(overrides.map { it.toJson() }).toString())
+            )
+        }
     }
 
     fun getEngine(context: Context, snapshot: FilterRuntimeSnapshot? = null): FilterEngine {
         val runtimeSnapshot = snapshot ?: getRuntimeSnapshot(context)
-        if (!runtimeSnapshot.enabled) return FilterEngine.EMPTY
-        val cacheKey = engineCacheKey(runtimeSnapshot)
-        synchronized(engineCache) {
-            engineCache[cacheKey]?.let { return it }
+        val resolvedSnapshot = if (
+            runtimeSnapshot.enabledSubscriptionIds.isNotEmpty() &&
+            runtimeSnapshot.subscriptions.isEmpty()
+        ) {
+            val enabledIds = runtimeSnapshot.enabledSubscriptionIds.toSet()
+            runtimeSnapshot.copy(
+                subscriptions = getSettings(context).subscriptions.filter { it.id in enabledIds }
+            )
+        } else {
+            runtimeSnapshot
         }
-        val engine = buildEngine(context, runtimeSnapshot)
-        synchronized(engineCache) {
-            engineCache[cacheKey] = engine
-        }
-        return engine
+        return getOrBuildEngine(context, resolvedSnapshot)
     }
 
     fun getEngine(snapshot: FilterRuntimeSnapshot): FilterEngine {
@@ -232,11 +368,42 @@ object FilterRepository {
         synchronized(engineCache) {
             engineCache[cacheKey]?.let { return it }
         }
-        val engine = buildEngine(null, snapshot)
-        synchronized(engineCache) {
-            engineCache[cacheKey] = engine
+        val enabledIds = snapshot.enabledSubscriptionIds.toSet()
+        check(snapshot.subscriptions.none { it.id in enabledIds && it.contentGeneration.isNotBlank() }) {
+            "generation 规则需要 Context 读取；请先预热并持有正式引擎"
         }
-        return engine
+        return getOrBuildEngine(null, snapshot)
+    }
+
+    internal fun bundledFallbackSnapshot(requested: FilterRuntimeSnapshot): FilterRuntimeSnapshot {
+        val subscriptions = FilterCatalog.defaultSubscriptionsFor(FilterPreset.STANDARD_CHILD)
+            .filter { it.enabled }
+            .map { subscription ->
+                subscription.copy(
+                    lastUpdatedAt = 0L,
+                    ruleCount = 0,
+                    enabledRuleCount = 0,
+                    unsupportedCount = 0,
+                    lastError = "",
+                    contentGeneration = ""
+                )
+            }
+        return FilterRuntimeSnapshot(
+            enabled = requested.enabled,
+            preset = BUNDLED_FALLBACK_PRESET,
+            customRules = "",
+            enabledSubscriptionIds = subscriptions.map { it.id },
+            siteOverrides = requested.siteOverrides,
+            subscriptions = subscriptions
+        )
+    }
+
+    internal fun getBundledFallbackEngine(requested: FilterRuntimeSnapshot): FilterEngine {
+        return getOrBuildEngine(
+            context = null,
+            snapshot = bundledFallbackSnapshot(requested),
+            cacheNamespace = BUNDLED_FALLBACK_CACHE_NAMESPACE
+        )
     }
 
     fun getCachedEngine(snapshot: FilterRuntimeSnapshot): FilterEngine? {
@@ -250,7 +417,13 @@ object FilterRepository {
     fun siteOverrideFor(snapshot: FilterRuntimeSnapshot, host: String): SiteFilterOverride? {
         if (snapshot.siteOverrides.isEmpty()) return null
         val normalized = host.normalizeHost()
-        return snapshot.siteOverrides.firstOrNull { isSameOrSubdomain(normalized, it.host) }
+        return snapshot.siteOverrides
+            .asSequence()
+            .filter { isSameOrSubdomain(normalized, it.host) }
+            .maxWithOrNull(
+                compareBy<SiteFilterOverride> { it.host.count { char -> char == '.' } }
+                    .thenBy { it.host.length }
+            )
     }
 
     fun recordEvent(context: Context, event: FilterEvent) {
@@ -400,9 +573,37 @@ object FilterRepository {
         }
     }
 
+    private fun getOrBuildEngine(
+        context: Context?,
+        snapshot: FilterRuntimeSnapshot,
+        cacheNamespace: String = PRIMARY_ENGINE_CACHE_NAMESPACE
+    ): FilterEngine {
+        if (!snapshot.enabled) return FilterEngine.EMPTY
+        val cacheKey = engineCacheKey(snapshot, cacheNamespace)
+        synchronized(engineCache) {
+            engineCache[cacheKey]?.let { return it }
+        }
+
+        val newTask = FutureTask { buildEngine(context, snapshot) }
+        val existingTask = engineBuilds.putIfAbsent(cacheKey, newTask)
+        val ownsTask = existingTask == null
+        val task = existingTask ?: newTask.also { it.run() }
+        return try {
+            val engine = task.get()
+            synchronized(engineCache) {
+                engineCache[cacheKey] ?: engine.also { engineCache[cacheKey] = it }
+            }
+        } catch (error: java.util.concurrent.ExecutionException) {
+            throw (error.cause ?: error)
+        } finally {
+            if (ownsTask) engineBuilds.remove(cacheKey, task)
+        }
+    }
+
     private fun buildEngine(context: Context?, snapshot: FilterRuntimeSnapshot): FilterEngine {
         val ids = snapshot.enabledSubscriptionIds.toSet()
         val sources = mutableListOf<FilterRuleSource>()
+        val store = context?.let(::FilterSubscriptionStore)
         val subscriptionsById = buildMap {
             FilterCatalog.builtInSubscriptions.forEach { put(it.id, it) }
             snapshot.subscriptions.forEach { subscription -> put(subscription.id, subscription) }
@@ -411,7 +612,10 @@ object FilterRepository {
             }
         }
         ids.mapNotNull { subscriptionsById[it] }.forEach { subscription ->
-            val cached = context?.let { readCachedRules(it, subscription.id) }
+            val cached = store?.readRules(subscription)
+            check(subscription.contentGeneration.isBlank() || cached != null) {
+                "订阅 generation 缺失或校验失败: ${subscription.id}"
+            }
             sources += FilterRuleSource(
                 subscription.id,
                 subscription.title,
@@ -421,37 +625,35 @@ object FilterRepository {
         if (snapshot.customRules.isNotBlank()) {
             sources += FilterRuleSource("custom", "自定义规则", snapshot.customRules)
         }
+        val rawBytes = sources.sumOf { it.rulesText.toByteArray(Charsets.UTF_8).size.toLong() }
+        require(rawBytes <= MAX_ENABLED_RAW_RULE_BYTES) {
+            "启用规则原文超过 60MB 限制"
+        }
         return FilterEngine.build(sources)
     }
 
-    private fun engineCacheKey(snapshot: FilterRuntimeSnapshot): String {
+    private fun engineCacheKey(
+        snapshot: FilterRuntimeSnapshot,
+        cacheNamespace: String = PRIMARY_ENGINE_CACHE_NAMESPACE
+    ): String {
+        val subscriptionsById = buildMap {
+            FilterCatalog.builtInSubscriptions.forEach { put(it.id, it) }
+            snapshot.subscriptions.forEach { put(it.id, it) }
+        }
         return buildString {
-            appendField(snapshot.enabled.toString())
-            appendField(snapshot.preset)
-            appendField(snapshot.customRules)
-            snapshot.enabledSubscriptionIds.forEach { appendField(it) }
-            append('|')
-            snapshot.siteOverrides.forEach { override ->
-                appendField(override.host)
-                appendField(override.networkDisabled.toString())
-                appendField(override.cosmeticDisabled.toString())
-                appendField(override.scriptletDisabled.toString())
-                appendField(override.temporaryAllowUntil.toString())
+            appendField(cacheNamespace)
+            snapshot.enabledSubscriptionIds.distinct().forEach { id ->
+                val subscription = subscriptionsById[id]
+                appendField(id)
+                appendField(
+                    subscription?.contentGeneration?.takeIf { it.isNotBlank() }
+                        ?: subscription?.bundledRules
+                            ?.toByteArray(Charsets.UTF_8)
+                            ?.let(FilterSubscriptionStore::sha256)
+                        ?: "missing"
+                )
             }
-            append('|')
-            snapshot.subscriptions.forEach { subscription ->
-                appendField(subscription.id)
-                appendField(subscription.title)
-                appendField(subscription.category)
-                appendField(subscription.homepageUrl)
-                appendField(subscription.subscriptionUrl)
-                appendField(subscription.enabled.toString())
-                appendField(subscription.lastUpdatedAt.toString())
-                appendField(subscription.ruleCount.toString())
-                appendField(subscription.enabledRuleCount.toString())
-                appendField(subscription.unsupportedCount.toString())
-                appendField(subscription.lastError)
-            }
+            appendField(FilterSubscriptionStore.sha256(snapshot.customRules.toByteArray(Charsets.UTF_8)))
         }
     }
 
@@ -462,20 +664,11 @@ object FilterRepository {
         append(';')
     }
 
-    private fun saveSubscriptions(context: Context, subscriptions: List<FilterSubscription>) {
-        prefs(context).edit()
-            .putString(KEY_SUBSCRIPTIONS, JSONArray(subscriptions.map { it.toJson() }).toString())
-            .apply()
-    }
-
-    private fun readCachedRules(context: Context, id: String): String? {
-        val file = subscriptionFile(context, id)
-        return if (file.isFile) runCatching { file.readText() }.getOrNull() else null
-    }
-
-    private fun subscriptionFile(context: Context, id: String): File {
-        val safeName = id.replace(Regex("[^A-Za-z0-9_.-]"), "_")
-        return File(File(context.applicationContext.filesDir, RULE_DIR), "$safeName.txt")
+    private fun saveSubscriptionsLocked(context: Context, subscriptions: List<FilterSubscription>) {
+        commitOrThrow(
+            prefs(context).edit()
+                .putString(KEY_SUBSCRIPTIONS, JSONArray(subscriptions.map { it.toJson() }).toString())
+        )
     }
 
     private fun readRecentEvents(context: Context): List<FilterEvent> {
@@ -642,6 +835,7 @@ object FilterRepository {
             .put("normalizedCacheBypassCount", snapshot.normalizedCacheBypassCount)
             .put("candidateEvaluationCount", snapshot.candidateEvaluationCount)
             .put("regexEvaluationCount", snapshot.regexEvaluationCount)
+            .put("matchBudgetExhaustionCount", snapshot.matchBudgetExhaustionCount)
             .put("cosmeticCallCount", snapshot.cosmeticCallCount)
             .put("scriptletCallCount", snapshot.scriptletCallCount)
             .put("generatedCssBytes", snapshot.generatedCssBytes)
@@ -674,6 +868,7 @@ object FilterRepository {
                 normalizedCacheBypassCount = json.optLong("normalizedCacheBypassCount", 0L),
                 candidateEvaluationCount = json.optLong("candidateEvaluationCount", 0L),
                 regexEvaluationCount = json.optLong("regexEvaluationCount", 0L),
+                matchBudgetExhaustionCount = json.optLong("matchBudgetExhaustionCount", 0L),
                 cosmeticCallCount = json.optLong("cosmeticCallCount", 0L),
                 scriptletCallCount = json.optLong("scriptletCallCount", 0L),
                 generatedCssBytes = json.optLong("generatedCssBytes", 0L),
@@ -781,6 +976,72 @@ object FilterRepository {
         }
     }
 
+    private fun FilterSubscription.withStoredMetadata(existing: FilterSubscription): FilterSubscription {
+        return copy(
+            lastUpdatedAt = existing.lastUpdatedAt,
+            ruleCount = existing.ruleCount,
+            enabledRuleCount = existing.enabledRuleCount,
+            unsupportedCount = existing.unsupportedCount,
+            lastError = existing.lastError,
+            contentGeneration = existing.contentGeneration
+        )
+    }
+
+    private fun validateCandidateReport(
+        previous: FilterSubscription,
+        report: FilterBuildReport
+    ) {
+        val usableRuleCount = maxOf(
+            report.enabledRuleCount,
+            report.networkRuleCount + report.cosmeticRuleCount + report.scriptletRuleCount
+        )
+        require(usableRuleCount > 0) { "订阅没有可用的已编译规则" }
+        if (
+            previous.ruleCount >= LARGE_LIST_RULE_THRESHOLD &&
+            report.ruleCount.toLong() * 100L <
+            previous.ruleCount.toLong() * MIN_LARGE_LIST_RETAIN_PERCENT
+        ) {
+            error("订阅规则数异常下降，已保留上一版本")
+        }
+    }
+
+    private fun ensureEnabledRawBudget(context: Context, settings: FilterSettings) {
+        val store = FilterSubscriptionStore(context)
+        var total = settings.customRules.toByteArray(Charsets.UTF_8).size.toLong()
+        require(total <= MAX_ENABLED_RAW_RULE_BYTES) { "启用规则原文超过 60MB 限制" }
+        settings.subscriptions.asSequence().filter { it.enabled }.forEach { subscription ->
+            val bytes = store.contentSize(subscription)
+            require(bytes <= MAX_ENABLED_RAW_RULE_BYTES - total) {
+                "启用规则原文超过 60MB 限制"
+            }
+            total += bytes
+        }
+    }
+
+    private fun ensureUpdateTokenMatchesLocked(
+        current: FilterSubscription,
+        token: SubscriptionUpdateToken
+    ) {
+        val currentUrl = normalizeSubscriptionUrl(current.subscriptionUrl)
+        val currentEpoch = subscriptionIdentityEpochs[current.id] ?: 0L
+        check(
+            current.id == token.subscription.id &&
+                currentUrl == token.normalizedUrl &&
+                current.contentGeneration == token.subscription.contentGeneration &&
+                currentEpoch == token.identityEpoch
+        ) {
+            "订阅已发生变化，忽略过期更新"
+        }
+    }
+
+    private fun bumpSubscriptionIdentityEpochLocked(id: String) {
+        subscriptionIdentityEpochs[id] = (subscriptionIdentityEpochs[id] ?: 0L) + 1L
+    }
+
+    private fun commitOrThrow(editor: SharedPreferences.Editor) {
+        check(editor.commit()) { "过滤设置保存失败" }
+    }
+
     internal fun normalizeSubscriptionUrl(url: String): String {
         val trimmed = url.trim()
         val uri = runCatching { java.net.URI(trimmed) }.getOrNull() ?: return trimmed
@@ -794,29 +1055,6 @@ object FilterRepository {
         val branch = pathParts[3]
         val filePath = pathParts.drop(4).joinToString("/")
         return "https://raw.githubusercontent.com/$owner/$repo/$branch/$filePath"
-    }
-
-    private fun downloadRules(url: String): String {
-        val normalizedUrl = normalizeSubscriptionUrl(url)
-        val connection = (URL(normalizedUrl).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 15000
-            readTimeout = 30000
-            requestMethod = "GET"
-            setRequestProperty("User-Agent", "ChildKioskBrowser/AdblockSubscription")
-        }
-        return try {
-            val code = connection.responseCode
-            if (code !in 200..299) error("订阅下载失败: HTTP $code")
-            val contentLength = connection.contentLengthLong
-            if (contentLength > 15L * 1024L * 1024L) error("订阅超过 15MB 限制")
-            connection.inputStream.bufferedReader().use { reader ->
-                val text = reader.readText()
-                if (text.length > 15 * 1024 * 1024) error("订阅超过 15MB 限制")
-                text
-            }
-        } finally {
-            connection.disconnect()
-        }
     }
 
     private fun readSubscriptionOverrides(prefs: SharedPreferences): Map<String, JSONObject> {
@@ -840,5 +1078,15 @@ object FilterRepository {
     private fun prefs(context: Context): SharedPreferences {
         return context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
+
+    private data class SubscriptionUpdateToken(
+        val subscription: FilterSubscription,
+        val normalizedUrl: String,
+        val identityEpoch: Long
+    )
+
+    private const val PRIMARY_ENGINE_CACHE_NAMESPACE = "filter-engine-v2"
+    private const val BUNDLED_FALLBACK_CACHE_NAMESPACE = "bundled-fallback-v1"
+    private const val BUNDLED_FALLBACK_PRESET = "BUNDLED_FALLBACK_V1"
 
 }
