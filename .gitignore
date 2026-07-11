@@ -21,3 +21,5 @@ keystore.properties
 # Local Claude Code state
 .claude/
 .omx/
+docs/mobile-web-nav
+scripts/mobile-web-nav
