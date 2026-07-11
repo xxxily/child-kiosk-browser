@@ -14,6 +14,8 @@ import android.net.http.SslError
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.graphics.Canvas
@@ -105,8 +107,14 @@ import site.anzz.childkiosk.util.filter.CosmeticFilterMatch
 import site.anzz.childkiosk.util.filter.FilterAction
 import site.anzz.childkiosk.util.filter.FilterDecision
 import site.anzz.childkiosk.util.filter.FilterRepository
-import site.anzz.childkiosk.util.filter.FilterRequestContext
 import site.anzz.childkiosk.util.filter.FilterResourceType
+import site.anzz.childkiosk.util.filter.PopupFilterDisposition
+import site.anzz.childkiosk.util.filter.PopupFilterGate
+import site.anzz.childkiosk.util.filter.PopupFilterResult
+import site.anzz.childkiosk.util.filter.WebViewFilterEngineHandle
+import site.anzz.childkiosk.util.filter.WebViewFilterInjector
+import site.anzz.childkiosk.util.filter.WebViewFilterRuntime
+import site.anzz.childkiosk.util.filter.WebViewFilterRuntimeStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -384,6 +392,7 @@ class WebViewActivity : ComponentActivity() {
     private var timeoutDialog: AlertDialog? = null
     private var forceRefreshDialog: AlertDialog? = null
     private var timeLimitJob: Job? = null
+    private var filterRuntimeInitializationJob: Job? = null
     private var sessionStartTimeMs: Long = 0L
     private var currentPageLoading = false
     private var currentPageProgress = 0
@@ -391,7 +400,12 @@ class WebViewActivity : ComponentActivity() {
     private var launchedWebAppId: Int? = null
     private var lastRecordedHistoryUrl: String = ""
     private var lastRecordedHistoryAtMs: Long = 0L
+    @Volatile
     private lateinit var runtimeConfig: WebViewRuntimeConfig
+    private lateinit var webViewFilterRuntime: WebViewFilterRuntime
+    private var pendingFilterNavigationGeneration: Long = -1L
+    private var pendingFilterNavigationIntent: Intent? = null
+    private var lastReportedDegradedFilterGeneration: Long = -1L
     private var pendingGeolocationRequest: PendingGeolocationRequest? = null
     private var pendingNativeLocationPermissionRequest: PendingNativeLocationPermissionRequest? = null
     private var geolocationPermissionDialog: AlertDialog? = null
@@ -403,6 +417,14 @@ class WebViewActivity : ComponentActivity() {
     internal val lastAttemptedSchemeMap = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val currentPageFilterDiagnostics = ConcurrentHashMap<String, MutablePageFilterDiagnostics>()
     private val webViewFilterTabIds = ConcurrentHashMap<WebView, String>()
+    private data class PendingPopup(
+        val resolution: AtomicBoolean,
+        val timeout: Runnable
+    )
+
+    private val pendingPopupWebViews = ConcurrentHashMap<WebView, PendingPopup>()
+    private val pendingPopupReloads = ConcurrentHashMap<WebView, Runnable>()
+    private val popupMainHandler = Handler(Looper.getMainLooper())
     private val pullToRefreshPageOptOut = ConcurrentHashMap<WebView, Boolean>()
     private val nativeLocationBridgeWatchIds = ConcurrentHashMap<String, String>()
     private val nativeLocationBridgeNativeRequestIds = ConcurrentHashMap<String, String>()
@@ -629,6 +651,8 @@ class WebViewActivity : ComponentActivity() {
     override fun onDestroy() {
         timeLimitJob?.cancel()
         timeLimitJob = null
+        filterRuntimeInitializationJob?.cancel()
+        filterRuntimeInitializationJob = null
         exitVerificationDialog?.dismiss()
         exitVerificationDialog = null
         timeoutDialog?.dismiss()
@@ -651,6 +675,14 @@ class WebViewActivity : ComponentActivity() {
         tabList.forEach { tab ->
             tab.webView?.let { destroyWebViewSafely(it) }
         }
+        pendingPopupWebViews.entries.toList().forEach { (webView, pending) ->
+            popupMainHandler.removeCallbacks(pending.timeout)
+            pending.resolution.compareAndSet(false, true)
+            destroyWebViewSafely(webView)
+        }
+        pendingPopupWebViews.clear()
+        pendingPopupReloads.values.forEach(popupMainHandler::removeCallbacks)
+        pendingPopupReloads.clear()
         nativeLocationManager.destroy()
         nativeLocationMainProcessClient.destroy()
         nativeLocationBridgeWatchIds.clear()
@@ -664,6 +696,11 @@ class WebViewActivity : ComponentActivity() {
         topProgress = null
         webViewRoot = null
         rootWebView = null
+        pendingFilterNavigationIntent = null
+        pendingFilterNavigationGeneration = -1L
+        if (::webViewFilterRuntime.isInitialized) {
+            webViewFilterRuntime.close()
+        }
         super.onDestroy()
     }
 
@@ -1120,6 +1157,91 @@ class WebViewActivity : ComponentActivity() {
 
     internal fun latestRuntimeConfig(): WebViewRuntimeConfig {
         return runtimeConfig
+    }
+
+    internal fun currentWebViewFilterHandle(): WebViewFilterEngineHandle {
+        return webViewFilterRuntime.currentHandle()
+    }
+
+    internal fun currentWebViewFilterHandleOrNull(): WebViewFilterEngineHandle? {
+        return if (::webViewFilterRuntime.isInitialized) webViewFilterRuntime.currentHandle() else null
+    }
+
+    internal fun registerPendingPopup(webView: WebView, resolution: AtomicBoolean): Boolean {
+        if (pendingPopupWebViews.size >= MAX_PENDING_POPUPS) return false
+        lateinit var pending: PendingPopup
+        val timeout = Runnable {
+            if (pendingPopupWebViews.remove(webView, pending) &&
+                resolution.compareAndSet(false, true)
+            ) {
+                Log.w("ChildKioskFilter", "Popup target timed out before a filter decision")
+                destroyWebViewSafely(webView)
+            }
+        }
+        pending = PendingPopup(resolution, timeout)
+        if (pendingPopupWebViews.putIfAbsent(webView, pending) != null) return false
+        popupMainHandler.postDelayed(timeout, POPUP_TARGET_TIMEOUT_MS)
+        return true
+    }
+
+    internal fun claimPendingPopup(webView: WebView, resolution: AtomicBoolean): Boolean {
+        val pending = pendingPopupWebViews[webView]
+        if (pending == null || pending.resolution !== resolution) return false
+        if (!resolution.compareAndSet(false, true)) return false
+        pendingPopupWebViews.remove(webView, pending)
+        popupMainHandler.removeCallbacks(pending.timeout)
+        return true
+    }
+
+    internal fun cancelPendingPopup(webView: WebView) {
+        pendingPopupWebViews.remove(webView)?.let { pending ->
+            popupMainHandler.removeCallbacks(pending.timeout)
+            pending.resolution.compareAndSet(false, true)
+        }
+        pendingPopupReloads.remove(webView)?.let(popupMainHandler::removeCallbacks)
+    }
+
+    internal fun scheduleRegisteredPopupReload(webView: WebView, targetUrl: String) {
+        lateinit var reload: Runnable
+        reload = Runnable {
+            if (!pendingPopupReloads.remove(webView, reload)) return@Runnable
+            if (isDestroyed || isFinishing || tabList.none { it.webView === webView }) return@Runnable
+            runCatching { loadFilteredMainFrame(webView, targetUrl) }
+                .onFailure { error ->
+                    Log.w("ChildKioskFilter", "Skipped failed popup reload", error)
+                }
+        }
+        pendingPopupReloads.put(webView, reload)?.let(popupMainHandler::removeCallbacks)
+        popupMainHandler.post(reload)
+    }
+
+    private fun filteredMainFrameUrl(url: String, topLevelUrl: String = url): String {
+        if (!runtimeConfig.limitAdBlock || !WebViewRuntime.isWebUrl(url)) return url
+        val handle = currentWebViewFilterHandleOrNull() ?: return url
+        val siteOverride = FilterRepository.siteOverrideFor(
+            handle.snapshot,
+            WebViewRuntime.hostOf(topLevelUrl)
+        )
+        return handle.engine.cleanUrlForNavigation(
+            url = url,
+            topLevelUrl = topLevelUrl,
+            method = "GET",
+            isMainFrame = true,
+            siteOverride = siteOverride
+        ) ?: url
+    }
+
+    internal fun loadFilteredMainFrame(
+        webView: WebView,
+        url: String,
+        additionalHeaders: Map<String, String>? = null
+    ) {
+        val filteredUrl = filteredMainFrameUrl(url, webView.url.orEmpty().ifBlank { url })
+        if (additionalHeaders.isNullOrEmpty()) {
+            webView.loadUrl(filteredUrl)
+        } else {
+            webView.loadUrl(filteredUrl, additionalHeaders)
+        }
     }
 
     private fun normalizePermissionOrigin(origin: String?): String {
@@ -1727,7 +1849,8 @@ class WebViewActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleIntent(intent)
+        runtimeConfig = KioskPrefs.getWebViewRuntimeConfig(intent, this)
+        prepareFilterRuntimeThenHandle(intent)
     }
 
     private fun handleIntent(intent: Intent?) {
@@ -1848,23 +1971,109 @@ class WebViewActivity : ComponentActivity() {
             }
         )
 
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                if (runtimeConfig.limitAdBlock && runtimeConfig.filterSnapshot.enabled) {
-                    runCatching {
-                        FilterRepository.getEngine(
-                            this@WebViewActivity.applicationContext,
-                            runtimeConfig.filterSnapshot
-                        )
-                    }.onFailure { e ->
-                        Log.w("ChildKioskWebView", "Filter engine prewarm failed", e)
-                    }
-                }
+        initializeWebViewFilterRuntimeThenHandle(intent)
+    }
+
+    private fun buildWebViewFilterRuntime(
+        fallbackRequest: site.anzz.childkiosk.util.filter.FilterRuntimeSnapshot
+    ): WebViewFilterRuntime {
+        // Always retain a deterministic local safety baseline for future enabled snapshots.
+        val fallbackSnapshot = FilterRepository.bundledFallbackSnapshot(fallbackRequest)
+        val fallbackEngine = FilterRepository.getBundledFallbackEngine(fallbackRequest)
+        return WebViewFilterRuntime(
+            engineLoader = { snapshot ->
+                FilterRepository.getEngine(applicationContext, snapshot)
+            },
+            bundledSnapshot = fallbackSnapshot,
+            bundledEngine = fallbackEngine
+        )
+    }
+
+    private fun initializeWebViewFilterRuntimeThenHandle(initialIntent: Intent?) {
+        pendingFilterNavigationIntent = initialIntent
+        val fallbackRequest = runtimeConfig.filterSnapshot.copy(enabled = true)
+        filterRuntimeInitializationJob = lifecycleScope.launch {
+            val runtimeResult = withContext(Dispatchers.Default) {
+                runCatching { buildWebViewFilterRuntime(fallbackRequest) }
             }
-            withContext(Dispatchers.Main) {
-                handleIntent(intent)
+            if (isDestroyed || isFinishing) {
+                runtimeResult.getOrNull()?.close()
+                return@launch
             }
+            val initializedRuntime = runtimeResult.getOrElse { error ->
+                Log.e("ChildKioskFilter", "Bundled filter runtime initialization failed", error)
+                Toast.makeText(
+                    this@WebViewActivity,
+                    "网页过滤器初始化失败，已停止打开网页",
+                    Toast.LENGTH_LONG
+                ).show()
+                return@launch
+            }
+            webViewFilterRuntime = initializedRuntime
+            val intentToHandle = pendingFilterNavigationIntent ?: initialIntent
+            pendingFilterNavigationIntent = null
+            prepareFilterRuntimeThenHandle(intentToHandle)
         }
+    }
+
+    private fun prepareFilterRuntimeThenHandle(nextIntent: Intent?) {
+        nextIntent ?: return
+        if (!::webViewFilterRuntime.isInitialized) {
+            pendingFilterNavigationIntent = nextIntent
+            return
+        }
+        val requestedSnapshot = runtimeConfig.filterSnapshot.copy(
+            enabled = runtimeConfig.limitAdBlock
+        )
+        if (!requestedSnapshot.enabled) {
+            pendingFilterNavigationIntent = null
+            pendingFilterNavigationGeneration = -1L
+            handleIntent(nextIntent)
+            return
+        }
+
+        pendingFilterNavigationIntent = nextIntent
+        val generation = webViewFilterRuntime.prepare(requestedSnapshot) { handle ->
+            runOnUiThread { onWebViewFilterRuntimeChanged(handle) }
+        }
+        pendingFilterNavigationGeneration = generation
+    }
+
+    private fun onWebViewFilterRuntimeChanged(handle: WebViewFilterEngineHandle) {
+        if (isDestroyed || isFinishing) return
+        Log.i(
+            "ChildKioskFilter",
+            "runtime=${handle.status}, generation=${handle.generation}, " +
+                "servingPreset=${handle.snapshot.preset}, requestedPreset=${handle.requestedSnapshot.preset}, " +
+                "reason=${handle.reason}"
+        )
+        if (handle.status == WebViewFilterRuntimeStatus.PREPARING ||
+            handle.generation != pendingFilterNavigationGeneration
+        ) {
+            return
+        }
+
+        if ((handle.status == WebViewFilterRuntimeStatus.DEGRADED_LKG ||
+                handle.status == WebViewFilterRuntimeStatus.DEGRADED_BUNDLED) &&
+            lastReportedDegradedFilterGeneration != handle.generation
+        ) {
+            lastReportedDegradedFilterGeneration = handle.generation
+            val source = if (handle.status == WebViewFilterRuntimeStatus.DEGRADED_LKG) {
+                "上一版有效规则"
+            } else {
+                "内置安全规则"
+            }
+            Toast.makeText(
+                this,
+                "网页过滤加载失败，已降级使用$source",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+
+        val intentToHandle = pendingFilterNavigationIntent
+        pendingFilterNavigationIntent = null
+        pendingFilterNavigationGeneration = -1L
+        handleIntent(intentToHandle)
     }
 
     private fun installWebViewRootInsets(root: FrameLayout) {
@@ -2120,9 +2329,11 @@ class WebViewActivity : ComponentActivity() {
     private fun createNewTab(
         url: String,
         focus: Boolean = true,
-        existingWebView: WebView? = null
+        existingWebView: WebView? = null,
+        popupFilterContext: PopupFilterContext? = null
     ): BrowserTab {
         val cleanUrl = url.trim()
+        val tabId = java.util.UUID.randomUUID().toString()
         val originalHost = WebViewRuntime.hostOf(cleanUrl)
         val shouldClearHistoryOnFirstFinish = false
         
@@ -2205,19 +2416,21 @@ class WebViewActivity : ComponentActivity() {
             runtimeConfig = runtimeConfig,
             clearHistoryOnFirstRealPageFinish = shouldClearHistoryOnFirstFinish,
             onShowFileChooser = { callback, params -> openFileChooser(callback, params) },
-            onCreateWindow = { newWebView ->
+            onCreateWindow = { newWebView, popupTargetUrl, childPopupContext ->
                 val newTab = createNewTab(
-                    url = "about:blank",
+                    url = popupTargetUrl.ifBlank { "about:blank" },
                     focus = true,
-                    existingWebView = newWebView
+                    existingWebView = newWebView,
+                    popupFilterContext = childPopupContext
                 )
                 Log.d("ChildKioskWebView", "Native child window created via onCreateWindow, newTabId=${newTab.id}")
-            }
+            },
+            popupFilterContext = popupFilterContext
         )
         webViewRef = webView
         
         val tab = BrowserTab(
-            id = java.util.UUID.randomUUID().toString(),
+            id = tabId,
             url = cleanUrl,
             title = webView.title.takeIf { !it.isNullOrBlank() } ?: "新标签页",
             webView = webView
@@ -2235,9 +2448,9 @@ class WebViewActivity : ComponentActivity() {
         
         if (existingWebView == null) {
             if (cleanUrl != "about:blank" && cleanUrl.isNotBlank()) {
-                loadInitialUrlAfterFirstLayout(webView, cleanUrl)
+                loadInitialUrlAfterFirstLayout(webView, filteredMainFrameUrl(cleanUrl))
             } else {
-                webView.loadUrl("about:blank")
+                loadFilteredMainFrame(webView, "about:blank")
             }
         }
         
@@ -2291,10 +2504,7 @@ class WebViewActivity : ComponentActivity() {
             stopAmapAssistantLocation(webView)
             unregisterFilterDiagnosticsWebView(webView)
             removeWebViewFromRoot(webView)
-            runCatching {
-                webView.stopLoading()
-                webView.destroy()
-            }
+            destroyWebViewSafely(webView)
             targetTab.webView = null
         }
         
@@ -2321,12 +2531,9 @@ class WebViewActivity : ComponentActivity() {
         tab.savedState = stateBundle
         
         removeWebViewFromRoot(webView)
-        runCatching {
-            clearNativeLocationBridgeRequests(webView)
-            stopAmapAssistantLocation(webView)
-            webView.stopLoading()
-            webView.destroy()
-        }
+        clearNativeLocationBridgeRequests(webView)
+        stopAmapAssistantLocation(webView)
+        destroyWebViewSafely(webView)
         unregisterFilterDiagnosticsWebView(webView)
         tab.webView = null
     }
@@ -2416,11 +2623,12 @@ class WebViewActivity : ComponentActivity() {
             runtimeConfig = runtimeConfig,
             clearHistoryOnFirstRealPageFinish = shouldClearHistoryOnFirstFinish,
             onShowFileChooser = { callback, params -> openFileChooser(callback, params) },
-            onCreateWindow = { newWebView ->
+            onCreateWindow = { newWebView, popupTargetUrl, childPopupContext ->
                 val newTab = createNewTab(
-                    url = "about:blank",
+                    url = popupTargetUrl.ifBlank { "about:blank" },
                     focus = true,
-                    existingWebView = newWebView
+                    existingWebView = newWebView,
+                    popupFilterContext = childPopupContext
                 )
                 Log.d("ChildKioskWebView", "Native child window created via onCreateWindow, newTabId=${newTab.id}")
             }
@@ -2433,9 +2641,12 @@ class WebViewActivity : ComponentActivity() {
         
         val state = tab.savedState
         if (state != null) {
-            webView.restoreState(state)
+            val restored = webView.restoreState(state)
+            if (restored == null && cleanUrl.isNotBlank()) {
+                loadFilteredMainFrame(webView, cleanUrl)
+            }
         } else if (cleanUrl.isNotBlank()) {
-            webView.loadUrl(cleanUrl)
+            loadFilteredMainFrame(webView, cleanUrl)
         }
     }
 
@@ -2452,7 +2663,10 @@ class WebViewActivity : ComponentActivity() {
     private fun handleNativeBack() {
         val current = rootWebView
         if (current != null && current.canGoBack()) {
-            Log.d("ChildKioskWebView", "Native back: webView.goBack, url=${current.url}")
+            Log.d(
+                "ChildKioskWebView",
+                "Native back: webView.goBack, url=${redactWebUrlForLog(current.url)}"
+            )
             current.goBack()
             updateFloatingControlsState(loading = true)
             return
@@ -2460,7 +2674,10 @@ class WebViewActivity : ComponentActivity() {
 
         if (webViewStack.size > 1) {
             val removed = webViewStack.removeLast()
-            Log.d("ChildKioskWebView", "Native back: destroy child webview, url=${removed.url}")
+            Log.d(
+                "ChildKioskWebView",
+                "Native back: destroy child webview, url=${redactWebUrlForLog(removed.url)}"
+            )
             clearNativeLocationBridgeRequests(removed)
             destroyWebViewSafely(removed)
             rootWebView = webViewStack.lastOrNull()
@@ -2818,7 +3035,7 @@ class WebViewActivity : ComponentActivity() {
         }
         currentPageLoading = true
         currentPageProgress = 0
-        current.loadUrl(url)
+        loadFilteredMainFrame(current, url)
         updateFloatingControlsState()
     }
 
@@ -2913,9 +3130,10 @@ class WebViewActivity : ComponentActivity() {
     private fun reloadBypassingCache(webView: WebView, url: String) {
         currentPageLoading = true
         currentPageProgress = 0
-        webView.loadUrl(
-            url,
-            mapOf(
+        loadFilteredMainFrame(
+            webView = webView,
+            url = url,
+            additionalHeaders = mapOf(
                 "Cache-Control" to "no-cache, no-store, must-revalidate",
                 "Pragma" to "no-cache"
             )
@@ -3692,8 +3910,15 @@ class WebViewActivity : ComponentActivity() {
         const val EXTRA_SWITCH_TAB_ID = "SWITCH_TAB_ID"
         const val EXTRA_CLOSE_TAB_ID = "CLOSE_TAB_ID"
         private const val HISTORY_RETENTION_MS = 90L * 24L * 60L * 60L * 1000L
+        private const val POPUP_TARGET_TIMEOUT_MS = 10_000L
+        private const val MAX_PENDING_POPUPS = 4
     }
 }
+
+private data class PopupFilterContext(
+    val openerUrl: String,
+    val hasGesture: Boolean
+)
 
 @SuppressLint("SetJavaScriptEnabled")
 private fun createSecureWebView(
@@ -3714,17 +3939,43 @@ private fun createSecureWebView(
     runtimeConfig: WebViewRuntimeConfig,
     clearHistoryOnFirstRealPageFinish: Boolean = false,
     onShowFileChooser: (ValueCallback<Array<Uri>>, WebChromeClient.FileChooserParams?) -> Boolean,
-    onCreateWindow: (WebView) -> Unit
+    onCreateWindow: (WebView, String, PopupFilterContext?) -> Unit,
+    onPendingMainFrameNavigation: ((WebView, String) -> Boolean)? = null,
+    onPendingMainFrameCommit: ((WebView, String) -> Unit)? = null,
+    isPendingPopupTransport: Boolean = false,
+    popupFilterContext: PopupFilterContext? = null
 ): WebView {
     val webView = existingWebView ?: WebView(ctx)
     val shouldClearInitialHistory = AtomicBoolean(clearHistoryOnFirstRealPageFinish)
     val currentTopUrl = java.util.concurrent.atomic.AtomicReference<String>(targetUrl)
 
+    fun evaluateRegisteredPopupTarget(targetUrl: String): PopupFilterResult? {
+        val popupContext = popupFilterContext ?: return null
+        if (!WebViewRuntime.isWebUrl(targetUrl)) return null
+        val activity = ctx as? WebViewActivity ?: return null
+        val latestConfig = activity.latestRuntimeConfig()
+        val handle = activity.currentWebViewFilterHandle()
+        return PopupFilterGate.evaluate(
+            targetUrl = targetUrl,
+            openerUrl = popupContext.openerUrl,
+            hasGesture = popupContext.hasGesture,
+            engine = handle.engine,
+            snapshot = handle.snapshot.copy(enabled = latestConfig.limitAdBlock)
+        )
+    }
+
     return webView.apply {
         WebViewRuntime.applySettings(this, ctx, targetUrl, runtimeConfig)
-        WebViewRuntime.logWebViewDiagnostics(ctx, "create_secure_webview", targetUrl, runtimeConfig)
+        WebViewRuntime.logWebViewDiagnostics(
+            ctx,
+            "create_secure_webview",
+            redactWebUrlForLog(targetUrl),
+            runtimeConfig
+        )
         logWebViewSurfaceState(this, "created_after_settings")
-        installNativeLocationBridgeIfNeeded(this, ctx, runtimeConfig)
+        if (!isPendingPopupTransport) {
+            installNativeLocationBridgeIfNeeded(this, ctx, runtimeConfig)
+        }
 
         // 仅在网页未加载完成时设置暖色底色以防止白屏；已加载完的实例直接使用白色底色
         val initialBgColor = if (existingWebView != null && existingWebView.progress == 100) {
@@ -3737,12 +3988,22 @@ private fun createSecureWebView(
         webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
+                if (view != null && !url.isNullOrBlank() &&
+                    onPendingMainFrameNavigation?.invoke(view, url) == true
+                ) {
+                    view.stopLoading()
+                    return
+                }
+                if (isPendingPopupTransport) {
+                    if (!url.isNullOrBlank()) currentTopUrl.set(url)
+                    return
+                }
                 if (!url.isNullOrBlank()) {
                     currentTopUrl.set(url)
                 }
                 view?.let { onPageStartedInActivity(it, url) }
                 (ctx as? WebViewActivity)?.resetCurrentPageFilterDiagnostics(view, url.orEmpty())
-                Log.d("ChildKioskWebView", "Page started: $url")
+                Log.d("ChildKioskWebView", "Page started: ${redactWebUrlForLog(url)}")
                 onProgressUpdate(0)
                 view?.setBackgroundColor(android.graphics.Color.parseColor("#FFF8E1"))
                 if (view != null && view.progress < 100) {
@@ -3760,9 +4021,11 @@ private fun createSecureWebView(
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                if (isPendingPopupTransport) return
                 Log.d(
                     "ChildKioskWebView",
-                    "Page finished: progress=${view?.progress}, canGoBack=${view?.canGoBack()}, url=$url"
+                    "Page finished: progress=${view?.progress}, canGoBack=${view?.canGoBack()}, " +
+                        "url=${redactWebUrlForLog(url)}"
                 )
                 // 网页载入完成后恢复白色背景，防止无背景网页的文字无法看清
                 view?.setBackgroundColor(android.graphics.Color.WHITE)
@@ -3790,16 +4053,27 @@ private fun createSecureWebView(
                 }
             }
 
+            override fun onPageCommitVisible(view: WebView?, url: String?) {
+                super.onPageCommitVisible(view, url)
+                if (isPendingPopupTransport) {
+                    if (view != null && !url.isNullOrBlank()) {
+                        onPendingMainFrameCommit?.invoke(view, url)
+                    }
+                }
+            }
+
             override fun onReceivedError(
                 view: WebView?,
                 request: WebResourceRequest?,
                 error: WebResourceError?
             ) {
                 super.onReceivedError(view, request, error)
+                if (isPendingPopupTransport) return
                 if (request?.isForMainFrame == true) {
                     Log.w(
                         "ChildKioskWebView",
-                        "Main frame error: ${error?.errorCode}, ${error?.description}, url=${request.url}"
+                        "Main frame error: ${error?.errorCode}, ${error?.description}, " +
+                            "url=${redactWebUrlForLog(request.url?.toString())}"
                     )
                     onLoadingStateChanged(false)
                     onNavigationStateChanged()
@@ -3813,12 +4087,14 @@ private fun createSecureWebView(
                 errorResponse: WebResourceResponse?
             ) {
                 super.onReceivedHttpError(view, request, errorResponse)
+                if (isPendingPopupTransport) return
                 if (request?.isForMainFrame == true) {
                     val code = errorResponse?.statusCode ?: 200
                     if (code >= 400) {
                         Log.w(
                             "ChildKioskWebView",
-                            "Main frame HTTP error: HTTP $code, url=${request.url}"
+                            "Main frame HTTP error: HTTP $code, " +
+                                "url=${redactWebUrlForLog(request.url?.toString())}"
                         )
                         onLoadingStateChanged(false)
                         onNavigationStateChanged()
@@ -3832,6 +4108,17 @@ private fun createSecureWebView(
                 request: WebResourceRequest?
             ): Boolean {
                 val urlStr = request?.url?.toString() ?: return false
+                if (view != null && request.isForMainFrame &&
+                    onPendingMainFrameNavigation?.invoke(view, urlStr) == true
+                ) {
+                    return true
+                }
+                if (request.isForMainFrame &&
+                    evaluateRegisteredPopupTarget(urlStr)?.shouldBlock == true
+                ) {
+                    onBlocked(urlStr)
+                    return true
+                }
 
                 if (WebViewRuntime.isInternalWebViewUrl(urlStr)) {
                     return false
@@ -3873,17 +4160,32 @@ private fun createSecureWebView(
                     return true
                 }
 
-                if (runtimeConfig.limitAdBlock && request.isForMainFrame) {
-                    val cleanedUrl = FilterRepository.getCachedEngine(runtimeConfig.filterSnapshot)
-                        ?.cleanUrlForNavigation(urlStr, currentTopUrl.get())
+                val activity = ctx as? WebViewActivity
+                val latestConfig = activity?.latestRuntimeConfig() ?: runtimeConfig
+                if (latestConfig.limitAdBlock && request.isForMainFrame) {
+                    val handle = activity?.currentWebViewFilterHandle()
+                    val siteOverride = handle?.let {
+                        FilterRepository.siteOverrideFor(it.snapshot, WebViewRuntime.hostOf(currentTopUrl.get()))
+                    }
+                    val cleanedUrl = handle?.engine?.cleanUrlForNavigation(
+                        url = urlStr,
+                        topLevelUrl = currentTopUrl.get(),
+                        method = request.method.orEmpty(),
+                        isMainFrame = true,
+                        siteOverride = siteOverride
+                    )
                     if (!cleanedUrl.isNullOrBlank() && cleanedUrl != urlStr) {
-                        Log.d("ChildKioskWebView", "Cleaned tracking params: $urlStr -> $cleanedUrl")
+                        Log.d(
+                            "ChildKioskWebView",
+                            "Cleaned tracking params: ${redactWebUrlForLog(urlStr)} -> " +
+                                redactWebUrlForLog(cleanedUrl)
+                        )
                         view?.loadUrl(cleanedUrl)
                         return true
                     }
                 }
 
-                if (runtimeConfig.limitUrlRedirect) {
+                if (latestConfig.limitUrlRedirect) {
                     val host = WebViewRuntime.hostOf(urlStr)
                     if (!WebViewRuntime.isSameHostOrSubdomain(host, originalHost)) {
                         onBlocked(urlStr)
@@ -3897,23 +4199,42 @@ private fun createSecureWebView(
                 view: WebView?,
                 request: WebResourceRequest?
             ): WebResourceResponse? {
-                if (runtimeConfig.limitAdBlock) {
+                val activity = ctx as? WebViewActivity
+                val latestConfig = activity?.latestRuntimeConfig() ?: runtimeConfig
+                if (latestConfig.limitAdBlock) {
                     val topLevelUrl = currentTopUrl.get()
-                    val decision = AdBlocker.shouldBlock(ctx, request, topLevelUrl, runtimeConfig.filterSnapshot)
+                    val handle = activity?.currentWebViewFilterHandle()
+                    val popupDecision = if (request?.isForMainFrame == true) {
+                        evaluateRegisteredPopupTarget(request.url.toString())?.decision
+                    } else {
+                        null
+                    }
+                    if (popupDecision?.action == FilterAction.BLOCK) {
+                        return AdBlocker.emptyResponse(FilterResourceType.DOCUMENT)
+                    }
+                    val decision = if (handle != null) {
+                        AdBlocker.shouldBlock(ctx, request, topLevelUrl, handle)
+                    } else {
+                        FilterDecision.ALLOW
+                    }
                     if (decision.action == FilterAction.BLOCK) {
                         val requestUrl = request?.url?.toString().orEmpty()
                         if (FilterBlockLogLimiter.shouldLog()) {
                             Log.d(
                                 "ChildKioskWebView",
-                                "Blocked filter request: $requestUrl, rule=${decision.rule?.rawText}, source=${decision.rule?.sourceName}"
+                                "Blocked filter request: ${redactWebUrlForLog(requestUrl)}, " +
+                                    "source=${decision.rule?.sourceName.orEmpty().take(128)}, " +
+                                    "matchType=${decision.rule?.matchType?.name.orEmpty()}"
                             )
                         }
                         val resourceType = FilterResourceType.infer(
                             url = requestUrl,
                             acceptHeader = request?.requestHeaders?.get("Accept"),
-                            isMainFrame = request?.isForMainFrame == true
+                            isMainFrame = request?.isForMainFrame == true,
+                            requestHeaders = request?.requestHeaders.orEmpty(),
+                            method = request?.method.orEmpty()
                         )
-                        (ctx as? WebViewActivity)?.recordCurrentPageNetworkFilterBlock(
+                        activity?.recordCurrentPageNetworkFilterBlock(
                             webView = view,
                             topLevelUrl = topLevelUrl,
                             requestUrl = requestUrl,
@@ -3932,8 +4253,20 @@ private fun createSecureWebView(
                 handler: SslErrorHandler?,
                 error: SslError?
             ) {
+                if (isPendingPopupTransport) {
+                    handler?.cancel()
+                    view?.let { pendingView ->
+                        Handler(Looper.getMainLooper()).post {
+                            destroyWebViewSafely(pendingView)
+                        }
+                    }
+                    return
+                }
                 if (runtimeConfig.limitSslCheck) {
-                    Log.w("ChildKioskWebView", "SSL error blocked: ${error?.url}")
+                    Log.w(
+                        "ChildKioskWebView",
+                        "SSL error blocked: ${redactWebUrlForLog(error?.url)}"
+                    )
                     handler?.cancel()
                     onLoadingStateChanged(false)
                     onSslError(error?.url ?: "未知链接")
@@ -3947,6 +4280,10 @@ private fun createSecureWebView(
                 detail: RenderProcessGoneDetail?
             ): Boolean {
                 Log.e("ChildKioskWebView", "Renderer process gone! Did crash: ${detail?.didCrash()}")
+                if (isPendingPopupTransport) {
+                    view?.let(::destroyWebViewSafely)
+                    return true
+                }
                 view?.let {
                     (ctx as? WebViewActivity)?.clearNativeLocationBridgeRequests(it)
                     destroyWebViewSafely(it)
@@ -3959,6 +4296,7 @@ private fun createSecureWebView(
         webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 super.onProgressChanged(view, newProgress)
+                if (isPendingPopupTransport) return
                 onProgressUpdate(newProgress)
                 onNavigationStateChanged()
                 if (newProgress >= 100) {
@@ -3973,6 +4311,10 @@ private fun createSecureWebView(
 
             override fun onPermissionRequest(request: PermissionRequest?) {
                 if (request == null) return
+                if (isPendingPopupTransport) {
+                    request.deny()
+                    return
+                }
                 val requested = request.resources.orEmpty()
                 val hasKnownMediaRequest = requested.any { resource ->
                     resource == PermissionRequest.RESOURCE_VIDEO_CAPTURE ||
@@ -3997,6 +4339,10 @@ private fun createSecureWebView(
                 origin: String?,
                 callback: GeolocationPermissions.Callback?
             ) {
+                if (isPendingPopupTransport) {
+                    callback?.invoke(origin, false, false)
+                    return
+                }
                 (ctx as? WebViewActivity)?.requestGeolocationPermission(origin, callback)
                     ?: callback?.invoke(origin, false, false)
             }
@@ -4015,10 +4361,18 @@ private fun createSecureWebView(
                 filePathCallback: ValueCallback<Array<Uri>>?,
                 fileChooserParams: FileChooserParams?
             ): Boolean {
+                if (isPendingPopupTransport) {
+                    filePathCallback?.onReceiveValue(null)
+                    return true
+                }
                 return filePathCallback?.let { onShowFileChooser(it, fileChooserParams) } ?: false
             }
 
             override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                if (isPendingPopupTransport) {
+                    callback?.onCustomViewHidden()
+                    return
+                }
                 (ctx as? WebViewActivity)?.enterFullscreenView(view, callback)
                     ?: callback?.onCustomViewHidden()
             }
@@ -4033,10 +4387,85 @@ private fun createSecureWebView(
                 isUserGesture: Boolean,
                 resultMsg: android.os.Message?
             ): Boolean {
+                if (isPendingPopupTransport) return false
                 if (resultMsg == null) return false
-                if (runtimeConfig.limitAdBlock && shouldBlockPopup(view, runtimeConfig)) {
-                    Log.d("ChildKioskWebView", "Blocked popup window: parent=${view?.url}")
-                    return false
+                val activity = ctx as? WebViewActivity
+                val openerUrl = view?.url.orEmpty()
+                val shouldGateTarget = activity != null
+                val popupResolved = AtomicBoolean(false)
+                val pendingNavigationGate = if (shouldGateTarget && activity != null) {
+                    popupGate@{ popupWebView: WebView, targetUrl: String ->
+                        if (popupResolved.get()) return@popupGate true
+                        val latestConfig = activity.latestRuntimeConfig()
+                        val handle = activity.currentWebViewFilterHandle()
+                        val disposition = PopupFilterGate.evaluateUncommittedNavigation(
+                            targetUrl = targetUrl,
+                            openerUrl = openerUrl,
+                            hasGesture = isUserGesture,
+                            engine = handle.engine,
+                            snapshot = handle.snapshot.copy(enabled = latestConfig.limitAdBlock)
+                        ).disposition
+                        when (disposition) {
+                            PopupFilterDisposition.WAIT_FOR_TARGET ->
+                                !PopupFilterGate.canLoadWhilePending(targetUrl)
+                            PopupFilterDisposition.BLOCK -> {
+                                if (activity.claimPendingPopup(popupWebView, popupResolved)) {
+                                    if (FilterBlockLogLimiter.shouldLog()) {
+                                        Log.d(
+                                            "ChildKioskFilter",
+                                            "Blocked popup targetHost=${WebViewRuntime.hostOf(targetUrl)}, " +
+                                                "openerHost=${WebViewRuntime.hostOf(openerUrl)}, gesture=$isUserGesture"
+                                        )
+                                    }
+                                    Handler(Looper.getMainLooper()).post {
+                                        destroyWebViewSafely(popupWebView)
+                                    }
+                                }
+                                true
+                            }
+                            // Uncommitted navigation evaluation deliberately never returns ALLOW.
+                            PopupFilterDisposition.ALLOW -> false
+                        }
+                    }
+                } else {
+                    null
+                }
+                val pendingCommitGate = if (pendingNavigationGate != null && activity != null) {
+                    popupCommit@{ popupWebView: WebView, targetUrl: String ->
+                        if (popupResolved.get()) return@popupCommit
+                        val latestConfig = activity.latestRuntimeConfig()
+                        val handle = activity.currentWebViewFilterHandle()
+                        val disposition = PopupFilterGate.evaluate(
+                            targetUrl = targetUrl,
+                            openerUrl = openerUrl,
+                            hasGesture = isUserGesture,
+                            engine = handle.engine,
+                            snapshot = handle.snapshot.copy(enabled = latestConfig.limitAdBlock)
+                        ).disposition
+                        when (disposition) {
+                            PopupFilterDisposition.WAIT_FOR_TARGET -> Unit
+                            PopupFilterDisposition.BLOCK -> {
+                                if (activity.claimPendingPopup(popupWebView, popupResolved)) {
+                                    Handler(Looper.getMainLooper()).post {
+                                        destroyWebViewSafely(popupWebView)
+                                    }
+                                }
+                            }
+                            PopupFilterDisposition.ALLOW -> {
+                                if (activity.claimPendingPopup(popupWebView, popupResolved)) {
+                                    onCreateWindow(
+                                        popupWebView,
+                                        targetUrl,
+                                        PopupFilterContext(openerUrl, isUserGesture)
+                                    )
+                                    // Reload after the normal secured client and page injections are installed.
+                                    activity.scheduleRegisteredPopupReload(popupWebView, targetUrl)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    null
                 }
                 val newWebView = createSecureWebView(
                     ctx = ctx,
@@ -4049,12 +4478,25 @@ private fun createSecureWebView(
                     onProgressUpdate = onProgressUpdate,
                     onNavigationStateChanged = onNavigationStateChanged,
                     onPageCommitted = onPageCommitted,
+                    onPageStartedInActivity = onPageStartedInActivity,
+                    onPageFinishedInActivity = onPageFinishedInActivity,
                     onError = onError,
                     runtimeConfig = runtimeConfig,
                     onShowFileChooser = onShowFileChooser,
-                    onCreateWindow = onCreateWindow
+                    onCreateWindow = onCreateWindow,
+                    onPendingMainFrameNavigation = pendingNavigationGate,
+                    onPendingMainFrameCommit = pendingCommitGate,
+                    isPendingPopupTransport = pendingNavigationGate != null
                 )
-                onCreateWindow(newWebView)
+                if (pendingNavigationGate != null && activity != null) {
+                    if (!activity.registerPendingPopup(newWebView, popupResolved)) {
+                        Log.w("ChildKioskFilter", "Blocked popup: pending target limit reached")
+                        destroyWebViewSafely(newWebView)
+                        return false
+                    }
+                } else {
+                    onCreateWindow(newWebView, "", null)
+                }
                 val transport = resultMsg.obj as WebView.WebViewTransport
                 transport.webView = newWebView
                 resultMsg.sendToTarget()
@@ -4063,6 +4505,7 @@ private fun createSecureWebView(
         }
 
         setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+            if (isPendingPopupTransport) return@setDownloadListener
             if (runtimeConfig.limitDownload) {
                 onDownloadBlocked()
             } else {
@@ -4150,7 +4593,8 @@ private fun loadInitialUrlAfterFirstLayout(webView: WebView, targetUrl: String) 
             logWebViewSurfaceState(webView, "initial_load_after_layout")
             Log.d(
                 "ChildKioskWebView",
-                "Initial load after layout: ${webView.width}x${webView.height}, url=$targetUrl"
+                "Initial load after layout: ${webView.width}x${webView.height}, " +
+                    "url=${redactWebUrlForLog(targetUrl)}"
             )
             webView.loadUrl(targetUrl)
         }
@@ -4171,7 +4615,8 @@ private fun logWebViewSurfaceState(webView: WebView, event: String) {
         "ChildKioskWebView",
         "WebView surface: event=$event, attached=${webView.isAttachedToWindow}, " +
             "size=${webView.width}x${webView.height}, layer=$layer, parent=$parent, " +
-            "context=$contextName, progress=${webView.progress}, url=${webView.url}"
+            "context=$contextName, progress=${webView.progress}, " +
+            "url=${redactWebUrlForLog(webView.url)}"
     )
 }
 
@@ -4180,9 +4625,34 @@ private fun clearInitialBlankHistory(webView: WebView, currentUrl: String) {
     webView.clearHistory()
     Log.d(
         "ChildKioskWebView",
-        "Cleared initial blank history for warm WebView: $currentUrl"
+        "Cleared initial blank history for warm WebView: ${redactWebUrlForLog(currentUrl)}"
     )
 }
+
+private fun redactWebUrlForLog(value: String?): String {
+    if (value.isNullOrBlank()) return "-"
+    return runCatching {
+        val uri = Uri.parse(value)
+        val scheme = uri.scheme?.lowercase(Locale.US)
+        val host = uri.host.orEmpty().lowercase(Locale.US)
+        if ((scheme != "http" && scheme != "https") || host.isBlank()) {
+            return@runCatching "${scheme ?: "unknown"}:<redacted>"
+        }
+        buildString {
+            append(scheme)
+            append("://")
+            append(host)
+            if (uri.port >= 0) append(":${uri.port}")
+            append(uri.encodedPath.orEmpty().take(MAX_LOG_URL_PATH_CHARS))
+            if (!uri.encodedQuery.isNullOrBlank()) append("?<redacted>")
+            if (!uri.encodedFragment.isNullOrBlank()) append("#<redacted>")
+        }
+    }.getOrElse {
+        value.substringBefore('?').substringBefore('#').take(MAX_LOG_URL_PATH_CHARS)
+    }
+}
+
+private const val MAX_LOG_URL_PATH_CHARS = 256
 
 private fun injectDebugToolIfNeeded(
     webView: WebView,
@@ -4516,81 +4986,31 @@ private fun injectCosmeticCssIfNeeded(
     webView: WebView,
     config: WebViewRuntimeConfig
 ) {
-    if (!config.limitAdBlock || !config.filterSnapshot.enabled) return
-    if (config.filterSnapshot.preset == "LIGHT") return
+    val activity = webView.context as? WebViewActivity
+    val latestConfig = activity?.latestRuntimeConfig() ?: config
+    if (!latestConfig.limitAdBlock) return
+    val handle = activity?.currentWebViewFilterHandle() ?: return
+    if (!handle.snapshot.enabled || handle.snapshot.preset == "LIGHT") return
     val pageUrl = webView.url ?: return
     val host = WebViewRuntime.hostOf(pageUrl)
     if (host.isBlank()) return
-    val siteOverride = FilterRepository.siteOverrideFor(config.filterSnapshot, host)
-    val engine = FilterRepository.getCachedEngine(config.filterSnapshot) ?: return
+    val siteOverride = FilterRepository.siteOverrideFor(handle.snapshot, host)
+    val engine = handle.engine
     val cosmeticMatches = engine.cosmeticMatchesFor(host, siteOverride)
-    (webView.context as? WebViewActivity)?.recordCurrentPageCosmeticFilterCandidates(
+    activity.recordCurrentPageCosmeticFilterCandidates(
         webView = webView,
         pageUrl = pageUrl,
         candidateCount = cosmeticMatches.size
     )
-    val css = cosmeticMatches
-        .joinToString(",\n") { it.selector }
-        .let { selectors ->
-            if (selectors.isBlank()) {
-                ""
-            } else {
-                "$selectors { display: none !important; visibility: hidden !important; }"
-            }
-        }
-        .take(256 * 1024)
-    FilterRepository.maybeRecordPerfSnapshot(webView.context, config.filterSnapshot, engine)
-    if (css.isBlank()) return
-    val cssJson = JSONObject.quote(css)
-    val js = """
-        (function() {
-            var id = 'child-kiosk-cosmetic-style';
-            var style = document.getElementById(id);
-            if (!style) {
-                style = document.createElement('style');
-                style.id = id;
-                (document.head || document.documentElement).appendChild(style);
-            }
-            style.textContent = $cssJson;
-        })();
-    """.trimIndent()
-    webView.evaluateJavascript(js) {
-        probeCosmeticFilterHits(webView, pageUrl, cosmeticMatches)
+    FilterRepository.maybeRecordPerfSnapshot(webView.context, handle.snapshot, engine)
+    val effectiveMatches = WebViewFilterInjector.selectMatchesWithinBudget(cosmeticMatches)
+    WebViewFilterInjector.inject(webView, effectiveMatches) { rawResult ->
+        if (webView.url != pageUrl) return@inject
+        val hitMatches = parseCosmeticHitIndexes(rawResult)
+            .mapNotNull { index -> effectiveMatches.getOrNull(index) }
+            .take(COSMETIC_HIT_TEST_LIMIT)
+        activity.recordCurrentPageCosmeticFilterHits(webView, pageUrl, hitMatches)
     }
-}
-
-private fun probeCosmeticFilterHits(
-    webView: WebView,
-    pageUrl: String,
-    matches: List<CosmeticFilterMatch>
-) {
-    val activity = webView.context as? WebViewActivity ?: return
-    if (matches.isEmpty()) {
-        activity.recordCurrentPageCosmeticFilterHits(webView, pageUrl, emptyList())
-        return
-    }
-    val probedMatches = matches.take(COSMETIC_HIT_TEST_LIMIT)
-    val selectorsJson = org.json.JSONArray(probedMatches.map { it.selector }).toString()
-    val js = """
-        (function() {
-            var selectors = $selectorsJson;
-            var hits = [];
-            for (var i = 0; i < selectors.length; i++) {
-                try {
-                    if (document.querySelector(selectors[i])) hits.push(i);
-                } catch (e) {}
-            }
-            return JSON.stringify(hits);
-        })();
-    """.trimIndent()
-    webView.postDelayed({
-        if (webView.url != pageUrl) return@postDelayed
-        webView.evaluateJavascript(js) { rawResult ->
-            val hitIndexes = parseCosmeticHitIndexes(rawResult)
-            val hitMatches = hitIndexes.mapNotNull { index -> probedMatches.getOrNull(index) }
-            activity.recordCurrentPageCosmeticFilterHits(webView, pageUrl, hitMatches)
-        }
-    }, 350L)
 }
 
 private fun parseCosmeticHitIndexes(rawResult: String?): List<Int> {
@@ -4613,15 +5033,18 @@ private fun injectFilterScriptletsIfNeeded(
     webView: WebView,
     config: WebViewRuntimeConfig
 ) {
-    if (!config.limitAdBlock || !config.filterSnapshot.enabled) return
-    if (config.filterSnapshot.preset == "LIGHT") return
+    val activity = webView.context as? WebViewActivity
+    val latestConfig = activity?.latestRuntimeConfig() ?: config
+    if (!latestConfig.limitAdBlock) return
+    val handle = activity?.currentWebViewFilterHandle() ?: return
+    if (!handle.snapshot.enabled || handle.snapshot.preset == "LIGHT") return
     val pageUrl = webView.url ?: return
     val host = WebViewRuntime.hostOf(pageUrl)
     if (host.isBlank()) return
-    val siteOverride = FilterRepository.siteOverrideFor(config.filterSnapshot, host)
-    val engine = FilterRepository.getCachedEngine(config.filterSnapshot) ?: return
+    val siteOverride = FilterRepository.siteOverrideFor(handle.snapshot, host)
+    val engine = handle.engine
     val scriptlets = engine.scriptletJsFor(host, siteOverride)
-    FilterRepository.maybeRecordPerfSnapshot(webView.context, config.filterSnapshot, engine)
+    FilterRepository.maybeRecordPerfSnapshot(webView.context, handle.snapshot, engine)
     if (scriptlets.isBlank()) return
     val js = """
         (function() {
@@ -4633,42 +5056,23 @@ private fun injectFilterScriptletsIfNeeded(
     webView.evaluateJavascript(js, null)
 }
 
-private fun shouldBlockPopup(
-    parent: WebView?,
-    config: WebViewRuntimeConfig
-): Boolean {
-    val parentUrl = parent?.url.orEmpty()
-    if (parentUrl.isBlank()) return false
-    val requestContext = FilterRequestContext(
-        requestUrl = parentUrl,
-        topLevelUrl = parentUrl,
-        resourceType = FilterResourceType.POPUP,
-        isMainFrame = true,
-        method = "GET",
-        hasGesture = false
-    )
-    val siteOverride = FilterRepository.siteOverrideFor(config.filterSnapshot, requestContext.topLevelHost)
-    return FilterRepository.getCachedEngine(config.filterSnapshot)
-        ?.decide(requestContext, siteOverride)
-        ?.action == FilterAction.BLOCK
-}
-
 private fun destroyWebViewSafely(webView: WebView) {
-    runCatching {
-        (webView.context as? WebViewActivity)?.stopAmapAssistantLocation(webView)
-        webView.stopLoading()
-        webView.webChromeClient = null
-        webView.webViewClient = WebViewClient()
-        runCatching { webView.removeJavascriptInterface("ChildKioskDebugBridge") }
-        runCatching { webView.removeJavascriptInterface("ChildKioskNativeLocationBridge") }
-        runCatching { WebViewCompat.removeWebMessageListener(webView, "ChildKioskNativeLocation") }
-        removeNativeLocationDocumentScript(webView)
-        webView.loadUrl("about:blank")
-        webView.clearHistory()
-        (webView.parent as? ViewGroup)?.removeView(webView)
-        webView.removeAllViews()
-        webView.destroy()
-    }
+    // Renderer-gone WebViews can throw from any method. Keep teardown granular so an early
+    // failure never prevents detaching and destroying the unusable view.
+    runCatching { (webView.context as? WebViewActivity)?.cancelPendingPopup(webView) }
+    runCatching { (webView.context as? WebViewActivity)?.stopAmapAssistantLocation(webView) }
+    runCatching { webView.stopLoading() }
+    runCatching { webView.webChromeClient = null }
+    runCatching { webView.webViewClient = WebViewClient() }
+    runCatching { webView.removeJavascriptInterface("ChildKioskDebugBridge") }
+    runCatching { webView.removeJavascriptInterface("ChildKioskNativeLocationBridge") }
+    runCatching { WebViewCompat.removeWebMessageListener(webView, "ChildKioskNativeLocation") }
+    runCatching { removeNativeLocationDocumentScript(webView) }
+    runCatching { webView.loadUrl("about:blank") }
+    runCatching { webView.clearHistory() }
+    runCatching { (webView.parent as? ViewGroup)?.removeView(webView) }
+    runCatching { webView.removeAllViews() }
+    runCatching { webView.destroy() }
 }
 
 private fun parseStringArrayJavascriptResult(rawResult: String?): List<String> {
@@ -4980,7 +5384,7 @@ private fun CurrentPageFilterDiagnosticsDialog(
                     if (snapshot.cosmeticEvents.isNotEmpty()) {
                         FilterSectionTitle("元素隐藏命中")
                         Text(
-                            text = "以下为轻量探测确认在本页命中过 DOM 元素的隐藏选择器，最多探测前 $COSMETIC_HIT_TEST_LIMIT 条候选规则。",
+                            text = "以下为本页实际隐藏到 DOM 元素的选择器，最多显示前 $COSMETIC_HIT_TEST_LIMIT 条命中规则。",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 16.sp

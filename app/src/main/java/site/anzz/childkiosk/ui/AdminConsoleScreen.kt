@@ -3157,16 +3157,20 @@ private fun WebFilteringSettingsScreen(
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     var settingsVersion by remember { mutableStateOf(0) }
-    var diagnosticsRefreshVersion by remember { mutableStateOf(0) }
-    val settings = remember(settingsVersion) { FilterRepository.getSettings(context) }
-    val runtimeSnapshot = remember(settingsVersion) { settings.toRuntimeSnapshot() }
-    val engine = remember(settingsVersion) {
-        FilterRepository.getEngine(context, runtimeSnapshot)
-    }
-    val report = engine.report
-    val localPerfSnapshot = remember(settingsVersion, diagnosticsRefreshVersion) {
-        engine.perfSnapshot()
-    }
+      var diagnosticsRefreshVersion by remember { mutableStateOf(0) }
+      val settings = remember(settingsVersion) { FilterRepository.getSettings(context) }
+      val filteringEnabled = remember(settingsVersion) {
+          KioskPrefs.getOrMigrateLimitAdBlockEnabled(context, settings.enabled)
+      }
+      val runtimeSnapshot = remember(settingsVersion, filteringEnabled) {
+          settings.toRuntimeSnapshot().copy(enabled = filteringEnabled)
+      }
+      val engineUiState by rememberWebFilteringEngineUiState(context, runtimeSnapshot, settingsVersion)
+      val engine = engineUiState.engine
+      val report = engine.report
+      val localPerfSnapshot = remember(engine, diagnosticsRefreshVersion) {
+          engine.perfSnapshot()
+      }
     val webViewPerfSnapshot = remember(settingsVersion, diagnosticsRefreshVersion) {
         FilterRepository.getLatestPerfSnapshot(context, runtimeSnapshot)
     }
@@ -3175,9 +3179,12 @@ private fun WebFilteringSettingsScreen(
         "WebView 进程"
     } else {
         "后台进程"
-    }
-    var customRules by remember(settings.customRules) { mutableStateOf(settings.customRules) }
-    var customRuleReport by remember { mutableStateOf(FilterRepository.validateCustomRules(customRules)) }
+      }
+      var customRules by remember(settings.customRules) { mutableStateOf(settings.customRules) }
+      val customRuleValidation by rememberCustomRuleValidationUiState(customRules)
+      val customRuleReport = customRuleValidation.report
+      val customRulesByteCount = remember(customRules) { customRules.toByteArray(Charsets.UTF_8).size }
+      val customRulesTooLarge = customRulesByteCount > MAX_CUSTOM_FILTER_RULE_BYTES
     var newOverrideHost by remember { mutableStateOf("") }
     var customSubscriptionTitle by remember { mutableStateOf("") }
     var customSubscriptionUrl by remember { mutableStateOf("") }
@@ -3218,28 +3225,38 @@ private fun WebFilteringSettingsScreen(
                     Spacer(Modifier.width(8.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text("网页过滤总控", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        Text(
-                            "兼容 ABP/EasyList、uBlock Origin 静态规则和 AdGuard 常用规则语法。",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                      Text(
+                          "支持经验证的 ABP/EasyList、uBO 与 AdGuard 安全子集；未支持语法会明确跳过。",
+                          fontSize = 11.sp,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant
+                      )
                     }
                     Switch(
-                        checked = settings.enabled,
+                        checked = filteringEnabled,
                         onCheckedChange = { enabled ->
                             KioskPrefs.setLimitAdBlockEnabled(context, enabled)
-                            FilterRepository.setEnabled(context, enabled)
                             refresh()
                             Toast.makeText(context, "新打开的网站生效", Toast.LENGTH_SHORT).show()
                         }
                     )
                 }
 
-                Text(
-                    "已编译规则 ${report.enabledRuleCount}/${report.ruleCount} 条：网络 ${report.networkRuleCount}、元素隐藏 ${report.cosmeticRuleCount}、scriptlet ${report.scriptletRuleCount}；不支持语法 ${report.unsupportedRuleCount} 条。",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                  Text(
+                      "已编译规则 ${report.enabledRuleCount}/${report.ruleCount} 条：网络 ${report.networkRuleCount}、元素隐藏 ${report.cosmeticRuleCount}、scriptlet ${report.scriptletRuleCount}；不支持语法 ${report.unsupportedRuleCount} 条。",
+                      fontSize = 12.sp,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant
+                  )
+                  if (engineUiState.isLoading) {
+                      LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                      Text("正在后台读取并编译过滤规则…", fontSize = 11.sp)
+                  }
+                  if (engineUiState.errorMessage.isNotBlank()) {
+                      Text(
+                          "过滤引擎降级：${engineUiState.errorMessage}",
+                          fontSize = 11.sp,
+                          color = MaterialTheme.colorScheme.error
+                      )
+                  }
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("过滤强度", fontSize = 14.sp, fontWeight = FontWeight.Bold)
@@ -3248,8 +3265,17 @@ private fun WebFilteringSettingsScreen(
                             selected = settings.preset == preset,
                             preset = preset,
                             onClick = {
-                                FilterRepository.setPreset(context, preset)
-                                refresh()
+                                runCatching {
+                                    FilterRepository.setPreset(context, preset)
+                                }.onSuccess {
+                                    refresh()
+                                }.onFailure { error ->
+                                    Toast.makeText(
+                                        context,
+                                        error.message ?: "切换过滤强度失败",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
                             }
                         )
                     }
@@ -3349,8 +3375,17 @@ private fun WebFilteringSettingsScreen(
                             Switch(
                                 checked = subscription.enabled,
                                 onCheckedChange = { enabled ->
-                                    FilterRepository.setSubscriptionEnabled(context, subscription.id, enabled)
-                                    refresh()
+                                    runCatching {
+                                        FilterRepository.setSubscriptionEnabled(context, subscription.id, enabled)
+                                    }.onSuccess {
+                                        refresh()
+                                    }.onFailure { error ->
+                                        Toast.makeText(
+                                            context,
+                                            error.message ?: "更新订阅状态失败",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    }
                                 }
                             )
                         }
@@ -3385,35 +3420,44 @@ private fun WebFilteringSettingsScreen(
                     Spacer(Modifier.width(8.dp))
                     Text("自定义 Adblock 规则", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
-                Text(
-                    "支持 `||domain^`、`@@`、`${'$'}script`、`${'$'}image`、`${'$'}popup`、`${'$'}third-party`、`${'$'}domain=`、`##`、`#@#` 等核心语法。",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                  Text(
+                      "支持经过回归验证的域名锚、例外、资源类型、party/domain、元素隐藏和安全 scriptlet 子集；WebSocket、Service Worker 与未识别扩展语法不宣称完整支持。",
+                      fontSize = 11.sp,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant
+                  )
                 OutlinedTextField(
-                    value = customRules,
-                    onValueChange = {
-                        customRules = it
-                        customRuleReport = FilterRepository.validateCustomRules(it)
-                    },
+                      value = customRules,
+                      onValueChange = {
+                          customRules = it
+                      },
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 140.dp, max = 240.dp),
                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = FontFamily.Monospace),
                     placeholder = { Text("||ads.demo.invalid^\n@@||demo.invalid/allowed.js${'$'}script") }
                 )
-                Text(
-                    "校验：启用 ${customRuleReport.enabledRuleCount}/${customRuleReport.ruleCount}，不支持 ${customRuleReport.unsupportedRuleCount}",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                  Text(
+                      when {
+                          customRulesTooLarge -> "规则文本过大：${customRulesByteCount / 1024}KB，最大 ${MAX_CUSTOM_FILTER_RULE_BYTES / 1024}KB"
+                          customRuleValidation.isValidating -> "正在后台校验规则…"
+                          customRuleValidation.errorMessage.isNotBlank() -> "校验失败：${customRuleValidation.errorMessage}"
+                          else -> "校验：启用 ${customRuleReport.enabledRuleCount}/${customRuleReport.ruleCount}，不支持 ${customRuleReport.unsupportedRuleCount}"
+                      },
+                      fontSize = 12.sp,
+                      color = if (customRulesTooLarge || customRuleValidation.errorMessage.isNotBlank()) {
+                          MaterialTheme.colorScheme.error
+                      } else {
+                          MaterialTheme.colorScheme.onSurfaceVariant
+                      }
+                  )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Button(
-                        onClick = {
-                            FilterRepository.setCustomRules(context, customRules)
+                      Button(
+                          enabled = !customRulesTooLarge && !customRuleValidation.isValidating,
+                          onClick = {
+                              FilterRepository.setCustomRules(context, customRules)
                             refresh()
                             Toast.makeText(context, "自定义规则已保存，新打开的网站生效", Toast.LENGTH_SHORT).show()
                         },
@@ -3421,11 +3465,10 @@ private fun WebFilteringSettingsScreen(
                     ) {
                         Text("保存规则")
                     }
-                    OutlinedButton(
-                        onClick = {
-                            customRules = ""
-                            customRuleReport = FilterRepository.validateCustomRules("")
-                            FilterRepository.setCustomRules(context, "")
+                      OutlinedButton(
+                          onClick = {
+                              customRules = ""
+                              FilterRepository.setCustomRules(context, "")
                             refresh()
                         },
                         modifier = Modifier.weight(1f)
@@ -3518,11 +3561,14 @@ private fun WebFilteringSettingsScreen(
                                 TextButton(onClick = {
                                     FilterRepository.setSiteOverride(
                                         context,
-                                        override.copy(temporaryAllowUntil = System.currentTimeMillis() + 15 * 60 * 1000L)
+                                        override.copy(
+                                            networkDisabled = false,
+                                            temporaryAllowUntil = System.currentTimeMillis() + 15 * 60 * 1000L
+                                        )
                                     )
                                     refresh()
                                 }) {
-                                    Text("放行15分钟")
+                                    Text("临时放行15分钟")
                                 }
                                 TextButton(onClick = {
                                     FilterRepository.removeSiteOverride(context, override.host)
@@ -3538,7 +3584,7 @@ private fun WebFilteringSettingsScreen(
         }
 
         FilterPerformanceDiagnosticsCard(
-            filteringEnabled = settings.enabled,
+            filteringEnabled = filteringEnabled,
             report = report,
             snapshot = perfSnapshot,
             persistedSnapshot = webViewPerfSnapshot,
@@ -3558,7 +3604,7 @@ private fun WebFilteringSettingsScreen(
             },
             onCopy = {
                 val text = buildFilterDiagnosticsText(
-                    settingsEnabled = settings.enabled,
+                    settingsEnabled = filteringEnabled,
                     report = report,
                     snapshot = perfSnapshot,
                     sourceLabel = perfSourceLabel,
@@ -3801,7 +3847,7 @@ private fun FilterPerformanceDiagnosticsCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("过滤性能诊断", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        "查看规则编译、命中缓存、候选规则评估和注入资源的实时快照。",
+                        "查看规则编译、命中缓存、候选规则评估和注入资源的实时快照；复制内容会脱敏 URL 查询参数。",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -4092,10 +4138,10 @@ private fun FilterPresetOption(
     preset: FilterPreset,
     onClick: () -> Unit
 ) {
-    val description = when (preset) {
-        FilterPreset.LIGHT -> "仅轻量本地高置信规则，优先兼容性和低性能设备。"
-        FilterPreset.STANDARD_CHILD -> "儿童模式默认，启用 EasyList、EasyPrivacy、中文和移动广告规则。"
-        FilterPreset.STRONG -> "叠加弹窗、scriptlet 和 URL 参数清理规则，误伤概率更高，适合家长手动开启。"
+      val description = when (preset) {
+          FilterPreset.LIGHT -> "仅轻量本地高置信规则，优先兼容性和低性能设备。"
+          FilterPreset.STANDARD_CHILD -> "儿童模式默认，启用 EasyList 与本地儿童补充；隐私、中文和移动列表可手动启用。"
+          FilterPreset.STRONG -> "叠加弹窗、scriptlet 和 URL 参数清理规则，误伤概率更高，适合家长手动开启。"
         FilterPreset.CUSTOM -> "保留当前订阅、自定义规则和例外设置。"
     }
     Row(
@@ -4518,7 +4564,7 @@ private fun buildFilterDiagnosticsText(
         events.take(10).forEachIndexed { index, event ->
             appendLine(
                 "#${index + 1} ${formatTimestamp(event.timestamp)} ${event.action} " +
-                    "${event.resourceType} ${event.url} " +
+                    "${event.resourceType} ${redactFilterDiagnosticUrl(event.url)} " +
                     "source=${event.sourceName.ifBlank { "-" }} " +
                     "type=${event.matchType.ifBlank { "-" }} " +
                     "key=${event.indexKey.ifBlank { "-" }} " +
@@ -4577,10 +4623,33 @@ private fun formatSlowShouldBlockSample(sample: FilterSlowShouldBlockSample): St
         append(" action=${sample.action.ifBlank { "-" }}")
         append(" cache=${sample.cacheStatus.ifBlank { "-" }}")
         append(" candidates=${sample.candidateCount}")
-        append(" url=${sample.url.ifBlank { "-" }}")
+        append(" url=${sample.url.takeIf { it.isNotBlank() }?.let(::redactFilterDiagnosticUrl) ?: "-"}")
         if (sample.ruleText.isNotBlank()) {
             append(" rule=${sample.ruleText}")
         }
+    }
+}
+
+private fun redactFilterDiagnosticUrl(value: String): String {
+    if (value.isBlank()) return "-"
+    return runCatching {
+        val uri = android.net.Uri.parse(value)
+        val scheme = uri.scheme?.lowercase(Locale.US)
+        val host = uri.host
+        if ((scheme != "http" && scheme != "https") || host.isNullOrBlank()) {
+            return@runCatching value.substringBefore('?').substringBefore('#').take(256)
+        }
+        buildString {
+            append(scheme)
+            append("://")
+            append(host)
+            if (uri.port >= 0) append(":${uri.port}")
+            append(uri.encodedPath.orEmpty().take(256))
+            if (!uri.encodedQuery.isNullOrBlank()) append("?<redacted>")
+            if (!uri.encodedFragment.isNullOrBlank()) append("#<redacted>")
+        }
+    }.getOrElse {
+        value.substringBefore('?').substringBefore('#').take(256)
     }
 }
 

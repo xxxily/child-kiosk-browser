@@ -40,6 +40,7 @@ import site.anzz.childkiosk.util.WebViewPool
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsOverlay
 import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsCallbacks
 import site.anzz.childkiosk.ui.browser.FloatingBrowserControlsState
@@ -170,6 +171,7 @@ class MainActivity : ComponentActivity() {
                                                             putExtra(WebViewActivity.EXTRA_CUSTOM_URL, url)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
                                                             putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, orientationMode)
+                                                            KioskPrefs.putWebViewRuntimeConfig(this, ctx)
                                                         }
                                                         ctx.startActivity(intent)
                                                     },
@@ -178,6 +180,7 @@ class MainActivity : ComponentActivity() {
                                                             putExtra(WebViewActivity.EXTRA_CUSTOM_URL, "about:blank")
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
                                                             putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, orientationMode)
+                                                            KioskPrefs.putWebViewRuntimeConfig(this, ctx)
                                                         }
                                                         ctx.startActivity(intent)
                                                     },
@@ -186,6 +189,7 @@ class MainActivity : ComponentActivity() {
                                                             putExtra(WebViewActivity.EXTRA_WEB_APP_ID, webApp.id)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
                                                             putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, orientationMode)
+                                                            KioskPrefs.putWebViewRuntimeConfig(this, ctx)
                                                         }
                                                         ctx.startActivity(intent)
                                                     },
@@ -194,6 +198,7 @@ class MainActivity : ComponentActivity() {
                                                             putExtra(WebViewActivity.EXTRA_SWITCH_TAB_ID, tabId)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
                                                             putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, orientationMode)
+                                                            KioskPrefs.putWebViewRuntimeConfig(this, ctx)
                                                         }
                                                         ctx.startActivity(intent)
                                                     },
@@ -202,6 +207,7 @@ class MainActivity : ComponentActivity() {
                                                             putExtra(WebViewActivity.EXTRA_CLOSE_TAB_ID, tabId)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
                                                             putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, orientationMode)
+                                                            KioskPrefs.putWebViewRuntimeConfig(this, ctx)
                                                         }
                                                         ctx.startActivity(intent)
                                                     }
@@ -302,11 +308,12 @@ class MainActivity : ComponentActivity() {
         val receiver = site.anzz.childkiosk.util.filter.FilterEventReceiver()
         filterEventReceiver = receiver
         val filter = android.content.IntentFilter("site.anzz.childkiosk.action.RECORD_FILTER_EVENT")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(receiver, filter)
-        }
+        ContextCompat.registerReceiver(
+            this,
+            receiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
     }
 
     override fun onResume() {

@@ -10,6 +10,8 @@ import androidx.webkit.WebViewCompat
 import site.anzz.childkiosk.util.filter.FilterAction
 import site.anzz.childkiosk.util.filter.FilterRepository
 import site.anzz.childkiosk.util.filter.FilterResourceType
+import site.anzz.childkiosk.util.filter.WebViewFilterEngineHandle
+import site.anzz.childkiosk.util.filter.WebViewFilterRuntimeStatus
 
 data class PreloadEntry(
     val webView: WebView,
@@ -18,6 +20,7 @@ data class PreloadEntry(
     val isUrlPreload: Boolean = true,
     val shouldDestroyOnDispose: Boolean = true,
     val runtimeConfigKey: String = "",
+    @Volatile var filterHandle: WebViewFilterEngineHandle? = null,
     @Volatile var isDisposed: Boolean = false
 )
 
@@ -100,16 +103,21 @@ object WebViewPool {
                 request: WebResourceRequest?
             ): WebResourceResponse? {
                 if (runtimeConfig.limitAdBlock) {
-                    val snapshot = runtimeConfig.filterSnapshot
-                    val topLevelUrl = url
-                    val decision = AdBlocker.shouldBlock(ctx, request, topLevelUrl, snapshot)
+                    val handle = entry.filterHandle
+                    val requestUrl = request?.url?.toString().orEmpty()
+                    val resourceType = FilterResourceType.infer(
+                        url = requestUrl,
+                        acceptHeader = request?.requestHeaders?.get("Accept"),
+                        isMainFrame = request?.isForMainFrame == true,
+                        requestHeaders = request?.requestHeaders.orEmpty(),
+                        method = request?.method.orEmpty()
+                    )
+                    if (handle == null) {
+                        return AdBlocker.emptyResponse(resourceType)
+                    }
+                    val topLevelUrl = view?.url ?: cleanUrl
+                    val decision = AdBlocker.shouldBlock(ctx, request, topLevelUrl, handle)
                     if (decision.action == FilterAction.BLOCK) {
-                        val requestUrl = request?.url?.toString().orEmpty()
-                        val resourceType = FilterResourceType.infer(
-                            url = requestUrl,
-                            acceptHeader = request?.requestHeaders?.get("Accept"),
-                            isMainFrame = request?.isForMainFrame == true
-                        )
                         return AdBlocker.emptyResponse(resourceType)
                     }
                 }
@@ -142,12 +150,39 @@ object WebViewPool {
 
         if (runtimeConfig.limitAdBlock && runtimeConfig.filterSnapshot.enabled) {
             Thread {
-                runCatching {
-                    FilterRepository.getEngine(ctx, runtimeConfig.filterSnapshot)
+                val requestedSnapshot = runtimeConfig.filterSnapshot
+                val handle = runCatching {
+                    WebViewFilterEngineHandle(
+                        snapshot = requestedSnapshot,
+                        engine = FilterRepository.getEngine(ctx, requestedSnapshot),
+                        status = WebViewFilterRuntimeStatus.READY,
+                        generation = 0L
+                    )
+                }.getOrElse { error ->
+                    android.util.Log.w("ChildKioskFilter", "Preload filter build failed; using bundled rules", error)
+                    val fallbackSnapshot = FilterRepository.bundledFallbackSnapshot(requestedSnapshot)
+                    WebViewFilterEngineHandle(
+                        snapshot = fallbackSnapshot,
+                        engine = FilterRepository.getBundledFallbackEngine(requestedSnapshot),
+                        status = WebViewFilterRuntimeStatus.DEGRADED_BUNDLED,
+                        generation = 0L,
+                        reason = error.message.orEmpty().take(160),
+                        requestedSnapshot = requestedSnapshot
+                    )
                 }
+                entry.filterHandle = handle
                 Handler(Looper.getMainLooper()).post {
                     if (!entry.isDisposed) {
-                        webView.loadUrl(cleanUrl)
+                        val siteOverride = FilterRepository.siteOverrideFor(
+                            handle.snapshot,
+                            WebViewRuntime.hostOf(cleanUrl)
+                        )
+                        val navigationUrl = handle.engine.cleanUrlForNavigation(
+                            cleanUrl,
+                            cleanUrl,
+                            siteOverride = siteOverride
+                        ) ?: cleanUrl
+                        webView.loadUrl(navigationUrl)
                     }
                 }
             }.start()
