@@ -1,3 +1,21 @@
+## Child Kiosk Browser v0.4.2
+
+本版本彻底解决了高性能持续运行模式下，Android 系统或 Chromium Blink 引擎在屏幕关闭或后台运行时挂起、节流（Throttling）JavaScript 计时器（如 `setTimeout` / `setInterval`）的问题。
+
+### 本轮核心变化
+
+* **深层可见性与状态欺骗劫持**：在 `PersistentWebView` 中重写并劫持了 `isShown()`、`getWindowVisibility()` 以及 `getVisibility()`。在高性能模式受保护时，即使系统或窗口实际不可见，也强制向 WebView 的 Blink 渲染器返回 `true` / `VISIBLE`，阻止引擎判断页面为 background 而限制其运行帧率。
+* **生命周期挂起保护**：重写了 `onPause()`。在高性能会话运行中，若系统或框架尝试通过 `onPause()` 暂停 WebView，拦截该操作并保持 WebView 引擎的轮询能力处于激活状态。
+* **精细化欺骗日志审计**：新增 `visibility_deceived`、`screen_state_deceived` 和 `webview_pause_blocked` 的防暴刷诊断事件投递。当系统第一次在后台隐藏网页、关闭屏幕或尝试挂起生命周期且被我们完美欺骗时，管理员能直接从“高性能运行诊断”详情中查阅到受保护的审计记录。
+
+### 建议验证
+
+1. 安装 `child-kiosk-browser-0.4.2-enhanced-release.apk`。
+2. 开启高性能模式并允许当前测试网页，完全锁屏或切换至其他 App。
+3. 稍后点亮屏幕，打开后台的运行诊断详情，确认“最近运行诊断事件”中已清晰显示 `VISIBILITY_DECEIVED` 等拦截成功的事件记录，且网页后台的 JavaScript 定时器仍在持续稳定执行。
+
+---
+
 ## Child Kiosk Browser v0.4.1
 
 本版本修复了高性能持续运行模式下网页在灭屏或退至后台时仍被 Chromium 内核挂起/Throttling 的问题，重构了运行诊断详情弹窗为与定位诊断一致的全屏精美卡片布局，复用了 Web App 分类网格选择模块，并对整个页面的按钮尺寸进行了优化。

@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-07-11
+
+### Fixed — 修复
+
+- **深层灭屏/后台挂起彻底绕过**：
+  - 在 `PersistentWebView` 中重写并劫持了 `isShown()`、`getWindowVisibility()` 和 `getVisibility()` 方法，无论实际窗口状态如何，均在高性能模式下强制向 Chromium 引擎返回 `true` / `VISIBLE`，确保 Blink 渲染引擎不会触发 background throttling 限制。
+  - 拦截并重写 `onPause()` 生命周期，在高性能会话受保护时阻止其触发挂起。
+- **细化运行诊断与欺骗监控**：
+  - 新增一阶段防刷保护日志记录。当 WebView 首次在后台被隐藏或屏幕关闭并被我们成功欺骗时，自动向高性能运行诊断事件记录投递 `visibility_deceived` 和 `screen_state_deceived` 审计事件，并且对 `onPause` 拦截操作进行审计记录，方便管理员进行真机校验。
+
 ## [0.4.1] - 2026-07-11
 
 ### Fixed — 修复
