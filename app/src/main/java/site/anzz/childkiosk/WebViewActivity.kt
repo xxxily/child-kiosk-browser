@@ -4333,7 +4333,7 @@ private fun createSecureWebView(
     isPendingPopupTransport: Boolean = false,
     popupFilterContext: PopupFilterContext? = null
 ): WebView {
-    val webView = existingWebView ?: WebView(ctx)
+    val webView = existingWebView ?: PersistentWebView(ctx)
     val shouldClearInitialHistory = AtomicBoolean(clearHistoryOnFirstRealPageFinish)
     val currentTopUrl = java.util.concurrent.atomic.AtomicReference<String>(targetUrl)
 
