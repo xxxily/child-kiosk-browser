@@ -1,3 +1,30 @@
+## Child Kiosk Browser v0.4.7
+
+本版本继续修复可信网站息屏后定时器/定位逻辑很快停止的问题，并把“系统资源已就绪”和“JavaScript 仍在执行”拆成可验证的独立状态。
+
+### 本轮核心变化
+
+* **页面保护提前到 document-start**：只对家长授权的严格 Origin 安装 Visibility/freeze 兼容层，早于网站脚本运行，避免网站先收到后台事件后主动暂停；`pagehide` 保持正常，避免破坏导航清理和 BFCache。
+* **息屏保留可信页面定位**：普通后台或息屏不再无条件销毁可信页面的原生定位 watch；普通页面、主动退出、配置替换和 Activity 销毁仍会立即释放。
+* **真实 JS 调度诊断**：新增 5 秒主线程与 Dedicated Worker 双心跳。只有 FGS、WakeLock、renderer、电池设置完整且主线程心跳真实响应时才显示 `ACTIVE`；心跳超过 20 秒自动降级。
+* **配置与停止即时生效**：跨进程配置广播会刷新所有现存 WebView 和 Activity 快照；禁用规则或用户显式停止会撤销当前文档及后续导航的页面保护，重新授权后才恢复。
+* **内存回调收敛**：Android `level_40` 正确记录为后台内存级别，内存压力只清理预加载/池化 WebView，不处理活动页面。
+* **诊断与测试加强**：诊断页分别展示原生、主线程和 Worker 心跳；新增严格 Origin、畸形消息、token、跨导航、显式停止、内存与后台定位测试。
+
+### 能力边界
+
+Android WebView 没有公开 API 能保证任意第三方 JavaScript 在息屏或后台时始终与前台等速运行。FGS、WakeLock、renderer 优先级、document-start 兼容层和 Worker 都是 best-effort；Blink 或 OEM 仍可能在更底层冻结 renderer。本版本会如实把这种情况显示为 `DEGRADED/STALE`，不再用系统资源状态冒充 JS 连续运行。对必须绝对连续的轨迹、定位或计费逻辑，仍应最终迁移到原生前台定位服务或服务端。
+
+### 建议验证
+
+1. 安装 `enhanced-release.apk`，开启高性能模式并授权测试 Origin，确认常驻通知、WakeLock 和 JS 主线程心跳均进入正常状态。
+2. 直接在网页页面息屏 2-5 分钟，再亮屏查看诊断：主线程/Worker 心跳应持续更新；若停止，应明确显示 `STALE/DEGRADED`。
+3. 使用定位网页验证 `watchPosition` 在普通息屏/后台期间不被 App 主动取消；主动关闭标签或退出后应停止。
+4. 在页面打开期间禁用/删除规则，确认保护和心跳立即停止；重新授权打开后恢复。
+5. 用 standard/enhanced 两个版本分别测试 HOME、最近任务恢复、主动退出、跨 Origin 导航和多标签关闭。
+
+---
+
 ## Child Kiosk Browser v0.4.6
 
 本版本修复切换后台后网页立即退出的任务栈回归，并撤销不安全的 Activity 生命周期反射。高性能运行在前台服务不可用时会保留可信页面，以降级状态继续提供平台允许范围内的保护。
