@@ -1,3 +1,31 @@
+## Child Kiosk Browser v0.4.6
+
+本版本修复切换后台后网页立即退出的任务栈回归，并撤销不安全的 Activity 生命周期反射。高性能运行在前台服务不可用时会保留可信页面，以降级状态继续提供平台允许范围内的保护。
+
+### 本轮核心变化
+
+* **后台不再自动关闭网页**：正常模式将真实网页放入独立任务栈；HOME、Launcher 重入或切到其他 App 不再触发 `WebViewActivity.onDestroy()`，原 WebView、DOM、JS heap 和标签保持不变，除非用户主动关闭/退出或系统回收进程。
+* **锁定模式保持兼容**：Device Owner、Lock Task、Screen Pinning/软锁仍使用应用主任务栈，避免恢复旧版“儿童模式点击网页黑屏”的问题。
+* **通知与主页不再误清栈**：高性能通知直接恢复当前网页宿主；普通模式的悬浮“主页”只切回首页任务并保留网页，锁定同栈模式则按用户主动退出路径返回首页。保护模式切换时会移除旧宿主，避免两个网页容器共享同一运行状态。
+* **恢复标准生命周期**：移除反射清空 `ActivityLifecycleCallbacks` 的方案，`onStop()` 始终完整执行，降低息屏、后台和 OEM 生命周期切换时的闪退风险。
+* **高性能失败改为降级**：通知/FGS 启动失败或 Service 异常停止不会再删除可信会话或恢复普通 renderer 优先级；显式“停止”和用户关闭页面仍立即生效。
+* **防止 heartbeat 叠加**：Alarm 健康检查每次先移除旧回调，再保留唯一下一次 heartbeat。
+* **发布门禁增强**：CI 在构建四个 APK 前运行 standard/enhanced 单元测试，并校验两种 WebView 宿主的 launch mode、process 与 task affinity。
+
+### 能力边界
+
+Android WebView 没有公开 API 可以保证任意第三方 JS 在息屏或后台时与前台完全等价运行。本模式通过前台服务、有限租期 WakeLock、renderer 优先级、WebView 可见性保护和页面可见性兼容脚本提供最强 best-effort 保障；Doze、OEM 电源策略、WebView/Blink 调度或系统内存回收仍可能节流或终止页面。
+
+### 建议验证
+
+1. 正常模式打开网页，按 HOME 或切换到其他 App，再从最近任务恢复网页；确认 URL、滚动位置、页面内状态和 JS 心跳仍在，且日志中没有 `activity_destroyed`。
+2. 分别在软锁和 Device Owner 模式打开网页，确认页面正常显示且仍受 Lock Task 约束。
+3. 开启可信网站高性能模式后息屏并恢复；检查诊断中的会话 token 未消失，FGS/WakeLock 缺失时显示 `DEGRADED` 而非会话被停止。
+4. 点击通知“停止”或主动关闭最后一个标签，确认会话与资源按预期释放。
+5. 分别在普通模式和软锁模式点击高性能通知及悬浮“主页”；确认通知不会销毁网页，普通模式从最近任务返回后页面状态仍在，软锁模式的主页动作按主动退出处理。
+
+---
+
 ## Child Kiosk Browser v0.4.5
 
 本版本修复了 v0.4.4 中跳过 `super.onStop()` 导致 App 息屏/后台时直接退出的严重回归问题，改用反射方案阻断 Chromium 生命周期回调。
@@ -50,10 +78,10 @@
 
 ### 本轮核心变化
 
-* **AlarmManager 双保险续期机制**：在 `HighPerformanceWakeLockController` 中新增 `AlarmManager.setAndAllowWhileIdle()` 续期路径，与原有 `Handler.postDelayed` 形成双保险。`Handler.postDelayed` 在 CPU 进入 suspend/Doze 时无法唤醒 CPU，而 AlarmManager 是系统级服务，能从 Doze/suspend 中可靠唤醒 CPU 续期 WakeLock。
+* **AlarmManager 双路径续期机制**：在 `HighPerformanceWakeLockController` 中新增 `AlarmManager.setAndAllowWhileIdle()` 续期路径，与原有 `Handler.postDelayed` 形成互补。`Handler.postDelayed` 在 CPU suspend/Doze 时不能主动唤醒 CPU；AlarmManager 可请求 idle 唤醒，但非精确闹钟仍可能被系统批处理。
 * **新增 `HighPerformanceAlarmReceiver`**：注册在 `:webview` 进程的广播接收器，在闹钟触发时续期 WakeLock 并触发完整的 SessionController 健康检查（清理丢失 WebView、同步系统资源、重调度心跳），确保 CPU 休眠后所有周期性任务能恢复。
 * **续期间隔优化**：从 `leaseMs / 2`（5 分钟）缩短为 `leaseMs / 3`（~3.3 分钟），在 10 分钟租期内提供更充足的续期缓冲。
-* **无需额外权限**：`setAndAllowWhileIdle()` 为非精确闹钟，不需要 `SCHEDULE_EXACT_ALARM` 权限；应用已豁免电池优化，不受 Doze 批处理延迟影响。
+* **无需额外权限**：`setAndAllowWhileIdle()` 为非精确闹钟，不需要 `SCHEDULE_EXACT_ALARM` 权限；实际触发时间仍受 Android/OEM 电源策略约束。
 
 ### 建议验证
 
@@ -67,7 +95,7 @@
 
 ## Child Kiosk Browser v0.4.2
 
-本版本彻底解决了高性能持续运行模式下，Android 系统或 Chromium Blink 引擎在屏幕关闭或后台运行时挂起、节流（Throttling）JavaScript 计时器（如 `setTimeout` / `setInterval`）的问题。
+本版本增强了高性能持续运行模式下对 Android 系统或 Chromium Blink 后台节流（Throttling）的 best-effort 规避能力，包括 `setTimeout` / `setInterval` 等页面计时器；平台仍可能施加调度限制。
 
 ### 本轮核心变化
 

@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-07-12
+
+### Fixed — 修复
+
+- **切到后台后网页被立即销毁**：
+  - 根因是 HOME/Launcher 根页面 `MainActivity(singleTask)` 与 `WebViewActivity` 共用任务栈；首页被系统重新拉起时会清除其上方的网页 Activity，随后 `onDestroy()` 销毁全部 WebView、DOM 和 JS 会话。
+  - 正常模式改用独立 affinity 的 `PersistentWebViewActivity`；Device Owner、活动 Lock Task 或软锁模式继续使用同任务栈宿主，兼顾后台页面保留与 Kiosk/Screen Pinning 兼容性。
+  - 首页、悬浮控制器、浏览历史和外部浏览器入口统一通过任务拓扑启动器打开网页，避免旁路入口重新触发清栈。
+  - 高性能通知改为恢复当前实际网页宿主，不再启动 `MainActivity(singleTask)` 清除同栈网页；悬浮“主页”按宿主模式安全分流，保护模式切换时也会先移除旧宿主，避免双 WebView 会话并存。
+- **息屏/后台生命周期稳定性**：
+  - 删除会临时清空全部 `Application.ActivityLifecycleCallbacks` 的反射拦截器；`WebViewActivity.onStop()` 现在始终执行标准生命周期并上报 `STOPPED`，避免 AndroidX/OEM 回调丢失和进程异常退出。
+  - 高性能会话在 Activity 停止时继续保留 WebView、逻辑 token 与 renderer 优先级，不在 `onStop()` 中销毁页面。
+- **高性能资源失败错误清除会话**：
+  - FGS 启动失败或异常停止现在进入 `DEGRADED`，不再清除可信页面会话或永久抑制自动恢复；用户显式“停止”、关闭标签、禁用配置和 renderer 丢失仍按原规则释放资源。
+  - Alarm 健康检查统一重排唯一 heartbeat，避免重复 Alarm 累积多条周期链。
+- **能力边界与验证**：
+  - 修正 `setAndAllowWhileIdle()` 为可能被系统批处理的非精确、best-effort 唤醒，不再描述为准时保证。
+  - 新增任务模式矩阵、FGS 降级/显式停止/heartbeat 回归测试、合并 Manifest 拓扑校验，并将 standard/enhanced 单元测试加入 GitHub Actions 发布门禁。
+
 ## [0.4.5] - 2026-07-12
 
 ### Fixed — 修复
@@ -39,7 +58,7 @@
   - **修复**：在 `HighPerformanceWakeLockController` 中新增 `AlarmManager.setAndAllowWhileIdle()` 续期机制，与现有 `Handler.postDelayed` 形成双保险。AlarmManager 是系统级服务，能从 Doze/suspend 中唤醒 CPU。续期间隔从 `leaseMs / 2`（5 分钟）缩短为 `leaseMs / 3`（~3.3 分钟），为租期过期留出更多缓冲。
   - 新增 `HighPerformanceAlarmReceiver` 广播接收器（注册在 `:webview` 进程），在闹钟触发时续期 WakeLock 并触发完整的健康检查（包括清理丢失的 WebView、同步系统资源、重新调度心跳）。
   - 在 `HighPerformanceSessionController` 中新增 `triggerAlarmHealthCheck()` 方法，供闹钟接收器调用以重启因 CPU 休眠而停滞的心跳循环。
-  - 不需要 `SCHEDULE_EXACT_ALARM` 权限；`setAndAllowWhileIdle()` 为非精确闹钟，且应用已豁免电池优化，不受 Doze 批处理延迟影响。
+  - 不需要 `SCHEDULE_EXACT_ALARM` 权限；`setAndAllowWhileIdle()` 为非精确闹钟，可能受 Android/OEM 的 Doze 批处理延迟影响，v0.4.6 已补充真实能力边界。
 
 ## [0.4.2] - 2026-07-11
 
