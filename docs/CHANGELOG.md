@@ -6,6 +6,17 @@
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-07-12
+
+### Fixed — 修复
+
+- **灭屏后 WakeLock 租期过期导致 JS 定时器停止运行**：
+  - **根因**：WakeLock 续期、FGS 健康检查和 SessionController 心跳全部依赖 `Handler.postDelayed()`，该机制无法在 CPU 进入 suspend/Doze 时唤醒 CPU。在 OnePlus 等激进省电 OEM 设备上，即使持有 `PARTIAL_WAKE_LOCK`，系统仍可强制 CPU 休眠，导致 Handler 回调不触发 → WakeLock 租期过期 → CPU 深度休眠 → Activity 被系统销毁 → JS 执行停止，形成恶性循环。
+  - **修复**：在 `HighPerformanceWakeLockController` 中新增 `AlarmManager.setAndAllowWhileIdle()` 续期机制，与现有 `Handler.postDelayed` 形成双保险。AlarmManager 是系统级服务，能从 Doze/suspend 中唤醒 CPU。续期间隔从 `leaseMs / 2`（5 分钟）缩短为 `leaseMs / 3`（~3.3 分钟），为租期过期留出更多缓冲。
+  - 新增 `HighPerformanceAlarmReceiver` 广播接收器（注册在 `:webview` 进程），在闹钟触发时续期 WakeLock 并触发完整的健康检查（包括清理丢失的 WebView、同步系统资源、重新调度心跳）。
+  - 在 `HighPerformanceSessionController` 中新增 `triggerAlarmHealthCheck()` 方法，供闹钟接收器调用以重启因 CPU 休眠而停滞的心跳循环。
+  - 不需要 `SCHEDULE_EXACT_ALARM` 权限；`setAndAllowWhileIdle()` 为非精确闹钟，且应用已豁免电池优化，不受 Doze 批处理延迟影响。
+
 ## [0.4.2] - 2026-07-11
 
 ### Fixed — 修复

@@ -537,6 +537,22 @@ internal object HighPerformanceSessionController {
         publishStatus()
     }
 
+    /**
+     * Called by [HighPerformanceAlarmReceiver] when the AlarmManager fires.
+     * Runs the full health check cycle: prune lost WebViews, collect system state,
+     * sync system resources (including WakeLock renewal via FGS), publish status,
+     * and reschedule the Handler-based heartbeat.
+     *
+     * This is critical for surviving Doze/suspend on aggressive OEM devices where
+     * Handler.postDelayed callbacks stop firing despite a held WakeLock.
+     */
+    internal fun triggerAlarmHealthCheck() {
+        ensureMainThread()
+        if (registrations.isEmpty()) return
+        // Run the heartbeat logic directly — this also reschedules the next Handler-based tick.
+        heartbeat.run()
+    }
+
     internal fun currentResourceRequest(): HighPerformanceResourceRequest {
         ensureMainThread()
         val system = lastSystemState ?: appContext?.let(HighPerformanceProcessState::collect)

@@ -103,6 +103,12 @@
                 android:value="Keeps explicitly parent-approved trusted web sessions active during background and screen-off use." />
         </service>
 
+        <!-- AlarmManager 接收器：在 Doze/suspend 下唤醒 CPU 续期 WakeLock 和触发健康检查 -->
+        <receiver
+            android:name=".performance.HighPerformanceAlarmReceiver"
+            android:exported="false"
+            android:process=":webview" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

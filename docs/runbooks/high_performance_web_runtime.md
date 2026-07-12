@@ -59,6 +59,42 @@ Look for the corresponding `session_stopped` event and confirm the active token 
 
 Verify the event sequence and tab identity. Automatic frozen-tab restoration, renderer recovery, Activity resume, redirect callbacks, and script-created popups must not clear Stop suppression. Re-authorization is limited to a trusted in-app page-open action, an explicit browser navigation gesture/control, or parent authorization. External `ACTION_VIEW` relay intents are not trusted restart authorization.
 
+### WakeLock expires during screen-off; JS timers stop (Handler/Doze issue)
+
+**Symptom**: Diagnostic logs show a long gap (10+ minutes) with no `wake_lock_renewed` events after screen-off, followed by `session_stopped reason=activity_destroyed`. The diagnostic snapshot shows `wakeLock=NOT_HELD`, `fgs=STOPPED`, `sessions=0`, `stale=true reason=heartbeat_stale`.
+
+**Root cause**: All periodic timers (WakeLock renewal, FGS health check, SessionController heartbeat) previously used `Handler.postDelayed()`, which **does not wake the CPU from suspend/Doze**. On aggressive OEM devices (e.g. OnePlus with OxygenOS), the system can force the CPU into suspend even while a `PARTIAL_WAKE_LOCK` is held. Once the CPU sleeps:
+
+1. Handler callbacks stop firing.
+2. The WakeLock lease (default 10 min) expires without renewal.
+3. The CPU enters full suspend with no way to wake up.
+4. The system eventually destroys the Activity → JS execution stops.
+
+This is a **vicious cycle**: WakeLock expires → CPU sleeps → Handler can't fire → WakeLock can't be renewed.
+
+**Fix (v0.4.3)**: WakeLock renewal now uses a dual mechanism:
+
+1. **Handler.postDelayed** (fast path) — fires when the CPU is already awake. Renewal interval: `leaseMs / 3` (~3.3 min for a 10-min lease).
+2. **AlarmManager.setAndAllowWhileIdle** (guaranteed wake path) — wakes the CPU from Doze/suspend even on aggressive OEMs. Same interval. Uses `ELAPSED_REALTIME_WAKEUP` and does NOT require `SCHEDULE_EXACT_ALARM` permission.
+
+The alarm fires a broadcast to `HighPerformanceAlarmReceiver` (registered in `:webview` process), which:
+- Renews the WakeLock via `HighPerformanceWakeLockController.triggerAlarmRenewal()`
+- Triggers a full health check via `HighPerformanceSessionController.triggerAlarmHealthCheck()`
+
+The system holds a WakeLock for the duration of the BroadcastReceiver's `onReceive()`, ensuring the CPU stays awake long enough to process the renewal.
+
+**Verification**: After the fix, diagnostic logs should show regular `wake_lock_renewed reason=alarm_renewal` events every ~3 minutes during screen-off, with no gaps longer than the lease duration.
+
+**ADB verification**:
+
+```bash
+# Verify the alarm receiver is registered in :webview process
+adb shell dumpsys alarm | grep -A2 HighPerformanceAlarmReceiver
+
+# Verify WakeLock remains held during screen-off
+adb shell dumpsys power | grep -i HighPerformanceWebSession
+```
+
 ## ADB verification
 
 Replace the package ID only if the application ID changes.

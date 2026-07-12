@@ -1,3 +1,24 @@
+## Child Kiosk Browser v0.4.3
+
+本版本修复了高性能持续运行模式下，灭屏后 WakeLock 租期过期导致 CPU 休眠、JS 定时器停止运行的根因问题。
+
+### 本轮核心变化
+
+* **AlarmManager 双保险续期机制**：在 `HighPerformanceWakeLockController` 中新增 `AlarmManager.setAndAllowWhileIdle()` 续期路径，与原有 `Handler.postDelayed` 形成双保险。`Handler.postDelayed` 在 CPU 进入 suspend/Doze 时无法唤醒 CPU，而 AlarmManager 是系统级服务，能从 Doze/suspend 中可靠唤醒 CPU 续期 WakeLock。
+* **新增 `HighPerformanceAlarmReceiver`**：注册在 `:webview` 进程的广播接收器，在闹钟触发时续期 WakeLock 并触发完整的 SessionController 健康检查（清理丢失 WebView、同步系统资源、重调度心跳），确保 CPU 休眠后所有周期性任务能恢复。
+* **续期间隔优化**：从 `leaseMs / 2`（5 分钟）缩短为 `leaseMs / 3`（~3.3 分钟），在 10 分钟租期内提供更充足的续期缓冲。
+* **无需额外权限**：`setAndAllowWhileIdle()` 为非精确闹钟，不需要 `SCHEDULE_EXACT_ALARM` 权限；应用已豁免电池优化，不受 Doze 批处理延迟影响。
+
+### 建议验证
+
+1. 安装最新 `enhanced-release.apk`。
+2. 开启高性能模式并允许当前测试网页，完全锁屏。
+3. 等待 10 分钟以上，点亮屏幕后打开运行诊断详情。
+4. 确认"最近运行诊断事件"中有规律的 `wake_lock_renewed reason=alarm_renewal` 事件（约每 3 分钟一次），且没有超过 10 分钟的空白间隔。
+5. 确认网页中的 JavaScript 定时器在灭屏期间持续正常运行。
+
+---
+
 ## Child Kiosk Browser v0.4.2
 
 本版本彻底解决了高性能持续运行模式下，Android 系统或 Chromium Blink 引擎在屏幕关闭或后台运行时挂起、节流（Throttling）JavaScript 计时器（如 `setTimeout` / `setInterval`）的问题。

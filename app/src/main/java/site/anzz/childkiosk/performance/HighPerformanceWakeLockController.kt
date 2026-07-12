@@ -1,9 +1,14 @@
 package site.anzz.childkiosk.performance
 
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
+import android.util.Log
 
 data class HighPerformanceWakeLockSnapshot(
     val state: HighPerformanceWakeLockState,
@@ -19,6 +24,11 @@ data class HighPerformanceWakeLockSnapshot(
  * Owns the single non-reference-counted PARTIAL_WAKE_LOCK used by the foreground service.
  * Every acquisition has a finite lease; a health tick renews it only while a valid session still
  * requires system-resource protection.
+ *
+ * Renewal is scheduled via TWO independent mechanisms to survive OEM aggressive battery management:
+ * 1. Handler.postDelayed – fast path when the CPU is already awake.
+ * 2. AlarmManager.setAndAllowWhileIdle – guaranteed wake from Doze/suspend even on aggressive OEMs
+ *    where Handler callbacks stop firing despite a held WakeLock.
  */
 internal class HighPerformanceWakeLockController(
     context: Context,
@@ -27,11 +37,24 @@ internal class HighPerformanceWakeLockController(
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
     private val powerManager = appContext.getSystemService(Context.POWER_SERVICE) as PowerManager
+    private val alarmManager = appContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+
     private val wakeLock: PowerManager.WakeLock by lazy {
         powerManager.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
             "${appContext.packageName}:HighPerformanceWebSession"
         ).apply { setReferenceCounted(false) }
+    }
+
+    private val renewAlarmPendingIntent by lazy {
+        PendingIntent.getBroadcast(
+            appContext,
+            ALARM_REQUEST_CODE,
+            Intent(appContext, HighPerformanceAlarmReceiver::class.java).apply {
+                action = HighPerformanceAlarmReceiver.ACTION_RENEW_WAKE_LOCK
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
     }
 
     private var required = false
@@ -42,6 +65,12 @@ internal class HighPerformanceWakeLockController(
     private var error: String? = null
     private var consecutiveFailures = 0
     private var renewalScheduled = false
+    private var lastAlarmRenewalAt: Long? = null
+
+    init {
+        // Register the static callback so the alarm receiver can trigger renewal.
+        renewalCallback = { reason -> renewFromAlarm(reason) }
+    }
 
     private val renewRunnable = Runnable {
         renewalScheduled = false
@@ -73,6 +102,7 @@ internal class HighPerformanceWakeLockController(
         runOnMain {
             required = false
             mainHandler.removeCallbacks(renewRunnable)
+            cancelRenewalAlarm()
             renewalScheduled = false
             if (isHeld()) {
                 runCatching { wakeLock.release() }
@@ -101,6 +131,7 @@ internal class HighPerformanceWakeLockController(
 
     fun destroy(reason: String) {
         release(reason)
+        renewalCallback = null
     }
 
     fun snapshot(): HighPerformanceWakeLockSnapshot = HighPerformanceWakeLockSnapshot(
@@ -119,6 +150,7 @@ internal class HighPerformanceWakeLockController(
 
     private fun acquireLease(renewal: Boolean, reason: String) {
         mainHandler.removeCallbacks(renewRunnable)
+        cancelRenewalAlarm()
         renewalScheduled = false
         runCatching {
             wakeLock.acquire(leaseMs)
@@ -154,8 +186,53 @@ internal class HighPerformanceWakeLockController(
 
     private fun scheduleRenewal() {
         if (required && !renewalScheduled) {
-            mainHandler.postDelayed(renewRunnable, (leaseMs / 2L).coerceAtLeast(MIN_RENEW_INTERVAL_MS))
+            val intervalMs = (leaseMs / RENEWAL_INTERVAL_DIVISOR).coerceAtLeast(MIN_RENEW_INTERVAL_MS)
+            // Fast path: Handler-based renewal fires when the CPU is already awake.
+            mainHandler.postDelayed(renewRunnable, intervalMs)
+            // Guaranteed path: AlarmManager wakes the CPU from Doze/suspend even on aggressive OEMs.
+            scheduleRenewalAlarm(intervalMs)
             renewalScheduled = true
+        }
+    }
+
+    private fun scheduleRenewalAlarm(intervalMs: Long) {
+        runCatching {
+            val triggerAt = SystemClock.elapsedRealtime() + intervalMs
+            alarmManager.setAndAllowWhileIdle(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                triggerAt,
+                renewAlarmPendingIntent
+            )
+        }.onFailure { failure ->
+            Log.w("HighPerformanceWakeLock", "Failed to schedule renewal alarm: ${failure.javaClass.simpleName}")
+            HighPerformanceDiagnostics.record(
+                type = "wake_lock_alarm_schedule_failed",
+                result = "failed",
+                reason = failure.javaClass.simpleName
+            )
+        }
+    }
+
+    private fun cancelRenewalAlarm() {
+        runCatching {
+            alarmManager.cancel(renewAlarmPendingIntent)
+        }
+    }
+
+    /**
+     * Called by [HighPerformanceAlarmReceiver] when the AlarmManager fires.
+     * Renews the WakeLock if still required, ensuring CPU stays awake during Doze/suspend.
+     */
+    private fun renewFromAlarm(reason: String) {
+        runOnMain {
+            lastAlarmRenewalAt = System.currentTimeMillis()
+            if (required) {
+                Log.d("HighPerformanceWakeLock", "Alarm-triggered renewal: $reason")
+                acquireLease(renewal = true, reason = reason)
+            } else {
+                // WakeLock no longer required; ensure no stray alarm remains.
+                cancelRenewalAlarm()
+            }
         }
     }
 
@@ -178,6 +255,20 @@ internal class HighPerformanceWakeLockController(
         private const val MIN_LEASE_MS = 60_000L
         private const val MAX_LEASE_MS = 15 * 60_000L
         private const val MIN_RENEW_INTERVAL_MS = 30_000L
+        private const val RENEWAL_INTERVAL_DIVISOR = 3L
+        private const val ALARM_REQUEST_CODE = 4110
+
         private val RETRY_DELAYS_MS = longArrayOf(10_000L, 30_000L, 120_000L)
+
+        @Volatile
+        private var renewalCallback: ((String) -> Unit)? = null
+
+        /**
+         * Called by [HighPerformanceAlarmReceiver] when the AlarmManager fires.
+         * If the controller is active, it renews the WakeLock on the main thread.
+         */
+        internal fun triggerAlarmRenewal(reason: String = "alarm_renewal") {
+            renewalCallback?.invoke(reason)
+        }
     }
 }
