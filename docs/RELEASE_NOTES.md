@@ -1,3 +1,27 @@
+## Child Kiosk Browser v0.4.5
+
+本版本修复了 v0.4.4 中跳过 `super.onStop()` 导致 App 息屏/后台时直接退出的严重回归问题，改用反射方案阻断 Chromium 生命周期回调。
+
+### 本轮核心变化
+
+* **修复 v0.4.4 严重回归**：v0.4.4 中在高性能模式下跳过 `super.onStop()` 违反了 Android Activity 生命周期约束，导致系统强制杀掉进程。本版本改用反射方案：在调用 `super.onStop()` 前临时移除 Application 中所有 `ActivityLifecycleCallbacks`，`super.onStop()` 正常执行但 Chromium 收不到 `onActivityStopped` 回调，执行完毕后立即恢复所有回调。
+* **新增 `HighPerformanceLifecycleInterceptor`**：封装反射逻辑，通过 `suspendCallbacks` / `restoreCallbacks` 临时移除和恢复 Application 级生命周期回调。
+* **`super.onStop()` 后双重保障**：调用 `webView.onResume()` 反转任何 Chromium 暂停效果，并重新注入 JS 可见性覆盖。
+* **Page Visibility API JS 覆盖**：覆盖 `document.visibilityState`、`document.hidden` 等属性，拦截 `visibilitychange` 事件。
+* **JS 心跳诊断探针**：每 10 秒输出 `[HP_HEARTBEAT]` 时间戳，可通过 logcat 验证 JS 执行连续性。
+* **新增生命周期诊断事件**：`activity_resumed`、`activity_started`、`activity_paused`、`activity_stopped`、`activity_stop_intercepted`、`activity_destroyed`。
+
+### 建议验证
+
+1. 安装最新 `enhanced-release.apk`。
+2. 开启高性能模式并打开测试网页。
+3. **首先验证基本可用性**：息屏后亮屏，App 不应退出；切换到后台再切回，网页不应关闭。
+4. 通过 logcat 过滤心跳：`adb logcat -v time | grep -E 'HP_HEARTBEAT|HP_VISIBILITY_OVERRIDE'`
+   - 息屏后如果 `[HP_HEARTBEAT]` 仍然每 10 秒输出 → JS 正在正常运行。
+5. 亮屏后打开运行诊断详情，确认出现 `activity_stop_intercepted` 事件。
+
+---
+
 ## Child Kiosk Browser v0.4.4
 
 本版本修复了高性能持续运行模式下，灭屏后 Chromium 引擎通过 Activity 生命周期回调直接冻结 JS 定时器的根因问题。

@@ -104,6 +104,7 @@ import site.anzz.childkiosk.util.WebViewRuntimeConfig
 import site.anzz.childkiosk.util.WebViewPool
 import site.anzz.childkiosk.performance.HighPerformanceActivityState
 import site.anzz.childkiosk.performance.HighPerformanceDiagnostics
+import site.anzz.childkiosk.performance.HighPerformanceLifecycleInterceptor
 import site.anzz.childkiosk.performance.HighPerformanceRuntimePublisher
 import site.anzz.childkiosk.performance.HighPerformanceSessionController
 import site.anzz.childkiosk.performance.HighPerformanceTabMemoryCandidate
@@ -708,22 +709,34 @@ class WebViewActivity : ComponentActivity() {
             tab.webView?.let { HighPerformanceSessionController.isProtected(it) } == true
         }
         if (hasProtectedTab) {
-            // CRITICAL: When a high-performance session is active, we must NOT call super.onStop().
-            // Chromium's WebViewChromium registers an Application.ActivityLifecycleCallbacks
-            // that receives onActivityStopped() directly — bypassing all View-level visibility
-            // overrides in PersistentWebView. This causes Chromium to internally set
-            // Page::SetVisibilityState(kHidden), which immediately throttles/freezes JS timers.
-            // By skipping super.onStop(), we prevent:
-            //   1. Window.setActive(false) → View visibility propagation
-            //   2. Application.dispatchActivityStopped() → Chromium's lifecycle observer
-            // The Activity's Lifecycle stays in STARTED state, which is the desired behavior
-            // for high-performance mode (we want the WebView to think it's still in foreground).
+            // Chromium registers an Application.ActivityLifecycleCallbacks that receives
+            // onActivityStopped() directly — bypassing all View-level visibility overrides.
+            // This causes Chromium to set Page::SetVisibilityState(kHidden), which immediately
+            // freezes JS timers.
+            //
+            // We temporarily remove all ActivityLifecycleCallbacks from the Application,
+            // call super.onStop() normally (so ComponentActivity lifecycle works correctly),
+            // then restore them. Chromium never sees the stop event.
             HighPerformanceDiagnostics.record(
-                type = "activity_stop_suppressed",
+                type = "activity_stop_intercepted",
                 reason = "high_performance_active"
             )
-            Log.d("ChildKioskWebView", "onStop: super.onStop() SKIPPED (high-performance active)")
+            Log.d("ChildKioskWebView", "onStop: intercepting lifecycle callbacks (high-performance active)")
             stopAllNativeLocationRequests("activity_stop")
+            val token = HighPerformanceLifecycleInterceptor.suspendCallbacks(application)
+            try {
+                super.onStop()
+            } finally {
+                HighPerformanceLifecycleInterceptor.restoreCallbacks(application, token)
+            }
+            // After super.onStop() completes without Chromium's interference, force the
+            // WebView to think it's still in the foreground.
+            tabList.forEach { tab ->
+                tab.webView?.let { webView ->
+                    webView.onResume()
+                    injectHighPerformanceVisibilityOverride(webView)
+                }
+            }
         } else {
             HighPerformanceDiagnostics.record(type = "activity_stopped", reason = "lifecycle")
             HighPerformanceSessionController.onActivityStateChanged(

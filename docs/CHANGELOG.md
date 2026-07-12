@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-07-12
+
+### Fixed — 修复
+
+- **v0.4.4 跳过 super.onStop() 导致 App 息屏/后台时直接退出**：
+  - **根因**：v0.4.4 中在高性能模式下直接跳过 `super.onStop()`，违反了 Android Activity 生命周期约束。系统检测到 Activity 未正确执行 `onStop` 流程后强制杀掉进程，导致 App 息屏后直接退出、切换到后台时网页关闭。
+  - **修复**：改用反射方案。在调用 `super.onStop()` 前，通过反射临时移除 `Application` 中所有已注册的 `ActivityLifecycleCallbacks`，这样 `super.onStop()` 正常执行（ComponentActivity 的 LifecycleRegistry 正常工作），但 Chromium 注册的回调不会收到 `onActivityStopped()` 通知，从而不会设置 `Page::SetVisibilityState(kHidden)`，JS 定时器不会被冻结。`super.onStop()` 执行完毕后立即恢复所有回调。
+  - 新增 `HighPerformanceLifecycleInterceptor` 工具类封装反射逻辑。
+  - 在 `super.onStop()` 后额外调用 `webView.onResume()` 和重新注入 JS 可见性覆盖，双重保障。
+- **Page Visibility API JS 覆盖**：注入 JS 覆盖 `document.visibilityState`、`document.hidden` 等属性，并拦截 `visibilitychange` 事件。
+- **JS 心跳诊断探针**：注入每 10 秒输出 `[HP_HEARTBEAT]` 的 `setInterval`，可通过 logcat 验证 JS 执行连续性。
+- **新增生命周期诊断事件**：`activity_resumed`、`activity_started`、`activity_paused`、`activity_stopped`、`activity_stop_intercepted`、`activity_destroyed`。
+
 ## [0.4.4] - 2026-07-12
 
 ### Fixed — 修复
