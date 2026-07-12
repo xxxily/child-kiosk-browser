@@ -1,3 +1,25 @@
+## Child Kiosk Browser v0.4.4
+
+本版本修复了高性能持续运行模式下，灭屏后 Chromium 引擎通过 Activity 生命周期回调直接冻结 JS 定时器的根因问题。
+
+### 本轮核心变化
+
+* **跳过 `super.onStop()` 阻断 Chromium 生命周期监听**：Chromium 的 `WebViewChromium` 通过 `Application.ActivityLifecycleCallbacks` 直接监听 `Activity.onStop()`，绕过了所有 View 层级的可见性覆盖。当 `super.onStop()` 被调用时，Chromium 收到 `onActivityStopped()` → 内部设置 `Page::SetVisibilityState(kHidden)` → JS 定时器立即被节流/冻结。修复方案：在高性能会话激活时，`WebViewActivity.onStop()` 不调用 `super.onStop()`，使 Chromium 无法感知 Activity 已停止。
+* **Page Visibility API JS 覆盖**：在页面提交可见时注入 JS，覆盖 `document.visibilityState`、`document.hidden` 等属性返回 `visible`/`false`，并拦截 `visibilitychange` 事件，防止页面自身 JS 感知到隐藏后暂停逻辑。
+* **JS 心跳诊断探针**：注入每 10 秒输出 `[HP_HEARTBEAT]` 时间戳的 `setInterval`，可通过 logcat 验证 JS 执行连续性。
+* **新增生命周期诊断事件**：`activity_resumed`、`activity_started`、`activity_paused`、`activity_stopped`、`activity_stop_suppressed`、`activity_destroyed`。
+
+### 建议验证
+
+1. 安装最新 `enhanced-release.apk`。
+2. 开启高性能模式并打开测试网页，完全锁屏。
+3. 通过 logcat 过滤心跳：`adb logcat -v time | grep -E 'HP_HEARTBEAT|HP_VISIBILITY_OVERRIDE'`
+   - 息屏后如果 `[HP_HEARTBEAT]` 仍然每 10 秒输出 → JS 正在正常运行。
+   - 如果心跳停止 → 说明还有其他节流路径需要排查。
+4. 亮屏后打开运行诊断详情，确认出现 `activity_stop_suppressed` 事件（而非 `activity_stopped`）。
+
+---
+
 ## Child Kiosk Browser v0.4.3
 
 本版本修复了高性能持续运行模式下，灭屏后 WakeLock 租期过期导致 CPU 休眠、JS 定时器停止运行的根因问题。

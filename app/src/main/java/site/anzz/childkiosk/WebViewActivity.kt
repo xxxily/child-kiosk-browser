@@ -103,6 +103,7 @@ import site.anzz.childkiosk.util.WebViewRuntime
 import site.anzz.childkiosk.util.WebViewRuntimeConfig
 import site.anzz.childkiosk.util.WebViewPool
 import site.anzz.childkiosk.performance.HighPerformanceActivityState
+import site.anzz.childkiosk.performance.HighPerformanceDiagnostics
 import site.anzz.childkiosk.performance.HighPerformanceRuntimePublisher
 import site.anzz.childkiosk.performance.HighPerformanceSessionController
 import site.anzz.childkiosk.performance.HighPerformanceTabMemoryCandidate
@@ -639,6 +640,7 @@ class WebViewActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        HighPerformanceDiagnostics.record(type = "activity_resumed", reason = "lifecycle")
         HighPerformanceSessionController.onActivityStateChanged(
             highPerformanceOwnerId,
             HighPerformanceActivityState.RESUMED
@@ -647,14 +649,22 @@ class WebViewActivity : ComponentActivity() {
             source = "activity_resume"
         )
         applySystemUiMode()
+        // Re-inject visibility override after resuming, in case the page was navigated
+        rootWebView?.let { injectHighPerformanceVisibilityOverride(it) }
     }
 
     override fun onStart() {
         super.onStart()
+        HighPerformanceDiagnostics.record(type = "activity_started", reason = "lifecycle")
         HighPerformanceSessionController.onActivityStateChanged(
             highPerformanceOwnerId,
             HighPerformanceActivityState.STARTED
         )
+    }
+
+    override fun onPause() {
+        HighPerformanceDiagnostics.record(type = "activity_paused", reason = "lifecycle")
+        super.onPause()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -694,15 +704,92 @@ class WebViewActivity : ComponentActivity() {
     }
 
     override fun onStop() {
-        HighPerformanceSessionController.onActivityStateChanged(
-            highPerformanceOwnerId,
-            HighPerformanceActivityState.STOPPED
-        )
-        stopAllNativeLocationRequests("activity_stop")
-        super.onStop()
+        val hasProtectedTab = tabList.any { tab ->
+            tab.webView?.let { HighPerformanceSessionController.isProtected(it) } == true
+        }
+        if (hasProtectedTab) {
+            // CRITICAL: When a high-performance session is active, we must NOT call super.onStop().
+            // Chromium's WebViewChromium registers an Application.ActivityLifecycleCallbacks
+            // that receives onActivityStopped() directly — bypassing all View-level visibility
+            // overrides in PersistentWebView. This causes Chromium to internally set
+            // Page::SetVisibilityState(kHidden), which immediately throttles/freezes JS timers.
+            // By skipping super.onStop(), we prevent:
+            //   1. Window.setActive(false) → View visibility propagation
+            //   2. Application.dispatchActivityStopped() → Chromium's lifecycle observer
+            // The Activity's Lifecycle stays in STARTED state, which is the desired behavior
+            // for high-performance mode (we want the WebView to think it's still in foreground).
+            HighPerformanceDiagnostics.record(
+                type = "activity_stop_suppressed",
+                reason = "high_performance_active"
+            )
+            Log.d("ChildKioskWebView", "onStop: super.onStop() SKIPPED (high-performance active)")
+            stopAllNativeLocationRequests("activity_stop")
+        } else {
+            HighPerformanceDiagnostics.record(type = "activity_stopped", reason = "lifecycle")
+            HighPerformanceSessionController.onActivityStateChanged(
+                highPerformanceOwnerId,
+                HighPerformanceActivityState.STOPPED
+            )
+            stopAllNativeLocationRequests("activity_stop")
+            super.onStop()
+        }
+    }
+
+    /**
+     * Injects JavaScript to override the Page Visibility API when a high-performance session
+     * is active. This prevents web pages from detecting they are hidden and pausing their own
+     * logic (e.g. stopping timers, pausing WebSocket reconnection, etc.).
+     *
+     * Also injects a heartbeat timer that logs timestamps every 10 seconds via console.log,
+     * so the user can verify JS execution continuity through logcat.
+     */
+    private fun injectHighPerformanceVisibilityOverride(webView: WebView) {
+        if (!HighPerformanceSessionController.isProtected(webView)) return
+        val js = """
+            (function() {
+                try {
+                    // Override Page Visibility API
+                    Object.defineProperty(document, 'visibilityState', {
+                        get: function() { return 'visible'; },
+                        configurable: true
+                    });
+                    Object.defineProperty(document, 'hidden', {
+                        get: function() { return false; },
+                        configurable: true
+                    });
+                    Object.defineProperty(document, 'webkitVisibilityState', {
+                        get: function() { return 'visible'; },
+                        configurable: true
+                    });
+                    Object.defineProperty(document, 'webkitHidden', {
+                        get: function() { return false; },
+                        configurable: true
+                    });
+                    // Prevent visibilitychange events from reaching page listeners
+                    document.addEventListener('visibilitychange', function(e) {
+                        e.stopImmediatePropagation();
+                    }, true);
+                    document.addEventListener('webkitvisibilitychange', function(e) {
+                        e.stopImmediatePropagation();
+                    }, true);
+                    // Heartbeat: log timestamp every 10 seconds for diagnostic verification
+                    if (!window.__hpHeartbeat) {
+                        window.__hpHeartbeat = true;
+                        setInterval(function() {
+                            console.log('[HP_HEARTBEAT] ' + Date.now());
+                        }, 10000);
+                        console.log('[HP_VISIBILITY_OVERRIDE] injected at ' + Date.now());
+                    }
+                } catch(e) {
+                    console.log('[HP_VISIBILITY_OVERRIDE_ERROR] ' + e.message);
+                }
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(js, null)
     }
 
     override fun onDestroy() {
+        HighPerformanceDiagnostics.record(type = "activity_destroyed", reason = "lifecycle")
         failPendingHighPerformanceRecoveries("activity_destroyed_before_recovery_completed")
         HighPerformanceSessionController.onActivityStateChanged(
             highPerformanceOwnerId,
@@ -2525,12 +2612,13 @@ class WebViewActivity : ComponentActivity() {
                 maybeWarmupNativeLocation(pageUrl)
                 HighPerformanceSessionController.onNavigationStarted(webView, pageUrl)
             },
-            onPageCommitVisibleInActivity = { webView, pageUrl ->
-                HighPerformanceSessionController.onPageCommitted(webView, pageUrl)
-                tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
-                    recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
-                }
-            },
+onPageCommitVisibleInActivity = { webView, pageUrl ->
+HighPerformanceSessionController.onPageCommitted(webView, pageUrl)
+tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
+recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
+}
+injectHighPerformanceVisibilityOverride(webView)
+},
             onPageFinishedInActivity = { webView, pageUrl ->
                 updatePullToRefreshPagePolicy(webView, pageUrl)
                 HighPerformanceSessionController.onPageFinishedFallback(webView, pageUrl)
@@ -2800,12 +2888,13 @@ class WebViewActivity : ComponentActivity() {
                 maybeWarmupNativeLocation(pageUrl)
                 HighPerformanceSessionController.onNavigationStarted(webView, pageUrl)
             },
-            onPageCommitVisibleInActivity = { webView, pageUrl ->
-                HighPerformanceSessionController.onPageCommitted(webView, pageUrl)
-                tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
-                    recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
-                }
-            },
+onPageCommitVisibleInActivity = { webView, pageUrl ->
+HighPerformanceSessionController.onPageCommitted(webView, pageUrl)
+tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
+recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
+}
+injectHighPerformanceVisibilityOverride(webView)
+},
             onPageFinishedInActivity = { webView, pageUrl ->
                 updatePullToRefreshPagePolicy(webView, pageUrl)
                 HighPerformanceSessionController.onPageFinishedFallback(webView, pageUrl)

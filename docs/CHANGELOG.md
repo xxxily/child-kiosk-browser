@@ -6,6 +6,17 @@
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-07-12
+
+### Fixed — 修复
+
+- **灭屏后 Chromium 直接冻结 JS 定时器的根因修复**：
+  - **根因**：v0.4.2 和 v0.4.3 的修复仅覆盖了 View 层级的可见性欺骗（`PersistentWebView` 重写）和 WakeLock 续期（`AlarmManager`），但遗漏了 Chromium 内部绕过 View 层级的检测路径。Chromium 的 `WebViewChromium` 通过 `Application.ActivityLifecycleCallbacks` 直接监听 `Activity.onStop()`，当 `super.onStop()` 被调用时，Chromium 收到 `onActivityStopped()` 回调 → 内部设置 `Page::SetVisibilityState(kHidden)` → JS 定时器立即被节流/冻结。这条路径完全绕过了 View 层级的所有覆盖。
+  - **修复**：在 `WebViewActivity.onStop()` 中，当存在受高性能保护的标签页时，不调用 `super.onStop()`，从而阻止 `Application.dispatchActivityStopped()` 的触发，使 Chromium 无法感知 Activity 已停止。Activity 生命周期保持在 STARTED 状态，WebView 认为自己仍在前台。
+  - **Page Visibility API JS 覆盖**：新增 `injectHighPerformanceVisibilityOverride()` 方法，在页面提交可见时注入 JS 覆盖 `document.visibilityState`、`document.hidden` 等属性，并拦截 `visibilitychange` 事件，防止页面自身 JS 感知到隐藏后暂停逻辑。
+  - **JS 心跳诊断探针**：注入的心跳每 10 秒通过 `console.log('[HP_HEARTBEAT] ' + Date.now())` 输出时间戳，可通过 logcat 验证 JS 执行连续性。
+  - **新增生命周期诊断事件**：`activity_resumed`、`activity_started`、`activity_paused`、`activity_stopped`、`activity_stop_suppressed`、`activity_destroyed`，方便追踪 Activity 生命周期状态。
+
 ## [0.4.3] - 2026-07-12
 
 ### Fixed — 修复
