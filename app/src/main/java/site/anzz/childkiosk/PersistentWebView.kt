@@ -24,6 +24,18 @@ class PersistentWebView @JvmOverloads constructor(
     private var hasLoggedVisibilityDeception = false
     private var hasLoggedScreenDeception = false
 
+    /**
+     * When true, the WebView reports itself as a non-text-editor so the system IME is never
+     * invoked for this view. This is an opt-in restriction controlled by the parent setting
+     * [site.anzz.childkiosk.util.KioskPrefs.isLimitImeInputEnabled].
+     */
+    var imeInputLimited: Boolean = false
+
+    override fun onCheckIsTextEditor(): Boolean {
+        if (imeInputLimited) return false
+        return super.onCheckIsTextEditor()
+    }
+
     override fun onWindowVisibilityChanged(visibility: Int) {
         if (HighPerformanceSessionController.isProtected(this)) {
             if (visibility != View.VISIBLE) {

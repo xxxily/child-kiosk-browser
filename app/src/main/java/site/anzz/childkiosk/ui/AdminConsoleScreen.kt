@@ -1488,6 +1488,7 @@ fun AdminConsoleScreen(
                     var limitAdBlock by remember { mutableStateOf(KioskPrefs.isLimitAdBlockEnabled(context)) }
                     var limitDownload by remember { mutableStateOf(KioskPrefs.isLimitDownloadEnabled(context)) }
                     var limitLongClick by remember { mutableStateOf(KioskPrefs.isLimitLongClickEnabled(context)) }
+                    var limitImeInput by remember { mutableStateOf(KioskPrefs.isLimitImeInputEnabled(context)) }
                     var limitUrlRedirect by remember { mutableStateOf(KioskPrefs.isLimitUrlRedirectEnabled(context)) }
                     var pullToRefreshEnabled by remember { mutableStateOf(KioskPrefs.isPullToRefreshEnabled(context)) }
                     var floatingBrowserControlsEnabled by remember {
@@ -2265,6 +2266,28 @@ fun AdminConsoleScreen(
                                         onCheckedChange = {
                                             limitLongClick = it
                                             KioskPrefs.setLimitLongClickEnabled(context, it)
+                                            onSandboxLimitsChanged()
+                                        }
+                                    )
+                                }
+
+                                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                                // 选项: 输入法限制
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("限制输入法调起", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("默认允许输入框调起系统输入法；开启后阻止网页输入框触发键盘弹起", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(
+                                        checked = limitImeInput,
+                                        onCheckedChange = {
+                                            limitImeInput = it
+                                            KioskPrefs.setLimitImeInputEnabled(context, it)
                                             onSandboxLimitsChanged()
                                         }
                                     )

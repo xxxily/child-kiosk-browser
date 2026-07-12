@@ -664,8 +664,19 @@ class WebViewActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) applySystemUiMode()
+        // 当输入法可见时，跳过系统 UI 模式重设，避免隐藏系统栏导致输入法被收起
+        if (hasFocus && !isImeVisible) applySystemUiMode()
     }
+
+    private val isImeVisible: Boolean
+        get() =
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                window.decorView.rootWindowInsets?.isVisible(
+                    android.view.WindowInsets.Type.ime()
+                ) == true
+            } else {
+                false
+            }
 
 
 
@@ -1045,6 +1056,17 @@ class WebViewActivity : ComponentActivity() {
             SystemUiHelper.enterImmersive(this)
         }
         webViewRoot?.let { ViewCompat.requestApplyInsets(it) }
+    }
+
+    /**
+     * 将当前 [WebViewRuntimeConfig.limitImeInput] 同步到所有已创建的 [PersistentWebView]，
+     * 确保设置变更后对已存在的标签页立即生效。
+     */
+    private fun applyImeInputLimitToAllWebViews() {
+        val limited = runtimeConfig.limitImeInput
+        tabList.forEach { tab ->
+            (tab.webView as? PersistentWebView)?.let { it.imeInputLimited = limited }
+        }
     }
 
     private fun shouldUseNormalSystemBars(): Boolean {
@@ -1906,6 +1928,7 @@ class WebViewActivity : ComponentActivity() {
             launchedConfig.highPerformanceSnapshot.configVersion
         )
         runtimeConfig = launchedConfig.copy(highPerformanceSnapshot = publishedSnapshot)
+        applyImeInputLimitToAllWebViews()
         HighPerformanceSessionController.applySnapshot(
             publishedSnapshot,
             source = "activity_new_intent"
@@ -2166,12 +2189,18 @@ class WebViewActivity : ComponentActivity() {
         val initialBottom = root.paddingBottom
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val navigationBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            val imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
             val shouldInsetForNormalMode = shouldUseNormalSystemBars()
+            // IME insets 始终生效，确保输入法弹出时内容区域不被遮挡
+            val imeBottom = imeInsets.bottom
+            val navBottom = if (shouldInsetForNormalMode) navigationBars.bottom else 0
+            // 当 IME 可见时，IME insets 已包含导航栏高度，取最大值避免重复 padding
+            val effectiveBottom = if (imeBottom > 0) maxOf(imeBottom, navBottom) else navBottom
             view.setPadding(
                 initialLeft + if (shouldInsetForNormalMode) navigationBars.left else 0,
                 initialTop, // 移除对 statusBars.top 的 padding，使 WebView 延伸到状态栏下方以实现透明底状态栏
                 initialRight + if (shouldInsetForNormalMode) navigationBars.right else 0,
-                initialBottom + if (shouldInsetForNormalMode) navigationBars.bottom else 0
+                initialBottom + effectiveBottom
             )
             insets
         }
@@ -4354,6 +4383,9 @@ private fun createSecureWebView(
 
     return webView.apply {
         WebViewRuntime.applySettings(this, ctx, targetUrl, runtimeConfig)
+        if (this is PersistentWebView) {
+            imeInputLimited = runtimeConfig.limitImeInput
+        }
         WebViewRuntime.logWebViewDiagnostics(
             ctx,
             "create_secure_webview",
