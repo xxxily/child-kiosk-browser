@@ -27,8 +27,8 @@ data class HighPerformanceWakeLockSnapshot(
  *
  * Renewal is scheduled via TWO independent mechanisms to survive OEM aggressive battery management:
  * 1. Handler.postDelayed – fast path when the CPU is already awake.
- * 2. AlarmManager.setAndAllowWhileIdle – guaranteed wake from Doze/suspend even on aggressive OEMs
- *    where Handler callbacks stop firing despite a held WakeLock.
+ * 2. AlarmManager.setAndAllowWhileIdle – best-effort wake path for Doze/suspend when Handler
+ *    callbacks are delayed. Android may batch this inexact alarm, especially on aggressive OEMs.
  */
 internal class HighPerformanceWakeLockController(
     context: Context,
@@ -189,7 +189,7 @@ internal class HighPerformanceWakeLockController(
             val intervalMs = (leaseMs / RENEWAL_INTERVAL_DIVISOR).coerceAtLeast(MIN_RENEW_INTERVAL_MS)
             // Fast path: Handler-based renewal fires when the CPU is already awake.
             mainHandler.postDelayed(renewRunnable, intervalMs)
-            // Guaranteed path: AlarmManager wakes the CPU from Doze/suspend even on aggressive OEMs.
+            // Best-effort wake path. The platform may batch this inexact idle alarm.
             scheduleRenewalAlarm(intervalMs)
             renewalScheduled = true
         }

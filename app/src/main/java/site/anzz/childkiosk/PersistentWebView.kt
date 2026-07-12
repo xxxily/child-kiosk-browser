@@ -12,8 +12,8 @@ import site.anzz.childkiosk.performance.HighPerformanceSessionController
  * A specialized [WebView] that intercepts and overrides visibility/screen-state changes
  * when a high-performance session is active.
  *
- * This deceives the Chromium WebView engine into thinking it is always active on a visible
- * window, preventing background/screen-off CPU and JS timer throttling.
+ * This reports a visible WebView surface to reduce page-driven and provider-specific background
+ * throttling. It cannot override every Blink, Android, or OEM scheduling decision.
  */
 class PersistentWebView @JvmOverloads constructor(
     context: Context,

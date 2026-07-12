@@ -14,8 +14,9 @@ import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import site.anzz.childkiosk.MainActivity
 import site.anzz.childkiosk.R
+import site.anzz.childkiosk.WebViewActivityLauncher
+import site.anzz.childkiosk.WebViewHostRuntime
 
 /**
  * Foreground-resource owner for already-existing trusted WebView sessions.
@@ -200,15 +201,14 @@ internal class HighPerformanceForegroundService : Service() {
     }
 
     private fun createNotification(request: HighPerformanceResourceRequest): Notification {
-        val contentIntent = PendingIntent.getActivity(
-            this,
-            REQUEST_CODE_OPEN_BROWSER,
-            Intent(this, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                putExtra(MainActivity.EXTRA_FORCE_SAFE_HOME, true)
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val contentIntent = WebViewHostRuntime.currentHostMode()?.let { hostMode ->
+            PendingIntent.getActivity(
+                this,
+                REQUEST_CODE_OPEN_BROWSER,
+                WebViewActivityLauncher.createResumeIntent(this, hostMode),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
         val stopIntent = PendingIntent.getService(
             this,
             REQUEST_CODE_STOP,
@@ -228,7 +228,7 @@ internal class HighPerformanceForegroundService : Service() {
             .setContentTitle("可信网页正在高性能运行")
             .setContentText(countText)
             .setStyle(NotificationCompat.BigTextStyle().bigText("$countText；灭屏后仍可能持续联网和执行网页任务"))
-            .setContentIntent(contentIntent)
+            .apply { contentIntent?.let(::setContentIntent) }
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)

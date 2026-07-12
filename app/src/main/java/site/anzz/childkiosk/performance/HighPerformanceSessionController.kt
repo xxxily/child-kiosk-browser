@@ -25,6 +25,11 @@ internal data class HighPerformanceRendererGoneResult(
     val hadActiveSession: Boolean
 )
 
+internal fun shouldDeferForegroundServiceStart(
+    serviceAlreadyActive: Boolean,
+    ownerInForeground: Boolean
+): Boolean = !serviceAlreadyActive && !ownerInForeground
+
 /**
  * :webview-process state machine for top-level, rule-qualified WebViews.
  *
@@ -91,9 +96,7 @@ internal object HighPerformanceSessionController {
             }
             syncSystemResources("health_check")
             publishStatus()
-            if (registrations.isNotEmpty()) {
-                mainHandler.postDelayed(this, STATUS_HEARTBEAT_MS)
-            }
+            scheduleHeartbeat()
         }
     }
 
@@ -586,11 +589,9 @@ internal object HighPerformanceSessionController {
         ensureMainThread()
         foregroundServiceState = HighPerformanceForegroundServiceState.FAILED
         foregroundServiceError = safeRuntimeId(error)
-        suppressAllCurrentSessions("fgs_start_failed")
-        lastInterruptionAt = System.currentTimeMillis()
         HighPerformanceDiagnostics.record(
             type = "fgs_start_failed",
-            result = "failed",
+            result = "degraded",
             reason = error
         )
         publishStatus()
@@ -606,8 +607,6 @@ internal object HighPerformanceSessionController {
         foregroundServiceStartedAt = null
         if (!expected) {
             foregroundServiceError = "service_stopped_unexpectedly"
-            suppressAllCurrentSessions("service_stopped_unexpectedly")
-            lastInterruptionAt = System.currentTimeMillis()
         } else if (activeSessions().isEmpty() && foregroundServiceError != "foreground_activity_required") {
             foregroundServiceError = null
         }
@@ -625,13 +624,50 @@ internal object HighPerformanceSessionController {
         publishStatus()
     }
 
-    private fun suppressAllCurrentSessions(reason: String) {
-        restartPolicy.suppressAll(registrations.map(ManagedWebView::tabKey))
-        registrations.forEach { managed ->
-            managed.explicitlySuppressed = true
-            stopSession(managed, reason = reason, restoreRenderer = true)
+    internal fun debugStateForTests(): HighPerformanceControllerDebugState {
+        ensureMainThread()
+        return HighPerformanceControllerDebugState(
+            registrationCount = registrations.size,
+            activeSessionCount = activeSessions().size,
+            foregroundServiceState = foregroundServiceState,
+            foregroundServiceError = foregroundServiceError,
+            suppressedRegistrationCount = registrations.count { it.explicitlySuppressed },
+            stoppedRegistrationCount = registrations.count {
+                it.activityState == HighPerformanceActivityState.STOPPED
+            }
+        )
+    }
+
+    internal fun resetForTests() {
+        ensureMainThread()
+        mainHandler.removeCallbacks(heartbeat)
+        mainHandler.removeCallbacks(stopServiceAfterGrace)
+        registrations.toList().forEach { managed ->
+            stopSession(managed, reason = "test_reset", restoreRenderer = true)
         }
-        syncSystemResources(reason)
+        registrations.clear()
+        ownerStates.clear()
+        ownersWarnedAboutProtectedMemoryCap.clear()
+        restartPolicy.clearSuppression()
+        appContext = null
+        runtimeSnapshot = HighPerformanceRuntimeSnapshot.disabled()
+        foregroundServiceState = HighPerformanceForegroundServiceState.STOPPED
+        foregroundServiceError = null
+        foregroundServiceStartedAt = null
+        serviceStopDeadlineElapsed = null
+        wakeLockSnapshot = HighPerformanceWakeLockSnapshot(
+            state = HighPerformanceWakeLockState.NOT_HELD,
+            required = false,
+            acquiredAt = null,
+            lastRenewedAt = null,
+            lastReleasedAt = null,
+            leaseMs = DEFAULT_HIGH_PERFORMANCE_WAKE_LOCK_LEASE_MS,
+            error = null
+        )
+        lastSessionStartedAt = null
+        lastSessionStoppedAt = null
+        lastInterruptionAt = null
+        lastSystemState = null
     }
 
     private fun evaluate(managed: ManagedWebView, url: String?, source: String) {
@@ -756,7 +792,7 @@ internal object HighPerformanceSessionController {
                         managed.activityState == HighPerformanceActivityState.RESUMED
                     )
             }
-            if (!serviceAlreadyActive && !ownerInForeground) {
+            if (shouldDeferForegroundServiceStart(serviceAlreadyActive, ownerInForeground)) {
                 if (foregroundServiceError != "foreground_activity_required") {
                     foregroundServiceError = "foreground_activity_required"
                     HighPerformanceDiagnostics.record(
@@ -1042,3 +1078,12 @@ internal object HighPerformanceSessionController {
 
     private const val STATUS_HEARTBEAT_MS = 30_000L
 }
+
+internal data class HighPerformanceControllerDebugState(
+    val registrationCount: Int,
+    val activeSessionCount: Int,
+    val foregroundServiceState: HighPerformanceForegroundServiceState,
+    val foregroundServiceError: String?,
+    val suppressedRegistrationCount: Int,
+    val stoppedRegistrationCount: Int
+)

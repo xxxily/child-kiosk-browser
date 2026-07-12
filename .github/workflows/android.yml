@@ -33,8 +33,16 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+      - name: Grant execute permission for build scripts
+        run: chmod +x gradlew scripts/verify-webview-task-manifest.sh
+
+      - name: Run unit tests
+        run: ./gradlew :app:testStandardDebugUnitTest :app:testEnhancedDebugUnitTest --stacktrace
+
+      - name: Verify WebView task manifests
+        run: |
+          scripts/verify-webview-task-manifest.sh app/build/intermediates/merged_manifest/standardDebug/AndroidManifest.xml
+          scripts/verify-webview-task-manifest.sh app/build/intermediates/merged_manifest/enhancedDebug/AndroidManifest.xml
 
       - name: Build Release APKs
         run: ./gradlew :app:assembleStandardRelease :app:assembleEnhancedRelease --stacktrace

@@ -171,7 +171,7 @@ class MainActivity : ComponentActivity() {
                                             FloatingBrowserControlsOverlay(ctx).apply {
                                                 setCallbacks(FloatingBrowserControlsCallbacks(
                                                     onNavigateToUrl = { url ->
-                                                        val intent = Intent(ctx, WebViewActivity::class.java).apply {
+                                                        val intent = WebViewActivityLauncher.createIntent(ctx).apply {
                                                             putExtra(WebViewActivity.EXTRA_CUSTOM_URL, url)
                                                             putExtra(WebViewActivity.EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART, true)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
@@ -181,7 +181,7 @@ class MainActivity : ComponentActivity() {
                                                         ctx.startActivity(intent)
                                                     },
                                                     onNewTab = {
-                                                        val intent = Intent(ctx, WebViewActivity::class.java).apply {
+                                                        val intent = WebViewActivityLauncher.createIntent(ctx).apply {
                                                             putExtra(WebViewActivity.EXTRA_CUSTOM_URL, "about:blank")
                                                             putExtra(WebViewActivity.EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART, true)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
@@ -191,7 +191,7 @@ class MainActivity : ComponentActivity() {
                                                         ctx.startActivity(intent)
                                                     },
                                                     onOpenWebApp = { webApp ->
-                                                        val intent = Intent(ctx, WebViewActivity::class.java).apply {
+                                                        val intent = WebViewActivityLauncher.createIntent(ctx).apply {
                                                             putExtra(WebViewActivity.EXTRA_WEB_APP_ID, webApp.id)
                                                             putExtra(WebViewActivity.EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART, true)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
@@ -201,7 +201,7 @@ class MainActivity : ComponentActivity() {
                                                         ctx.startActivity(intent)
                                                     },
                                                     onSwitchTab = { tabId ->
-                                                        val intent = Intent(ctx, WebViewActivity::class.java).apply {
+                                                        val intent = WebViewActivityLauncher.createIntent(ctx).apply {
                                                             putExtra(WebViewActivity.EXTRA_SWITCH_TAB_ID, tabId)
                                                             putExtra(WebViewActivity.EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART, true)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
@@ -211,7 +211,7 @@ class MainActivity : ComponentActivity() {
                                                         ctx.startActivity(intent)
                                                     },
                                                     onCloseTab = { tabId ->
-                                                        val intent = Intent(ctx, WebViewActivity::class.java).apply {
+                                                        val intent = WebViewActivityLauncher.createIntent(ctx).apply {
                                                             putExtra(WebViewActivity.EXTRA_CLOSE_TAB_ID, tabId)
                                                             putExtra(WebViewActivity.EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART, false)
                                                             val orientationMode = KioskPrefs.getOrientationMode(ctx)
@@ -338,8 +338,17 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
+        logLifecycleIntent("onNewIntent", intent)
         consumeSafeHomeIntent(intent)
         consumePendingWebAppEditIntent(intent)
+    }
+
+    private fun logLifecycleIntent(event: String, intent: Intent?) {
+        Log.i(
+            TAG,
+            "$event taskId=$taskId flags=0x${intent?.flags?.toUInt()?.toString(16) ?: "0"} " +
+                "isTaskRoot=$isTaskRoot isFinishing=$isFinishing"
+        )
     }
 
     private fun consumeSafeHomeIntent(intent: Intent?) {
@@ -616,6 +625,11 @@ class MainActivity : ComponentActivity() {
 
 
     override fun onDestroy() {
+        Log.i(
+            TAG,
+            "onDestroy taskId=$taskId isTaskRoot=$isTaskRoot " +
+                "isFinishing=$isFinishing changingConfigurations=$isChangingConfigurations"
+        )
         filterEventReceiver?.let {
             unregisterReceiver(it)
             filterEventReceiver = null

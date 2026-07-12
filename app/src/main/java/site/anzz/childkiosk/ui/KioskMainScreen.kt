@@ -5,7 +5,6 @@
 package site.anzz.childkiosk.ui
 
 import android.content.Context
-import android.content.Intent
 import android.widget.Toast
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -46,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import site.anzz.childkiosk.WebViewActivity
+import site.anzz.childkiosk.WebViewActivityLauncher
 import site.anzz.childkiosk.data.AppDatabase
 import site.anzz.childkiosk.data.SystemConfigEntity
 import site.anzz.childkiosk.data.WebAppEntity
@@ -347,7 +347,7 @@ fun KioskMainScreen(
                                         null
                                     },
                                     onClick = {
-                                        val intent = Intent(context, WebViewActivity::class.java).apply {
+                                        val intent = WebViewActivityLauncher.createIntent(context).apply {
                                             putExtra(WebViewActivity.EXTRA_WEB_APP_ID, app.id)
                                             putExtra(WebViewActivity.EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART, true)
                                             putExtra(

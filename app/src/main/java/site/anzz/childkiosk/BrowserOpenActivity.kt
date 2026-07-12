@@ -23,7 +23,10 @@ class BrowserOpenActivity : Activity() {
         }?.toString()
 
         if (!targetUrl.isNullOrBlank()) {
-            startActivity(Intent(this, WebViewActivity::class.java).apply {
+            startActivity(WebViewActivityLauncher.createIntent(
+                this,
+                WebViewLaunchSource.EXTERNAL_ENTRY
+            ).apply {
                 putExtra(WebViewActivity.EXTRA_CUSTOM_URL, targetUrl)
                 putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, KioskPrefs.getOrientationMode(this@BrowserOpenActivity))
                 putExtra(WebViewActivity.EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART, false)

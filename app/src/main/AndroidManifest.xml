@@ -42,7 +42,7 @@
         android:theme="@style/Theme.ChildKiosk"
         tools:targetApi="33">
 
-        <!-- MainActivity: 桌面 Launcher，必须是单实例且能响应 HOME 键 -->
+        <!-- HOME/Launcher 根 Activity 保持单实例，网页任务按锁定状态选择是否隔离。 -->
         <activity
             android:name=".MainActivity"
             android:launchMode="singleTask"
@@ -59,10 +59,23 @@
             </intent-filter>
         </activity>
 
-        <!-- WebView 独立进程运行，扩大 WebView 可用进程内存，避免与主页/后台管理共享同一 App 进程预算 -->
+        <!-- Lock Task / Screen Pinning 使用同任务栈的网页宿主。 -->
         <activity
             android:name=".WebViewActivity"
             android:process=":webview"
+            android:theme="@style/Theme.ChildKiosk.WebView"
+            android:hardwareAccelerated="true"
+            android:screenOrientation="unspecified"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|keyboardHidden|locale|layoutDirection"
+            android:exported="false" />
+
+        <!-- 正常模式隔离网页任务，HOME 重入首页时不会销毁 WebView/JS 会话。 -->
+        <activity
+            android:name=".PersistentWebViewActivity"
+            android:process=":webview"
+            android:launchMode="singleTask"
+            android:taskAffinity="${applicationId}.webview"
             android:theme="@style/Theme.ChildKiosk.WebView"
             android:hardwareAccelerated="true"
             android:screenOrientation="unspecified"

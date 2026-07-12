@@ -104,7 +104,6 @@ import site.anzz.childkiosk.util.WebViewRuntimeConfig
 import site.anzz.childkiosk.util.WebViewPool
 import site.anzz.childkiosk.performance.HighPerformanceActivityState
 import site.anzz.childkiosk.performance.HighPerformanceDiagnostics
-import site.anzz.childkiosk.performance.HighPerformanceLifecycleInterceptor
 import site.anzz.childkiosk.performance.HighPerformanceRuntimePublisher
 import site.anzz.childkiosk.performance.HighPerformanceSessionController
 import site.anzz.childkiosk.performance.HighPerformanceTabMemoryCandidate
@@ -381,7 +380,7 @@ private class MutablePageFilterDiagnostics {
     }
 }
 
-class WebViewActivity : ComponentActivity() {
+open class WebViewActivity : ComponentActivity() {
 
     private val highPerformanceOwnerId = java.util.UUID.randomUUID().toString()
     private val tabList = mutableListOf<BrowserTab>()
@@ -577,6 +576,8 @@ class WebViewActivity : ComponentActivity() {
         requestedOrientation = KioskPrefs.requestedOrientationForMode(orientationMode)
 
         super.onCreate(savedInstanceState)
+        WebViewHostRuntime.register(this)?.finishForHostReplacement()
+        recordTaskLifecycle("activity_created", intent)
         HighPerformanceSessionController.initialize(this, runtimeConfig.highPerformanceSnapshot)
         HighPerformanceSessionController.onActivityStateChanged(
             highPerformanceOwnerId,
@@ -641,6 +642,7 @@ class WebViewActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        WebViewHostRuntime.register(this)
         HighPerformanceDiagnostics.record(type = "activity_resumed", reason = "lifecycle")
         HighPerformanceSessionController.onActivityStateChanged(
             highPerformanceOwnerId,
@@ -656,6 +658,7 @@ class WebViewActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        WebViewHostRuntime.register(this)
         HighPerformanceDiagnostics.record(type = "activity_started", reason = "lifecycle")
         HighPerformanceSessionController.onActivityStateChanged(
             highPerformanceOwnerId,
@@ -705,47 +708,13 @@ class WebViewActivity : ComponentActivity() {
     }
 
     override fun onStop() {
-        val hasProtectedTab = tabList.any { tab ->
-            tab.webView?.let { HighPerformanceSessionController.isProtected(it) } == true
-        }
-        if (hasProtectedTab) {
-            // Chromium registers an Application.ActivityLifecycleCallbacks that receives
-            // onActivityStopped() directly — bypassing all View-level visibility overrides.
-            // This causes Chromium to set Page::SetVisibilityState(kHidden), which immediately
-            // freezes JS timers.
-            //
-            // We temporarily remove all ActivityLifecycleCallbacks from the Application,
-            // call super.onStop() normally (so ComponentActivity lifecycle works correctly),
-            // then restore them. Chromium never sees the stop event.
-            HighPerformanceDiagnostics.record(
-                type = "activity_stop_intercepted",
-                reason = "high_performance_active"
-            )
-            Log.d("ChildKioskWebView", "onStop: intercepting lifecycle callbacks (high-performance active)")
-            stopAllNativeLocationRequests("activity_stop")
-            val token = HighPerformanceLifecycleInterceptor.suspendCallbacks(application)
-            try {
-                super.onStop()
-            } finally {
-                HighPerformanceLifecycleInterceptor.restoreCallbacks(application, token)
-            }
-            // After super.onStop() completes without Chromium's interference, force the
-            // WebView to think it's still in the foreground.
-            tabList.forEach { tab ->
-                tab.webView?.let { webView ->
-                    webView.onResume()
-                    injectHighPerformanceVisibilityOverride(webView)
-                }
-            }
-        } else {
-            HighPerformanceDiagnostics.record(type = "activity_stopped", reason = "lifecycle")
-            HighPerformanceSessionController.onActivityStateChanged(
-                highPerformanceOwnerId,
-                HighPerformanceActivityState.STOPPED
-            )
-            stopAllNativeLocationRequests("activity_stop")
-            super.onStop()
-        }
+        HighPerformanceDiagnostics.record(type = "activity_stopped", reason = "lifecycle")
+        HighPerformanceSessionController.onActivityStateChanged(
+            highPerformanceOwnerId,
+            HighPerformanceActivityState.STOPPED
+        )
+        stopAllNativeLocationRequests("activity_stop")
+        super.onStop()
     }
 
     /**
@@ -802,7 +771,8 @@ class WebViewActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        HighPerformanceDiagnostics.record(type = "activity_destroyed", reason = "lifecycle")
+        WebViewHostRuntime.unregister(this)
+        recordTaskLifecycle("activity_destroyed", intent)
         failPendingHighPerformanceRecoveries("activity_destroyed_before_recovery_completed")
         HighPerformanceSessionController.onActivityStateChanged(
             highPerformanceOwnerId,
@@ -2021,6 +1991,14 @@ class WebViewActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
+        recordTaskLifecycle("activity_new_intent", intent)
+        if (intent?.getBooleanExtra(EXTRA_RESUME_EXISTING_HOST, false) == true) {
+            HighPerformanceDiagnostics.record(
+                type = "activity_resumed_from_notification",
+                reason = "existing_host"
+            )
+            return
+        }
         setIntent(intent)
         val launchedConfig = KioskPrefs.getWebViewRuntimeConfig(intent, this)
         val publishedSnapshot = HighPerformanceRuntimePublisher.readPublishedSnapshot(
@@ -2625,13 +2603,13 @@ class WebViewActivity : ComponentActivity() {
                 maybeWarmupNativeLocation(pageUrl)
                 HighPerformanceSessionController.onNavigationStarted(webView, pageUrl)
             },
-onPageCommitVisibleInActivity = { webView, pageUrl ->
-HighPerformanceSessionController.onPageCommitted(webView, pageUrl)
-tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
-recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
-}
-injectHighPerformanceVisibilityOverride(webView)
-},
+            onPageCommitVisibleInActivity = { webView, pageUrl ->
+                HighPerformanceSessionController.onPageCommitted(webView, pageUrl)
+                tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
+                    recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
+                }
+                injectHighPerformanceVisibilityOverride(webView)
+            },
             onPageFinishedInActivity = { webView, pageUrl ->
                 updatePullToRefreshPagePolicy(webView, pageUrl)
                 HighPerformanceSessionController.onPageFinishedFallback(webView, pageUrl)
@@ -2901,13 +2879,13 @@ injectHighPerformanceVisibilityOverride(webView)
                 maybeWarmupNativeLocation(pageUrl)
                 HighPerformanceSessionController.onNavigationStarted(webView, pageUrl)
             },
-onPageCommitVisibleInActivity = { webView, pageUrl ->
-HighPerformanceSessionController.onPageCommitted(webView, pageUrl)
-tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
-recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
-}
-injectHighPerformanceVisibilityOverride(webView)
-},
+            onPageCommitVisibleInActivity = { webView, pageUrl ->
+                HighPerformanceSessionController.onPageCommitted(webView, pageUrl)
+                tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
+                    recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
+                }
+                injectHighPerformanceVisibilityOverride(webView)
+            },
             onPageFinishedInActivity = { webView, pageUrl ->
                 updatePullToRefreshPagePolicy(webView, pageUrl)
                 HighPerformanceSessionController.onPageFinishedFallback(webView, pageUrl)
@@ -3224,7 +3202,15 @@ injectHighPerformanceVisibilityOverride(webView)
                     switchToTab(id, allowHighPerformanceResourceRestart = true)
                 },
                 onHome = {
-                    finish()
+                    when (resolveWebViewHomeAction(webViewHostMode(this@WebViewActivity))) {
+                        WebViewHomeAction.CLOSE_CURRENT_HOST -> finish()
+                        WebViewHomeAction.OPEN_MAIN_TASK -> {
+                            startActivity(Intent(this@WebViewActivity, MainActivity::class.java).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                putExtra(MainActivity.EXTRA_FORCE_SAFE_HOME, true)
+                            })
+                        }
+                    }
                 },
                 onOpenWebApp = { webApp ->
                     createNewTab(
@@ -3239,6 +3225,23 @@ injectHighPerformanceVisibilityOverride(webView)
             )
         )
         updateFloatingControlsExtraSections()
+    }
+
+    private fun finishForHostReplacement() {
+        checkpointTabState()
+        HighPerformanceDiagnostics.record(
+            type = "activity_host_replaced",
+            reason = if (this is PersistentWebViewActivity) {
+                "persistent_task_replaced"
+            } else {
+                "kiosk_task_replaced"
+            }
+        )
+        if (this is PersistentWebViewActivity) {
+            finishAndRemoveTask()
+        } else {
+            finish()
+        }
     }
 
     private fun registerFilterDiagnosticsWebView(webView: WebView, tabId: String) {
@@ -3729,9 +3732,15 @@ injectHighPerformanceVisibilityOverride(webView)
             finishPullToRefreshIndicator()
         }
         progress?.let { currentPageProgress = it.coerceIn(0, 100) }
-        
+
+        checkpointTabState()
+        floatingControlsOverlay?.updateState(currentFloatingControlsState())
+        updateFloatingControlsExtraSections()
+    }
+
+    private fun checkpointTabState() {
         KioskPrefs.saveTabsSnapshot(this, tabList, activeTabId)
-        
+
         TabMemoryCache.activeTabId = activeTabId
         TabMemoryCache.tabList.clear()
         tabList.forEach { tab ->
@@ -3747,9 +3756,24 @@ injectHighPerformanceVisibilityOverride(webView)
                 )
             )
         }
-        
-        floatingControlsOverlay?.updateState(currentFloatingControlsState())
-        updateFloatingControlsExtraSections()
+    }
+
+    private fun recordTaskLifecycle(type: String, sourceIntent: Intent?) {
+        val flags = sourceIntent?.flags ?: 0
+        val reason = buildString {
+            append("task_")
+            append(taskId)
+            append("_flags_")
+            append(flags.toUInt().toString(16))
+            append("_root_")
+            append(isTaskRoot)
+            append("_finishing_")
+            append(isFinishing)
+            append("_config_change_")
+            append(isChangingConfigurations)
+        }
+        Log.i("ChildKioskWebView", "$type $reason")
+        HighPerformanceDiagnostics.record(type = type, reason = reason)
     }
 
     private fun currentFloatingControlsState(): FloatingBrowserControlsState {
@@ -4423,6 +4447,7 @@ injectHighPerformanceVisibilityOverride(webView)
         const val EXTRA_CLOSE_TAB_ID = "CLOSE_TAB_ID"
         const val EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART =
             "ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART"
+        const val EXTRA_RESUME_EXISTING_HOST = "RESUME_EXISTING_WEBVIEW_HOST"
         private const val HISTORY_RETENTION_MS = 90L * 24L * 60L * 60L * 1000L
         private const val HIGH_PERFORMANCE_RECOVERY_TIMEOUT_MS = 30_000L
         private const val POPUP_TARGET_TIMEOUT_MS = 10_000L

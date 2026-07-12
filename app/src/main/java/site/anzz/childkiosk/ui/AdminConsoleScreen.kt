@@ -87,6 +87,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import site.anzz.childkiosk.WebViewActivity
+import site.anzz.childkiosk.WebViewActivityLauncher
 import site.anzz.childkiosk.data.BrowserHistoryEntity
 
 private const val CAPABILITY_ENHANCEMENTS = "CAPABILITY_ENHANCEMENTS"
@@ -2952,7 +2953,7 @@ fun AdminConsoleScreen(
                     BrowserHistoryScreen(
                         history = browserHistory,
                         onOpen = { item ->
-                            val intent = Intent(context, WebViewActivity::class.java).apply {
+                            val intent = WebViewActivityLauncher.createIntent(context).apply {
                                 putExtra(WebViewActivity.EXTRA_CUSTOM_URL, item.url)
                                 putExtra(WebViewActivity.EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART, true)
                                 putExtra(WebViewActivity.EXTRA_ORIENTATION_MODE, KioskPrefs.getOrientationMode(context))

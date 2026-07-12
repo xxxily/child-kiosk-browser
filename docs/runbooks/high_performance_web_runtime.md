@@ -16,6 +16,7 @@ High-performance runtime protects only parent-approved top-level HTTP/HTTPS Orig
 - Notification Stop suppression is tracked per logical tab across frozen-tab and renderer reconstruction. A confirmed user action may re-authorize only that tab; it must not silently re-enable other stopped tabs or script-created popups.
 - A health-time-limit latch is owner-scoped. Ordinary navigation cannot clear it; only successful parent authorization may resume that Activity, and it must not resume another Activity or override a concurrent global Stop.
 - The ordinary background-WebView cap may freeze ordinary tabs only. Protected tabs stay alive even when retaining them temporarily exceeds the normal cap; the runtime records one degraded warning until the owner returns within the cap.
+- In normal mode, real pages use `PersistentWebViewActivity` in the dedicated `${applicationId}.webview` task. Device Owner, active Lock Task, and configured soft-lock launches use the same-task `WebViewActivity`; the main process selects the host and passes the runtime snapshot.
 
 ## Common symptoms
 
@@ -32,6 +33,16 @@ Check, in order:
 Do not diagnose this by reading `SharedPreferences` in `:webview`; cross-process preference freshness is not part of the design.
 
 If the Room version advanced but publication failed, retry from the detail-page refresh action. Until a successful publish occurs, the runtime intentionally stays disabled at the newer version instead of falling back to an older enabled file.
+
+### Switching to background immediately destroys the page
+
+Check `dumpsys activity activities` and the `activity_destroyed task_*` diagnostic. If `MainActivity(singleTask)` and the normal-mode WebView share one task, Launcher/HOME re-entry clears the WebView above Main and destroys its DOM/JS heap. This is a task-stack failure, not a JavaScript throttling failure.
+
+Normal mode must resolve to `PersistentWebViewActivity` with the dedicated `.webview` affinity. Device Owner, active Lock Task, and configured soft lock must resolve to same-task `WebViewActivity`; unconditional task isolation is a release blocker because Screen Pinning/Lock Task can reject the cross-task launch.
+
+The high-performance notification must resume the exact live WebView host. It must never target `MainActivity(singleTask)`: in the same-task kiosk topology that would clear every Activity above Main and destroy the page. The floating browser Home action follows the same split: normal-mode `PersistentWebViewActivity` brings Main's task forward without finishing the WebView task, while same-task `WebViewActivity` finishes back to Main as an explicit user exit. If the protection mode changes while the other host is still alive, the new host checkpoints the tabs and removes the old host before restoring them; two hosts must not share the process-local tab/controller state concurrently.
+
+Do not fix this by changing Main to `singleTop`, skipping `super.onStop()`, or clearing `Application.ActivityLifecycleCallbacks`. Those approaches break HOME singleton or lifecycle contracts without preserving both task topologies.
 
 ### A protected tab increases memory usage above the ordinary cap
 
@@ -75,7 +86,7 @@ This is a **vicious cycle**: WakeLock expires → CPU sleeps → Handler can't f
 **Fix (v0.4.3)**: WakeLock renewal now uses a dual mechanism:
 
 1. **Handler.postDelayed** (fast path) — fires when the CPU is already awake. Renewal interval: `leaseMs / 3` (~3.3 min for a 10-min lease).
-2. **AlarmManager.setAndAllowWhileIdle** (guaranteed wake path) — wakes the CPU from Doze/suspend even on aggressive OEMs. Same interval. Uses `ELAPSED_REALTIME_WAKEUP` and does NOT require `SCHEDULE_EXACT_ALARM` permission.
+2. **AlarmManager.setAndAllowWhileIdle** (best-effort wake path) — requests an `ELAPSED_REALTIME_WAKEUP` while idle without `SCHEDULE_EXACT_ALARM`. It is inexact and Android/OEM power policy may batch it; it is not a deadline guarantee.
 
 The alarm fires a broadcast to `HighPerformanceAlarmReceiver` (registered in `:webview` process), which:
 - Renews the WakeLock via `HighPerformanceWakeLockController.triggerAlarmRenewal()`
@@ -83,7 +94,7 @@ The alarm fires a broadcast to `HighPerformanceAlarmReceiver` (registered in `:w
 
 The system holds a WakeLock for the duration of the BroadcastReceiver's `onReceive()`, ensuring the CPU stays awake long enough to process the renewal.
 
-**Verification**: After the fix, diagnostic logs should show regular `wake_lock_renewed reason=alarm_renewal` events every ~3 minutes during screen-off, with no gaps longer than the lease duration.
+**Verification**: Healthy devices should show `wake_lock_renewed reason=alarm_renewal` events near the configured interval. Record actual gaps; a delayed or missing inexact alarm is a degraded platform condition, not proof that arbitrary JS can be guaranteed in the background.
 
 **ADB verification**:
 
@@ -102,6 +113,7 @@ Replace the package ID only if the application ID changes.
 ```bash
 adb shell ps -A | grep site.anzz.childkiosk
 adb shell dumpsys activity services site.anzz.childkiosk
+adb shell dumpsys activity activities | grep -E 'MainActivity|PersistentWebViewActivity|WebViewActivity|taskId|affinity'
 adb shell dumpsys power | grep -i HighPerformanceWebSession
 adb shell dumpsys notification --noredact | grep -i childkiosk
 adb shell dumpsys deviceidle
@@ -110,6 +122,7 @@ adb shell dumpsys deviceidle
 Expected signals:
 
 - `WebViewActivity` and `HighPerformanceForegroundService` use the same `site.anzz.childkiosk:webview` process.
+- Normal mode shows Main and `PersistentWebViewActivity` in separate tasks; Device Owner/Lock Task/soft lock shows Main and `WebViewActivity` in the same locked task.
 - A partial WakeLock with the stable high-performance tag exists only while the Service has at least one eligible session.
 - The ongoing notification appears within the Android foreground-service deadline.
 - Removing the last rule/session or disabling the feature starts releasing resources within one second.
@@ -132,6 +145,11 @@ Record the Android version, WebView provider/version, device/OEM, notification p
 - Two matching tabs, closing one, then closing the last.
 - Protected background tabs below and above the ordinary WebView memory cap; no protected tab may be selected for automatic freezing.
 - Two WebViewActivity owners where one reaches the health limit; ordinary navigation cannot bypass it and parent authorization must not resume the other owner.
+- Normal mode HOME/background/restore retains the same WebView and JS sentinel; soft lock and Device Owner still launch the same-task host without a black screen.
+- Notification clicks resume the exact live host without starting `MainActivity`; floating Home preserves the normal-mode host and explicitly closes the same-task kiosk host.
+- Switching between normal and kiosk protection modes leaves only one live WebView host and restores the checkpointed tabs once.
+- FGS start failure and unexpected Service destruction retain active session tokens and renderer priority as degraded; explicit Stop still removes and suppresses them.
+- Repeated Alarm health checks leave one Handler heartbeat chain.
 - Notification permission allowed, denied, and revoked from Settings.
 - Dedicated high-performance notification channel enabled and disabled independently of the app-wide notification switch.
 - Battery exemption enabled and disabled.
@@ -141,6 +159,8 @@ Record the Android version, WebView provider/version, device/OEM, notification p
 ## Release blockers
 
 - The Service is not in `:webview`.
+- Normal-mode WebView shares Main's task, or a Lock Task/soft-lock launch targets the dedicated WebView task.
+- Notification/Home navigation starts `MainActivity(singleTask)` above a same-task kiosk WebView, or two WebView host classes remain alive together.
 - Android 14 reports a missing or mismatched foreground-service type/permission.
 - WakeLock remains held after the final token.
 - A subresource, iframe, invalid URL, preload, or public-suffix wildcard can activate a session.
