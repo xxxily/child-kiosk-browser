@@ -37,6 +37,52 @@ enum class HighPerformanceRendererPolicy {
     HIGH_PERFORMANCE_IMPORTANT_NOT_WAIVED
 }
 
+enum class HighPerformanceJavascriptState {
+    UNKNOWN,
+    AWAITING_FIRST_HEARTBEAT,
+    RESPONSIVE,
+    STALE
+}
+
+internal fun classifyJavascriptHeartbeat(
+    now: Long,
+    installedAt: Long?,
+    lastMainHeartbeatAt: Long?,
+    staleAfterMs: Long = HIGH_PERFORMANCE_JS_HEARTBEAT_STALE_AFTER_MS
+): HighPerformanceJavascriptState = when {
+    installedAt == null || installedAt <= 0L -> HighPerformanceJavascriptState.UNKNOWN
+    lastMainHeartbeatAt == null && now - installedAt in 0L..staleAfterMs ->
+        HighPerformanceJavascriptState.AWAITING_FIRST_HEARTBEAT
+    lastMainHeartbeatAt != null && lastMainHeartbeatAt > 0L &&
+        now - lastMainHeartbeatAt in 0L..staleAfterMs ->
+        HighPerformanceJavascriptState.RESPONSIVE
+    else -> HighPerformanceJavascriptState.STALE
+}
+
+internal fun refreshHeartbeatDerivedState(
+    status: HighPerformanceRuntimeStatus,
+    now: Long
+): HighPerformanceRuntimeStatus {
+    val sessions = status.sessions.map { session ->
+        session.copy(
+            javascriptState = classifyJavascriptHeartbeat(
+                now = now,
+                installedAt = session.jsHeartbeatInstalledAt,
+                lastMainHeartbeatAt = session.lastMainJsHeartbeatAt
+            )
+        )
+    }
+    val compositeState = if (
+        status.compositeState == HighPerformanceCompositeState.ACTIVE &&
+        sessions.any { it.javascriptState != HighPerformanceJavascriptState.RESPONSIVE }
+    ) {
+        HighPerformanceCompositeState.DEGRADED
+    } else {
+        status.compositeState
+    }
+    return status.copy(sessions = sessions, compositeState = compositeState)
+}
+
 data class HighPerformanceSessionStatus(
     val tokenId: String,
     val tabId: String,
@@ -44,6 +90,11 @@ data class HighPerformanceSessionStatus(
     val origin: String,
     val startedAt: Long,
     val lastPageCallbackAt: Long,
+    val jsHeartbeatInstalledAt: Long?,
+    val lastJsHeartbeatAt: Long?,
+    val lastMainJsHeartbeatAt: Long?,
+    val lastWorkerJsHeartbeatAt: Long?,
+    val javascriptState: HighPerformanceJavascriptState,
     val visible: Boolean,
     val activityState: HighPerformanceActivityState,
     val rendererPolicy: HighPerformanceRendererPolicy,
@@ -56,6 +107,11 @@ data class HighPerformanceSessionStatus(
         .put("origin", origin)
         .put("startedAt", startedAt)
         .put("lastPageCallbackAt", lastPageCallbackAt)
+        .putNullable("jsHeartbeatInstalledAt", jsHeartbeatInstalledAt)
+        .putNullable("lastJsHeartbeatAt", lastJsHeartbeatAt)
+        .putNullable("lastMainJsHeartbeatAt", lastMainJsHeartbeatAt)
+        .putNullable("lastWorkerJsHeartbeatAt", lastWorkerJsHeartbeatAt)
+        .put("javascriptState", javascriptState.name)
         .put("visible", visible)
         .put("activityState", activityState.name)
         .put("rendererPolicy", rendererPolicy.name)
@@ -75,6 +131,14 @@ data class HighPerformanceSessionStatus(
                 origin = origin,
                 startedAt = json.optLong("startedAt", 0L),
                 lastPageCallbackAt = json.optLong("lastPageCallbackAt", 0L),
+                jsHeartbeatInstalledAt = json.optNullableLong("jsHeartbeatInstalledAt"),
+                lastJsHeartbeatAt = json.optNullableLong("lastJsHeartbeatAt"),
+                lastMainJsHeartbeatAt = json.optNullableLong("lastMainJsHeartbeatAt"),
+                lastWorkerJsHeartbeatAt = json.optNullableLong("lastWorkerJsHeartbeatAt"),
+                javascriptState = enumValueOrDefault(
+                    json.optString("javascriptState"),
+                    HighPerformanceJavascriptState.UNKNOWN
+                ),
                 visible = json.optBoolean("visible", false),
                 activityState = enumValueOrDefault(
                     json.optString("activityState"),
@@ -105,6 +169,7 @@ data class HighPerformanceRuntimeStatus(
     val webViewPackageName: String?,
     val webViewVersionName: String?,
     val updatedAt: Long,
+    val nativeHeartbeatAt: Long,
     val appliedConfigVersion: Long,
     val configuredRuleCount: Int,
     val compositeState: HighPerformanceCompositeState,
@@ -142,6 +207,7 @@ data class HighPerformanceRuntimeStatus(
         .putNullable("webViewPackageName", webViewPackageName)
         .putNullable("webViewVersionName", webViewVersionName)
         .put("updatedAt", updatedAt)
+        .put("nativeHeartbeatAt", nativeHeartbeatAt)
         .put("appliedConfigVersion", appliedConfigVersion)
         .put("configuredRuleCount", configuredRuleCount)
         .put("compositeState", compositeState.name)
@@ -169,7 +235,7 @@ data class HighPerformanceRuntimeStatus(
         })
 
     companion object {
-        const val STATUS_SCHEMA_VERSION = 2
+        const val STATUS_SCHEMA_VERSION = 3
         private const val MAX_PERSISTED_SESSIONS = 32
         private const val MAX_PERSISTED_EVENTS = 80
 
@@ -204,6 +270,7 @@ data class HighPerformanceRuntimeStatus(
                 webViewPackageName = json.optNullableString("webViewPackageName"),
                 webViewVersionName = json.optNullableString("webViewVersionName"),
                 updatedAt = json.optLong("updatedAt", 0L),
+                nativeHeartbeatAt = json.optLong("nativeHeartbeatAt", 0L),
                 appliedConfigVersion = json.optLong("appliedConfigVersion", 0L),
                 configuredRuleCount = json.optInt("configuredRuleCount", 0),
                 compositeState = enumValueOrDefault(
@@ -272,13 +339,14 @@ object HighPerformanceRuntimeStatusStore {
 
     /** Call from an IO dispatcher when used by UI. */
     fun read(context: Context, now: Long = System.currentTimeMillis()): HighPerformanceRuntimeStatusReadResult {
-        val status = runCatching {
+        val persistedStatus = runCatching {
             val atomicFile = atomicFile(context.applicationContext)
             if (!atomicFile.baseFile.exists()) return@runCatching null
             val json = JSONObject(String(atomicFile.readFully(), Charsets.UTF_8))
             HighPerformanceRuntimeStatus.fromJson(json)
         }.getOrNull()
             ?: return HighPerformanceRuntimeStatusReadResult(null, stale = true, reason = "missing_or_invalid")
+        val status = refreshHeartbeatDerivedState(persistedStatus, now)
 
         val claimsActiveRuntime = status.sessions.isNotEmpty() ||
             status.foregroundServiceState == HighPerformanceForegroundServiceState.RUNNING ||
@@ -331,6 +399,8 @@ object HighPerformanceRuntimeStatusStore {
 
 internal const val HIGH_PERFORMANCE_RUNTIME_STATUS_FILE_NAME =
     "high_performance_runtime_status.json"
+
+internal const val HIGH_PERFORMANCE_JS_HEARTBEAT_STALE_AFTER_MS = 20_000L
 
 private fun JSONObject.putNullable(name: String, value: Any?): JSONObject =
     put(name, value ?: JSONObject.NULL)

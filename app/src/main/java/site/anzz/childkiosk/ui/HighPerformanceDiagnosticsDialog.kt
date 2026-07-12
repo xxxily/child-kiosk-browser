@@ -159,6 +159,10 @@ internal fun HighPerformanceDiagnosticsDialog(
                         ) {
                             Text("状态摘要", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                             DiagnosticItem(label = "运行进程", value = "${status.processName} (PID: ${status.pid})")
+                            DiagnosticItem(
+                                label = "原生诊断心跳",
+                                value = formatTimestamp(status.nativeHeartbeatAt)
+                            )
                             DiagnosticItem(label = "综合状态", value = compositeStateLabel(status.compositeState) + if (runtimeStatus.stale) " (状态已过期)" else "")
                             DiagnosticItem(label = "应用版本", value = "${status.appVersionName} (${status.appVersionCode})")
                             DiagnosticItem(label = "前台服务 (FGS)", value = "${status.foregroundServiceState}" + (status.foregroundServiceError?.let { "：$it" } ?: ""))
@@ -199,7 +203,14 @@ internal fun HighPerformanceDiagnosticsDialog(
                                                 HighPerformanceRecordChip("可见: ${if (session.visible) "是" else "否"}")
                                                 HighPerformanceRecordChip("Activity: ${session.activityState}")
                                                 HighPerformanceRecordChip("内核特权: ${if (session.rendererPolicy.name.contains("HIGH_PERFORMANCE")) "高" else "默认"}")
+                                                HighPerformanceRecordChip("JS: ${session.javascriptState}")
                                             }
+                                            Text(
+                                                "JS 主线程心跳: ${session.lastMainJsHeartbeatAt?.let(::formatTimestamp) ?: "尚未收到"}；" +
+                                                    "Worker: ${session.lastWorkerJsHeartbeatAt?.let(::formatTimestamp) ?: "尚未收到"}",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
                                         }
                                     }
                                 }
@@ -448,6 +459,7 @@ private fun diagnosticText(result: HighPerformanceRuntimeStatusReadResult): Stri
         appendLine("pid=${status.pid}")
         appendLine("processInstance=${status.processInstanceId}")
         appendLine("updatedAt=${formatTimestamp(status.updatedAt)}")
+        appendLine("nativeHeartbeatAt=${formatTimestamp(status.nativeHeartbeatAt)}")
         appendLine("stale=${result.stale} reason=${result.reason.orEmpty()}")
         appendLine("configVersion=${status.appliedConfigVersion} rules=${status.configuredRuleCount}")
         appendLine("state=${status.compositeState}")
@@ -465,7 +477,12 @@ private fun diagnosticText(result: HighPerformanceRuntimeStatusReadResult): Stri
             appendLine(
                 "  ${session.origin} visible=${session.visible} activity=${session.activityState} " +
                     "renderer=${session.rendererPolicy} full=${session.fullSystemProtection} " +
-                    "lastCallback=${formatTimestamp(session.lastPageCallbackAt)}"
+                    "lastCallback=${formatTimestamp(session.lastPageCallbackAt)} " +
+                    "js=${session.javascriptState} " +
+                    "jsInstalled=${session.jsHeartbeatInstalledAt?.let(::formatTimestamp).orEmpty()} " +
+                    "jsLast=${session.lastJsHeartbeatAt?.let(::formatTimestamp).orEmpty()} " +
+                    "jsMain=${session.lastMainJsHeartbeatAt?.let(::formatTimestamp).orEmpty()} " +
+                    "jsWorker=${session.lastWorkerJsHeartbeatAt?.let(::formatTimestamp).orEmpty()}"
             )
         }
         appendLine("recentEvents=${status.recentEvents.size}")

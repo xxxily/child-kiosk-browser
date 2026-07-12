@@ -99,26 +99,25 @@ class ChildKioskApplication : Application(), ComponentCallbacks2 {
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        val decision = memoryTrimDecision(level)
         if (ProcessUtils.isWebViewProcess(this)) {
             HighPerformanceDiagnostics.record(
                 type = "trim_memory",
-                result = "level_$level"
+                result = "level_$level",
+                reason = decision.levelName
             )
         }
-        // 根据内存紧张等级裁减或清理预加载池，防止 OOM
-        when {
-            level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> {
-                Log.w("ChildKioskApp", "Trim memory critical: clearing WebViewPool")
+        // Only pooled/preloaded WebViews are touched; active tabs remain owned by WebViewActivity.
+        when (decision.action) {
+            WebViewPoolTrimAction.CLEAR -> {
+                Log.w("ChildKioskApp", "Trim memory ${decision.levelName}: clearing WebViewPool")
                 WebViewPool.clear()
             }
-            level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> {
-                Log.w("ChildKioskApp", "Trim memory low: clearing WebViewPool")
-                WebViewPool.clear()
-            }
-            level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_MODERATE -> {
-                Log.d("ChildKioskApp", "Trim memory moderate: trimming WebViewPool to size 1")
+            WebViewPoolTrimAction.TRIM_TO_ONE -> {
+                Log.d("ChildKioskApp", "Trim memory ${decision.levelName}: trimming WebViewPool to size 1")
                 WebViewPool.trimToSize(1)
             }
+            WebViewPoolTrimAction.NONE -> Unit
         }
     }
 }

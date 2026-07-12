@@ -104,6 +104,8 @@ import site.anzz.childkiosk.util.WebViewRuntimeConfig
 import site.anzz.childkiosk.util.WebViewPool
 import site.anzz.childkiosk.performance.HighPerformanceActivityState
 import site.anzz.childkiosk.performance.HighPerformanceDiagnostics
+import site.anzz.childkiosk.performance.HighPerformancePageRuntime
+import site.anzz.childkiosk.performance.HighPerformanceRuntimeBridge
 import site.anzz.childkiosk.performance.HighPerformanceRuntimePublisher
 import site.anzz.childkiosk.performance.HighPerformanceSessionController
 import site.anzz.childkiosk.performance.HighPerformanceTabMemoryCandidate
@@ -579,6 +581,9 @@ open class WebViewActivity : ComponentActivity() {
         WebViewHostRuntime.register(this)?.finishForHostReplacement()
         recordTaskLifecycle("activity_created", intent)
         HighPerformanceSessionController.initialize(this, runtimeConfig.highPerformanceSnapshot)
+        HighPerformanceRuntimeBridge.setSnapshotAppliedListener(this) { snapshot ->
+            runtimeConfig = runtimeConfig.copy(highPerformanceSnapshot = snapshot)
+        }
         HighPerformanceSessionController.onActivityStateChanged(
             highPerformanceOwnerId,
             HighPerformanceActivityState.CREATED
@@ -652,8 +657,6 @@ open class WebViewActivity : ComponentActivity() {
             source = "activity_resume"
         )
         applySystemUiMode()
-        // Re-inject visibility override after resuming, in case the page was navigated
-        rootWebView?.let { injectHighPerformanceVisibilityOverride(it) }
     }
 
     override fun onStart() {
@@ -713,64 +716,37 @@ open class WebViewActivity : ComponentActivity() {
             highPerformanceOwnerId,
             HighPerformanceActivityState.STOPPED
         )
-        stopAllNativeLocationRequests("activity_stop")
+        val protectedWebViews = tabList.mapNotNull { it.webView }
+            .filter(HighPerformanceSessionController::isProtected)
+            .toSet()
+        val retainProtectedRequests = shouldRetainProtectedNativeLocationRequestsOnStop(
+            hasProtectedSession = protectedWebViews.isNotEmpty(),
+            isFinishing = isFinishing,
+            isChangingConfigurations = isChangingConfigurations
+        )
+        if (retainProtectedRequests) {
+            (tabList.mapNotNull { it.webView } +
+                webViewStack +
+                nativeLocationBridgeWebViewRequests.keys)
+                .distinct()
+                .filterNot(protectedWebViews::contains)
+                .forEach { webView ->
+                    clearNativeLocationBridgeRequests(webView)
+                    stopAmapAssistantLocation(webView)
+                }
+            HighPerformanceDiagnostics.record(
+                type = "native_location_retained",
+                result = "ok",
+                reason = "protected_background_session"
+            )
+        } else {
+            stopAllNativeLocationRequests("activity_stop")
+        }
         super.onStop()
     }
 
-    /**
-     * Injects JavaScript to override the Page Visibility API when a high-performance session
-     * is active. This prevents web pages from detecting they are hidden and pausing their own
-     * logic (e.g. stopping timers, pausing WebSocket reconnection, etc.).
-     *
-     * Also injects a heartbeat timer that logs timestamps every 10 seconds via console.log,
-     * so the user can verify JS execution continuity through logcat.
-     */
-    private fun injectHighPerformanceVisibilityOverride(webView: WebView) {
-        if (!HighPerformanceSessionController.isProtected(webView)) return
-        val js = """
-            (function() {
-                try {
-                    // Override Page Visibility API
-                    Object.defineProperty(document, 'visibilityState', {
-                        get: function() { return 'visible'; },
-                        configurable: true
-                    });
-                    Object.defineProperty(document, 'hidden', {
-                        get: function() { return false; },
-                        configurable: true
-                    });
-                    Object.defineProperty(document, 'webkitVisibilityState', {
-                        get: function() { return 'visible'; },
-                        configurable: true
-                    });
-                    Object.defineProperty(document, 'webkitHidden', {
-                        get: function() { return false; },
-                        configurable: true
-                    });
-                    // Prevent visibilitychange events from reaching page listeners
-                    document.addEventListener('visibilitychange', function(e) {
-                        e.stopImmediatePropagation();
-                    }, true);
-                    document.addEventListener('webkitvisibilitychange', function(e) {
-                        e.stopImmediatePropagation();
-                    }, true);
-                    // Heartbeat: log timestamp every 10 seconds for diagnostic verification
-                    if (!window.__hpHeartbeat) {
-                        window.__hpHeartbeat = true;
-                        setInterval(function() {
-                            console.log('[HP_HEARTBEAT] ' + Date.now());
-                        }, 10000);
-                        console.log('[HP_VISIBILITY_OVERRIDE] injected at ' + Date.now());
-                    }
-                } catch(e) {
-                    console.log('[HP_VISIBILITY_OVERRIDE_ERROR] ' + e.message);
-                }
-            })();
-        """.trimIndent()
-        webView.evaluateJavascript(js, null)
-    }
-
     override fun onDestroy() {
+        HighPerformanceRuntimeBridge.clearSnapshotAppliedListener(this)
         WebViewHostRuntime.unregister(this)
         recordTaskLifecycle("activity_destroyed", intent)
         failPendingHighPerformanceRecoveries("activity_destroyed_before_recovery_completed")
@@ -815,11 +791,7 @@ open class WebViewActivity : ComponentActivity() {
         pendingPopupWebViews.clear()
         pendingPopupReloads.values.forEach(popupMainHandler::removeCallbacks)
         pendingPopupReloads.clear()
-        nativeLocationManager.destroy()
-        nativeLocationMainProcessClient.destroy()
-        nativeLocationBridgeWatchIds.clear()
-        nativeLocationBridgeNativeRequestIds.clear()
-        nativeLocationBridgeWebViewRequests.clear()
+        stopAllNativeLocationRequests("activity_destroyed")
         tabList.clear()
         webViewStack.clear()
         floatingControlsOverlay = null
@@ -2608,11 +2580,16 @@ open class WebViewActivity : ComponentActivity() {
                 tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
                     recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
                 }
-                injectHighPerformanceVisibilityOverride(webView)
+                HighPerformanceSessionController.prepareJavascriptHeartbeat(webView)?.let { token ->
+                    HighPerformancePageRuntime.activate(webView, token)
+                }
             },
             onPageFinishedInActivity = { webView, pageUrl ->
                 updatePullToRefreshPagePolicy(webView, pageUrl)
                 HighPerformanceSessionController.onPageFinishedFallback(webView, pageUrl)
+                HighPerformanceSessionController.prepareJavascriptHeartbeat(webView)?.let { token ->
+                    HighPerformancePageRuntime.activate(webView, token)
+                }
                 tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
                     recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
                 }
@@ -2714,6 +2691,9 @@ open class WebViewActivity : ComponentActivity() {
                         "explicit_page_open"
                     )
                     HighPerformanceSessionController.onPageCommitted(webView, webView.url)
+                    HighPerformanceSessionController.prepareJavascriptHeartbeat(webView)?.let { token ->
+                        HighPerformancePageRuntime.activate(webView, token)
+                    }
                 }
                 setWebViewVisible(webView, true)
             }
@@ -2884,11 +2864,16 @@ open class WebViewActivity : ComponentActivity() {
                 tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
                     recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
                 }
-                injectHighPerformanceVisibilityOverride(webView)
+                HighPerformanceSessionController.prepareJavascriptHeartbeat(webView)?.let { token ->
+                    HighPerformancePageRuntime.activate(webView, token)
+                }
             },
             onPageFinishedInActivity = { webView, pageUrl ->
                 updatePullToRefreshPagePolicy(webView, pageUrl)
                 HighPerformanceSessionController.onPageFinishedFallback(webView, pageUrl)
+                HighPerformanceSessionController.prepareJavascriptHeartbeat(webView)?.let { token ->
+                    HighPerformancePageRuntime.activate(webView, token)
+                }
                 tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
                     recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
                 }
@@ -5630,6 +5615,7 @@ private fun destroyWebViewSafely(webView: WebView) {
     runCatching { webView.removeJavascriptInterface("ChildKioskNativeLocationBridge") }
     runCatching { WebViewCompat.removeWebMessageListener(webView, "ChildKioskNativeLocation") }
     runCatching { removeNativeLocationDocumentScript(webView) }
+    runCatching { HighPerformancePageRuntime.uninstall(webView) }
     runCatching { webView.loadUrl("about:blank") }
     runCatching { webView.clearHistory() }
     runCatching { (webView.parent as? ViewGroup)?.removeView(webView) }

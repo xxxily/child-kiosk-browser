@@ -13,6 +13,14 @@ High-performance runtime protects only parent-approved top-level HTTP/HTTPS Orig
 - `HighPerformanceForegroundService` and `WebViewActivity` must both report the package process suffix `:webview`.
 - The Service owns the only partial WakeLock. Page/session code never acquires a WakeLock directly.
 - Runtime status is written by `:webview` and is considered stale after its documented freshness window.
+- Trusted-page lifecycle protection is installed with `addDocumentStartJavaScript` and a strict
+  Origin-scoped WebMessage listener before site scripts run. A random per-navigation token binds
+  main-thread and Dedicated Worker heartbeats to the current protected session; the token is never
+  persisted. A responsive probe proves only that the injected diagnostic timer was scheduled, not
+  that every site timer, socket, fetch, or business task stayed continuous.
+- Runtime configuration broadcasts reconfigure every managed WebView and update the live Activity
+  snapshot. Disabling or removing a rule deactivates the current document immediately; changing
+  rules must not rely on a future Activity restart or a stale launch Intent.
 - Notification Stop suppression is tracked per logical tab across frozen-tab and renderer reconstruction. A confirmed user action may re-authorize only that tab; it must not silently re-enable other stopped tabs or script-created popups.
 - A health-time-limit latch is owner-scoped. Ordinary navigation cannot clear it; only successful parent authorization may resume that Activity, and it must not resume another Activity or override a concurrent global Stop.
 - The ordinary background-WebView cap may freeze ordinary tabs only. Protected tabs stay alive even when retaining them temporarily exceeds the normal cap; the runtime records one degraded warning until the owner returns within the cap.
@@ -138,6 +146,33 @@ adb shell dumpsys battery reset
 
 Record the Android version, WebView provider/version, device/OEM, notification permission, battery-optimization state, Device Owner state, and test duration with every result.
 
+### FGS and WakeLock stay healthy but a site timer still stops
+
+Treat this as a renderer/page scheduling failure, not proof that the resource shell is healthy enough.
+The status model has separate signals:
+
+- `nativeHeartbeatAt`: the WebView process/controller is still scheduling health checks.
+- `lastMainJsHeartbeatAt`: the trusted page's injected main-thread timer is still scheduled.
+- `lastWorkerJsHeartbeatAt`: a Dedicated Worker is still scheduled.
+- `fullSystemProtection`: FGS, WakeLock, renderer priority, notification, and battery setup are ready.
+
+`ACTIVE` requires both complete system protection and a responsive main-thread JS heartbeat. If the
+main heartbeat is older than 20 seconds, the session becomes `STALE` and the composite state becomes
+`DEGRADED`, even when FGS and WakeLock remain healthy. This distinction prevents resource readiness
+from being reported as JavaScript continuity.
+
+The page runtime overrides Page Visibility at document start and suppresses trusted-page
+`visibilitychange`, `webkitvisibilitychange`, and `freeze` listeners. It deliberately does not block
+`pagehide`, because sites and BFCache use that event for navigation cleanup. An Android 16/WebView or
+OEM scheduler can still throttle or freeze Blink below all public Android APIs; no supported WebView
+API can guarantee arbitrary third-party JavaScript runs exactly like the foreground indefinitely.
+
+For a reproducible screen-off report, capture at least 2-5 minutes of the three heartbeats plus page
+business timestamps from `docs/test-pages/high_performance_runtime_test.html`. If the injected main
+heartbeat continues while only the site's timer stops, inspect the site's own visibility/freeze/
+network logic. If both main and Worker heartbeats stop while native heartbeat continues, the renderer
+was frozen. If all three stop, inspect process death, WakeLock renewal, Doze, and OEM power controls.
+
 ## Required regression scenarios
 
 - Exact Origin, default/explicit port, IDN, subdomain opt-in, and public-suffix rejection.
@@ -154,6 +189,10 @@ Record the Android version, WebView provider/version, device/OEM, notification p
 - Dedicated high-performance notification channel enabled and disabled independently of the app-wide notification switch.
 - Battery exemption enabled and disabled.
 - Total switch off, rule disable/delete, notification Stop, healthy Activity close, and forced renderer exit.
+- Exact and subdomain document-start Origin scopes; malformed/cross-Origin WebMessage input; token
+  rotation across same-Origin and cross-Origin navigation; live rule disable/re-enable without restart.
+- Main/Worker JS heartbeat transitions from waiting to responsive to stale while native heartbeat and
+  system-resource readiness remain independently visible.
 - Android 9, 12, 13, and 14; at least one AOSP-like device and two relevant OEM device families.
 
 ## Release blockers

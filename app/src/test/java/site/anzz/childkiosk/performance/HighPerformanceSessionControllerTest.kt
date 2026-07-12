@@ -109,6 +109,12 @@ class HighPerformanceSessionControllerTest {
     }
 
     @Test
+    fun onlySuppressingStopsUninstallPageRuntime() {
+        assertEquals(true, shouldUninstallPageRuntimeForStop(suppressCurrentWebViews = true))
+        assertEquals(false, shouldUninstallPageRuntimeForStop(suppressCurrentWebViews = false))
+    }
+
+    @Test
     @LooperMode(LooperMode.Mode.LEGACY)
     fun repeatedAlarmHealthChecksKeepOneHeartbeatChain() {
         val scheduler = shadowOf(Looper.getMainLooper()).scheduler
@@ -120,6 +126,48 @@ class HighPerformanceSessionControllerTest {
 
         assertEquals(1, scheduledAfterFirstAlarm)
         assertEquals(1, scheduler.size())
+    }
+
+    @Test
+    fun javascriptHeartbeatRequiresMatchingSessionTokenAndMainTick() {
+        val token = HighPerformanceSessionController.prepareJavascriptHeartbeat(webView)
+        requireNotNull(token)
+
+        assertEquals(
+            false,
+            HighPerformanceSessionController.onJavascriptHeartbeat(
+                webView,
+                "wrong-token",
+                HighPerformanceProbeType.MAIN,
+                1L
+            )
+        )
+        assertEquals(
+            true,
+            HighPerformanceSessionController.onJavascriptHeartbeat(
+                webView,
+                token,
+                HighPerformanceProbeType.INIT,
+                1L
+            )
+        )
+        assertEquals(
+            HighPerformanceJavascriptState.AWAITING_FIRST_HEARTBEAT,
+            HighPerformanceSessionController.javascriptStateForTests(webView)
+        )
+        assertEquals(
+            true,
+            HighPerformanceSessionController.onJavascriptHeartbeat(
+                webView,
+                token,
+                HighPerformanceProbeType.MAIN,
+                2L
+            )
+        )
+        assertEquals(
+            HighPerformanceJavascriptState.RESPONSIVE,
+            HighPerformanceSessionController.javascriptStateForTests(webView)
+        )
     }
 
     private fun trustedSnapshot(): HighPerformanceRuntimeSnapshot {

@@ -19,6 +19,11 @@ internal object HighPerformanceRuntimeBridge {
     }
     private val mainHandler = Handler(Looper.getMainLooper())
     private var appContext: Context? = null
+    private var snapshotListener: SnapshotListener? = null
+
+    fun interface SnapshotListener {
+        fun onSnapshotApplied(snapshot: HighPerformanceRuntimeSnapshot)
+    }
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -78,6 +83,27 @@ internal object HighPerformanceRuntimeBridge {
             runCatching { context.unregisterReceiver(receiver) }
         }
         appContext = null
+        clearSnapshotAppliedListener()
+    }
+
+    /** Keeps Activity-owned launch config aligned with snapshots received after process start. */
+    fun setSnapshotAppliedListener(
+        owner: Any,
+        listener: (HighPerformanceRuntimeSnapshot) -> Unit
+    ) {
+        check(Looper.myLooper() == Looper.getMainLooper()) {
+            "High-performance snapshot listeners must be changed on the main thread"
+        }
+        snapshotListener = OwnedSnapshotListener(owner, listener)
+    }
+
+    fun clearSnapshotAppliedListener(owner: Any? = null) {
+        check(Looper.myLooper() == Looper.getMainLooper()) {
+            "High-performance snapshot listeners must be changed on the main thread"
+        }
+        val current = snapshotListener
+        if (owner != null && (current as? OwnedSnapshotListener)?.owner !== owner) return
+        snapshotListener = null
     }
 
     private fun readAndApply(context: Context, requestedVersion: Long, source: String) {
@@ -88,8 +114,17 @@ internal object HighPerformanceRuntimeBridge {
                 minimumConfigVersion = safeMinimum
             )
             mainHandler.post {
-                HighPerformanceSessionController.applySnapshot(snapshot, source)
+                if (HighPerformanceSessionController.applySnapshot(snapshot, source)) {
+                    snapshotListener?.onSnapshotApplied(snapshot)
+                }
             }
         }
+    }
+
+    private class OwnedSnapshotListener(
+        val owner: Any,
+        private val listener: (HighPerformanceRuntimeSnapshot) -> Unit
+    ) : SnapshotListener {
+        override fun onSnapshotApplied(snapshot: HighPerformanceRuntimeSnapshot) = listener(snapshot)
     }
 }

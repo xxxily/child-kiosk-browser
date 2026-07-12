@@ -30,6 +30,22 @@ internal fun shouldDeferForegroundServiceStart(
     ownerInForeground: Boolean
 ): Boolean = !serviceAlreadyActive && !ownerInForeground
 
+internal fun shouldUninstallPageRuntimeForStop(suppressCurrentWebViews: Boolean): Boolean =
+    suppressCurrentWebViews
+
+internal fun highPerformanceCompositeStateForActiveSessions(
+    resourceProtectionReady: Boolean,
+    javascriptStates: List<HighPerformanceJavascriptState>
+): HighPerformanceCompositeState = if (
+    resourceProtectionReady &&
+    javascriptStates.isNotEmpty() &&
+    javascriptStates.all { it == HighPerformanceJavascriptState.RESPONSIVE }
+) {
+    HighPerformanceCompositeState.ACTIVE
+} else {
+    HighPerformanceCompositeState.DEGRADED
+}
+
 /**
  * :webview-process state machine for top-level, rule-qualified WebViews.
  *
@@ -63,9 +79,11 @@ internal object HighPerformanceSessionController {
     private var lastSessionStoppedAt: Long? = null
     private var lastInterruptionAt: Long? = null
     private var lastSystemState: HighPerformanceProcessSnapshot? = null
+    private var nativeHeartbeatAt: Long = System.currentTimeMillis()
 
     private val heartbeat = object : Runnable {
         override fun run() {
+            nativeHeartbeatAt = System.currentTimeMillis()
             val previousSystem = lastSystemState
             pruneLostWebViews()
             val context = appContext
@@ -146,6 +164,7 @@ internal object HighPerformanceSessionController {
             explicitlySuppressed = restartPolicy.shouldSuppress(tabKey, allowResourceRestart)
         )
         registrations += managed
+        installPageRuntime(webView, runtimeSnapshot)
         HighPerformanceDiagnostics.record(
             type = "webview_registered",
             originOrUrl = initialCommittedUrl,
@@ -154,6 +173,9 @@ internal object HighPerformanceSessionController {
         initialCommittedUrl?.let {
             managed.lastCommittedUrl = it
             evaluate(managed, it, source = "registered_committed_page")
+            prepareJavascriptHeartbeat(webView)?.let { token ->
+                HighPerformancePageRuntime.activate(webView, token)
+            }
         }
         scheduleHeartbeat()
         publishStatus()
@@ -165,6 +187,11 @@ internal object HighPerformanceSessionController {
         managed.lastPageCallbackAt = System.currentTimeMillis()
         managed.pendingNavigationUrl = url
         val active = managed.session ?: return publishStatus()
+        active.jsHeartbeatToken = null
+        active.jsHeartbeatInstalledAt = null
+        active.lastJsHeartbeatAt = null
+        active.lastMainJsHeartbeatAt = null
+        active.lastWorkerJsHeartbeatAt = null
         val provisionalOrigin = url?.let(::strictOriginOrNull)
         if (provisionalOrigin == null || provisionalOrigin != active.origin) {
             stopSession(managed, reason = "top_level_navigation_started", restoreRenderer = true)
@@ -181,6 +208,13 @@ internal object HighPerformanceSessionController {
         val managed = find(webView) ?: return
         if (!managed.explicitlySuppressed) return
         authorizeRestart(managed, source)
+        if (!managed.explicitlySuppressed) {
+            evaluate(managed, managed.lastCommittedUrl, source = source)
+            installPageRuntime(webView, runtimeSnapshot)
+            prepareJavascriptHeartbeat(webView)?.let { token ->
+                HighPerformancePageRuntime.bootstrapCurrentDocument(webView, token)
+            }
+        }
     }
 
     private fun authorizeRestart(managed: ManagedWebView, source: String) {
@@ -215,6 +249,7 @@ internal object HighPerformanceSessionController {
         ensureMainThread()
         val managed = find(webView) ?: return
         managed.lastPageCallbackAt = System.currentTimeMillis()
+        managed.session?.let(::resetJavascriptHeartbeat)
         managed.pendingNavigationUrl = null
         managed.lastCommittedUrl = url
         evaluate(managed, url, source = "page_commit_visible")
@@ -233,6 +268,9 @@ internal object HighPerformanceSessionController {
         if (!currentUrl.isNullOrBlank() && currentUrl != url) {
             publishStatus()
             return
+        }
+        if (managed.pendingNavigationUrl != null) {
+            managed.session?.let(::resetJavascriptHeartbeat)
         }
         managed.lastCommittedUrl = url
         managed.pendingNavigationUrl = null
@@ -292,6 +330,12 @@ internal object HighPerformanceSessionController {
         )
         registrations.toList().forEach { managed ->
             evaluate(managed, managed.lastCommittedUrl, source = "config_updated")
+            managed.webView.get()?.let { webView ->
+                installPageRuntime(webView, snapshot)
+                prepareJavascriptHeartbeat(webView)?.let { token ->
+                    HighPerformancePageRuntime.bootstrapCurrentDocument(webView, token)
+                }
+            }
         }
         syncSystemResources("config_updated")
         publishStatus()
@@ -332,6 +376,7 @@ internal object HighPerformanceSessionController {
         ensureMainThread()
         val managed = find(webView) ?: return
         stopSession(managed, reason, restoreRenderer)
+        HighPerformancePageRuntime.uninstall(webView)
         registrations.remove(managed)
         if (reason == "tab_closed" || reason == "child_webview_closed") {
             restartPolicy.forget(managed.tabKey())
@@ -350,6 +395,7 @@ internal object HighPerformanceSessionController {
         val safeOwnerId = safeRuntimeId(ownerId)
         registrations.filter { it.ownerId == safeOwnerId }.toList().forEach { managed ->
             stopSession(managed, reason, restoreRenderer = true)
+            managed.webView.get()?.let(HighPerformancePageRuntime::uninstall)
             registrations.remove(managed)
         }
         ownerStates.remove(safeOwnerId)
@@ -368,6 +414,9 @@ internal object HighPerformanceSessionController {
         registrations.forEach { managed ->
             if (suppressCurrentWebViews) managed.explicitlySuppressed = true
             stopSession(managed, reason = source, restoreRenderer = true)
+            if (shouldUninstallPageRuntimeForStop(suppressCurrentWebViews)) {
+                managed.webView.get()?.let(HighPerformancePageRuntime::uninstall)
+            }
         }
         HighPerformanceDiagnostics.record(
             type = if (source == "notification_action") {
@@ -389,6 +438,7 @@ internal object HighPerformanceSessionController {
         registrations.filter { it.ownerId == safeOwnerId }.forEach { managed ->
             managed.explicitlySuppressed = true
             stopSession(managed, reason = source, restoreRenderer = true)
+            managed.webView.get()?.let(HighPerformancePageRuntime::uninstall)
         }
         HighPerformanceDiagnostics.record(
             type = "owner_sessions_stopped",
@@ -440,6 +490,12 @@ internal object HighPerformanceSessionController {
         )
         ownerRegistrations.toList().forEach { managed ->
             evaluate(managed, managed.lastCommittedUrl, source = source)
+            managed.webView.get()?.let { webView ->
+                installPageRuntime(webView, runtimeSnapshot)
+                prepareJavascriptHeartbeat(webView)?.let { token ->
+                    HighPerformancePageRuntime.bootstrapCurrentDocument(webView, token)
+                }
+            }
         }
         syncSystemResources(source)
         publishStatus()
@@ -472,6 +528,122 @@ internal object HighPerformanceSessionController {
     fun isProtected(webView: WebView): Boolean {
         ensureMainThread()
         return find(webView)?.session != null
+    }
+
+    fun prepareJavascriptHeartbeat(webView: WebView): String? {
+        ensureMainThread()
+        val session = find(webView)?.session ?: return null
+        if (session.jsHeartbeatToken == null) {
+            session.jsHeartbeatToken = UUID.randomUUID().toString()
+            session.jsHeartbeatInstalledAt = System.currentTimeMillis()
+            session.lastJsHeartbeatAt = null
+            session.lastMainJsHeartbeatAt = null
+            session.lastWorkerJsHeartbeatAt = null
+            HighPerformanceDiagnostics.record(
+                type = "js_heartbeat_installed",
+                originOrUrl = session.origin,
+                sessionId = session.tokenId
+            )
+            publishStatus()
+        }
+        return session.jsHeartbeatToken
+    }
+
+    fun onJavascriptHeartbeat(
+        webView: WebView,
+        token: String,
+        source: HighPerformanceProbeType,
+        pageTimestamp: Long
+    ): Boolean {
+        ensureMainThread()
+        val session = find(webView)?.session ?: return false
+        if (token.isBlank() || token != session.jsHeartbeatToken || pageTimestamp <= 0L) return false
+        if (source == HighPerformanceProbeType.DEACTIVATED) return false
+        val now = System.currentTimeMillis()
+        val wasState = classifyJavascriptHeartbeat(
+            now = now,
+            installedAt = session.jsHeartbeatInstalledAt,
+            lastMainHeartbeatAt = session.lastMainJsHeartbeatAt
+        )
+        when (source) {
+            HighPerformanceProbeType.INIT -> session.lastJsHeartbeatAt = now
+            HighPerformanceProbeType.MAIN -> {
+                session.lastJsHeartbeatAt = now
+                session.lastMainJsHeartbeatAt = now
+            }
+            HighPerformanceProbeType.WORKER -> {
+                session.lastJsHeartbeatAt = now
+                session.lastWorkerJsHeartbeatAt = now
+            }
+            HighPerformanceProbeType.WORKER_ERROR,
+            HighPerformanceProbeType.DEACTIVATED,
+            HighPerformanceProbeType.FREEZE,
+            HighPerformanceProbeType.RESUME,
+            HighPerformanceProbeType.PAGE_HIDE,
+            HighPerformanceProbeType.PAGE_SHOW,
+            HighPerformanceProbeType.VISIBILITY_CHANGE,
+            HighPerformanceProbeType.FOCUS,
+            HighPerformanceProbeType.BLUR -> Unit
+        }
+        val newState = classifyJavascriptHeartbeat(
+            now = now,
+            installedAt = session.jsHeartbeatInstalledAt,
+            lastMainHeartbeatAt = session.lastMainJsHeartbeatAt
+        )
+        val stateChanged = newState != wasState
+        if (source == HighPerformanceProbeType.WORKER_ERROR) {
+            HighPerformanceDiagnostics.record(
+                type = "js_worker_error",
+                result = "degraded",
+                originOrUrl = session.origin,
+                sessionId = session.tokenId
+            )
+        }
+        if (newState == HighPerformanceJavascriptState.RESPONSIVE &&
+            wasState != HighPerformanceJavascriptState.RESPONSIVE
+        ) {
+            HighPerformanceDiagnostics.record(
+                type = "js_heartbeat_responsive",
+                originOrUrl = session.origin,
+                sessionId = session.tokenId,
+                reason = source.name.lowercase()
+            )
+        }
+        if (stateChanged || source == HighPerformanceProbeType.WORKER_ERROR) {
+            publishStatus()
+        }
+        return true
+    }
+
+    fun onPageProbe(
+        webView: WebView,
+        token: String,
+        signal: HighPerformanceProbeSignal
+    ): Boolean {
+        ensureMainThread()
+        return when (signal.type) {
+            HighPerformanceProbeType.INIT,
+            HighPerformanceProbeType.MAIN,
+            HighPerformanceProbeType.WORKER,
+            HighPerformanceProbeType.WORKER_ERROR -> onJavascriptHeartbeat(
+                webView = webView,
+                token = token,
+                source = signal.type,
+                pageTimestamp = signal.pageTimestamp
+            )
+            else -> {
+                val session = find(webView)?.session ?: return false
+                if (token.isBlank() || token != session.jsHeartbeatToken) return false
+                HighPerformanceDiagnostics.record(
+                    type = "page_lifecycle_signal",
+                    originOrUrl = session.origin,
+                    sessionId = session.tokenId,
+                    reason = signal.type.name.lowercase()
+                )
+                publishStatus()
+                true
+            }
+        }
     }
 
     fun onRendererGone(
@@ -638,12 +810,23 @@ internal object HighPerformanceSessionController {
         )
     }
 
+    internal fun javascriptStateForTests(webView: WebView): HighPerformanceJavascriptState {
+        ensureMainThread()
+        val session = find(webView)?.session ?: return HighPerformanceJavascriptState.UNKNOWN
+        return classifyJavascriptHeartbeat(
+            now = System.currentTimeMillis(),
+            installedAt = session.jsHeartbeatInstalledAt,
+            lastMainHeartbeatAt = session.lastMainJsHeartbeatAt
+        )
+    }
+
     internal fun resetForTests() {
         ensureMainThread()
         mainHandler.removeCallbacks(heartbeat)
         mainHandler.removeCallbacks(stopServiceAfterGrace)
         registrations.toList().forEach { managed ->
             stopSession(managed, reason = "test_reset", restoreRenderer = true)
+            managed.webView.get()?.let(HighPerformancePageRuntime::uninstall)
         }
         registrations.clear()
         ownerStates.clear()
@@ -668,6 +851,7 @@ internal object HighPerformanceSessionController {
         lastSessionStoppedAt = null
         lastInterruptionAt = null
         lastSystemState = null
+        nativeHeartbeatAt = System.currentTimeMillis()
     }
 
     private fun evaluate(managed: ManagedWebView, url: String?, source: String) {
@@ -743,6 +927,7 @@ internal object HighPerformanceSessionController {
     private fun stopSession(managed: ManagedWebView, reason: String, restoreRenderer: Boolean) {
         val session = managed.session ?: return
         managed.session = null
+        managed.webView.get()?.let(HighPerformancePageRuntime::deactivate)
         var rendererRestored = false
         if (restoreRenderer) {
             managed.webView.get()?.let { webView ->
@@ -776,6 +961,15 @@ internal object HighPerformanceSessionController {
                 reason = reason
             )
         }
+    }
+
+    private fun resetJavascriptHeartbeat(session: Session) {
+        session.jsHeartbeatToken = null
+        session.jsHeartbeatInstalledAt = null
+        session.lastJsHeartbeatAt = null
+        session.lastMainJsHeartbeatAt = null
+        session.lastWorkerJsHeartbeatAt = null
+        session.lastReportedJavascriptState = HighPerformanceJavascriptState.UNKNOWN
     }
 
     private fun syncSystemResources(reason: String) {
@@ -860,6 +1054,7 @@ internal object HighPerformanceSessionController {
 
     private fun publishStatus() {
         val context = appContext ?: return
+        val now = System.currentTimeMillis()
         val system = HighPerformanceProcessState.collect(context).also { lastSystemState = it }
         val sessions = registrations.mapNotNull { managed ->
             val session = managed.session ?: return@mapNotNull null
@@ -870,6 +1065,28 @@ internal object HighPerformanceSessionController {
                 origin = session.origin,
                 startedAt = session.startedAt,
                 lastPageCallbackAt = session.lastPageCallbackAt,
+                jsHeartbeatInstalledAt = session.jsHeartbeatInstalledAt,
+                lastJsHeartbeatAt = session.lastJsHeartbeatAt,
+                lastMainJsHeartbeatAt = session.lastMainJsHeartbeatAt,
+                lastWorkerJsHeartbeatAt = session.lastWorkerJsHeartbeatAt,
+                javascriptState = classifyJavascriptHeartbeat(
+                    now = now,
+                    installedAt = session.jsHeartbeatInstalledAt,
+                    lastMainHeartbeatAt = session.lastMainJsHeartbeatAt
+                ).also { state ->
+                    if (state == HighPerformanceJavascriptState.STALE &&
+                        session.lastReportedJavascriptState != HighPerformanceJavascriptState.STALE
+                    ) {
+                        HighPerformanceDiagnostics.record(
+                            type = "js_heartbeat_stale",
+                            result = "degraded",
+                            originOrUrl = session.origin,
+                            sessionId = session.tokenId,
+                            reason = "main_timer_missing"
+                        )
+                    }
+                    session.lastReportedJavascriptState = state
+                },
                 visible = managed.visible,
                 activityState = managed.activityState,
                 rendererPolicy = if (session.rendererApplied) {
@@ -897,7 +1114,8 @@ internal object HighPerformanceSessionController {
             model = system.model,
             webViewPackageName = system.webViewPackageName,
             webViewVersionName = system.webViewVersionName,
-            updatedAt = System.currentTimeMillis(),
+            updatedAt = now,
+            nativeHeartbeatAt = nativeHeartbeatAt,
             appliedConfigVersion = runtimeSnapshot.configVersion,
             configuredRuleCount = runtimeSnapshot.enabledRules.size,
             compositeState = compositeState(system, sessions),
@@ -973,17 +1191,17 @@ internal object HighPerformanceSessionController {
         if (!runtimeSnapshot.enabled) return HighPerformanceCompositeState.DISABLED
         if (runtimeSnapshot.enabledRules.isEmpty()) return HighPerformanceCompositeState.NO_RULES
         if (sessions.isNotEmpty()) {
-            return if (
-                sessions.all { it.rendererPolicy == HighPerformanceRendererPolicy.HIGH_PERFORMANCE_IMPORTANT_NOT_WAIVED } &&
+            return highPerformanceCompositeStateForActiveSessions(
+                resourceProtectionReady =
+                    sessions.all {
+                        it.rendererPolicy == HighPerformanceRendererPolicy.HIGH_PERFORMANCE_IMPORTANT_NOT_WAIVED
+                    } &&
                 foregroundServiceState == HighPerformanceForegroundServiceState.RUNNING &&
                 wakeLockSnapshot.state == HighPerformanceWakeLockState.HELD &&
                 system.notificationsVisible &&
-                system.ignoringBatteryOptimizations
-            ) {
-                HighPerformanceCompositeState.ACTIVE
-            } else {
-                HighPerformanceCompositeState.DEGRADED
-            }
+                    system.ignoringBatteryOptimizations,
+                javascriptStates = sessions.map(HighPerformanceSessionStatus::javascriptState)
+            )
         }
         if (lastInterruptionAt != null &&
             (lastSessionStartedAt == null || lastInterruptionAt!! >= lastSessionStartedAt!!)
@@ -1034,6 +1252,18 @@ internal object HighPerformanceSessionController {
     private fun find(webView: WebView): ManagedWebView? =
         registrations.firstOrNull { it.webView.get() === webView }
 
+    private fun installPageRuntime(webView: WebView, snapshot: HighPerformanceRuntimeSnapshot) {
+        val result = HighPerformancePageRuntime.install(webView, snapshot) { sourceWebView, signal ->
+            onPageProbe(sourceWebView, signal.token, signal)
+        }
+        HighPerformanceDiagnostics.record(
+            type = "page_runtime_configured",
+            result = if (result.installed) "ok" else "inactive",
+            originOrUrl = webView.url,
+            reason = result.reason ?: "origins_${result.allowedOriginRules.size}"
+        )
+    }
+
     private fun activeSessions(): List<Session> = registrations.mapNotNull(ManagedWebView::session)
 
     private fun strictOriginOrNull(url: String): String? = runCatching {
@@ -1073,7 +1303,14 @@ internal object HighPerformanceSessionController {
         val origin: String,
         val startedAt: Long,
         var lastPageCallbackAt: Long,
-        val rendererApplied: Boolean
+        val rendererApplied: Boolean,
+        var jsHeartbeatToken: String? = null,
+        var jsHeartbeatInstalledAt: Long? = null,
+        var lastJsHeartbeatAt: Long? = null,
+        var lastMainJsHeartbeatAt: Long? = null,
+        var lastWorkerJsHeartbeatAt: Long? = null,
+        var lastReportedJavascriptState: HighPerformanceJavascriptState =
+            HighPerformanceJavascriptState.UNKNOWN
     )
 
     private const val STATUS_HEARTBEAT_MS = 30_000L

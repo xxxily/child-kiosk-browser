@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import site.anzz.childkiosk.performance.HighPerformanceActivityState
 import site.anzz.childkiosk.performance.HighPerformanceForegroundServiceState
+import site.anzz.childkiosk.performance.HighPerformanceJavascriptState
 import site.anzz.childkiosk.performance.HighPerformanceRendererPolicy
 import site.anzz.childkiosk.performance.HighPerformanceRuntimeStatusReadResult
 import site.anzz.childkiosk.performance.HighPerformanceSessionStatus
@@ -118,7 +119,7 @@ private fun HighPerformanceSessionItem(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 RuntimeStatusPill(
-                    label = if (session.fullSystemProtection) "完整系统保护" else "降级保护",
+                    label = if (session.fullSystemProtection) "系统资源完整" else "系统资源降级",
                     tone = if (session.fullSystemProtection) StatusTone.POSITIVE else StatusTone.WARNING
                 )
                 RuntimeStatusPill(
@@ -138,6 +139,15 @@ private fun HighPerformanceSessionItem(
                 RuntimeStatusPill(
                     label = if (screenInteractive) "屏幕：点亮" else "屏幕：熄灭",
                     tone = StatusTone.NEUTRAL
+                )
+                RuntimeStatusPill(
+                    label = "JS：${javascriptStateLabel(session.javascriptState)}",
+                    tone = when (session.javascriptState) {
+                        HighPerformanceJavascriptState.RESPONSIVE -> StatusTone.POSITIVE
+                        HighPerformanceJavascriptState.AWAITING_FIRST_HEARTBEAT,
+                        HighPerformanceJavascriptState.UNKNOWN -> StatusTone.NEUTRAL
+                        HighPerformanceJavascriptState.STALE -> StatusTone.ERROR
+                    }
                 )
             }
             Text(
@@ -194,8 +204,37 @@ private fun HighPerformanceSessionItem(
                 lineHeight = 15.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Text(
+                "JS 主线程心跳：${session.lastMainJsHeartbeatAt?.let(::formatTimestamp) ?: "尚未收到"} · " +
+                    "Worker：${session.lastWorkerJsHeartbeatAt?.let(::formatTimestamp) ?: "尚未收到"}",
+                fontSize = 10.sp,
+                lineHeight = 15.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (session.lastMainJsHeartbeatAt != null || session.lastWorkerJsHeartbeatAt != null) {
+                Text(
+                    "主线程：${session.lastMainJsHeartbeatAt?.let { formatRelativeAge(it, now) } ?: "无心跳"} · " +
+                        "Worker：${session.lastWorkerJsHeartbeatAt?.let { formatRelativeAge(it, now) } ?: "无心跳"}",
+                    fontSize = 10.sp,
+                    lineHeight = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(
+                "心跳只验证诊断脚本可调度，不代表网站自身业务定时器、联网或任务一定连续。",
+                fontSize = 10.sp,
+                lineHeight = 15.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
+}
+
+private fun javascriptStateLabel(state: HighPerformanceJavascriptState): String = when (state) {
+    HighPerformanceJavascriptState.UNKNOWN -> "未知"
+    HighPerformanceJavascriptState.AWAITING_FIRST_HEARTBEAT -> "等待首个心跳"
+    HighPerformanceJavascriptState.RESPONSIVE -> "诊断脚本响应"
+    HighPerformanceJavascriptState.STALE -> "心跳已停止"
 }
 
 @Composable
