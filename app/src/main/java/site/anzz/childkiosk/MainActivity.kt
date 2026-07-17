@@ -438,6 +438,14 @@ class MainActivity : ComponentActivity() {
         WebViewPool.warmupBlank()
         applySystemUiMode()
 
+        WebViewImePolicyBridge.publish(
+            this,
+            WebViewImePolicy(
+                limitImeInput = KioskPrefs.isLimitImeInputEnabled(this),
+                normalSystemBars = isNormalSystemUiMode()
+            )
+        )
+
         if (KioskPrefs.isLimitFlagSecureEnabled(this)) {
             window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         } else {

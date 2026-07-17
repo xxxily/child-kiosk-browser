@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.AttributeSet
 import android.util.Log
 import android.view.View
+import android.view.inputmethod.InputMethodManager
 import android.webkit.WebView
 import site.anzz.childkiosk.performance.HighPerformanceDiagnostics
 import site.anzz.childkiosk.performance.HighPerformanceSessionController
@@ -30,6 +31,20 @@ class PersistentWebView @JvmOverloads constructor(
      * [site.anzz.childkiosk.util.KioskPrefs.isLimitImeInputEnabled].
      */
     var imeInputLimited: Boolean = false
+        private set
+
+    fun applyImeInputLimit(limited: Boolean, refreshInputConnection: Boolean = false) {
+        val changed = imeInputLimited != limited
+        imeInputLimited = limited
+        if (!changed && !refreshInputConnection) return
+
+        post {
+            if (isAttachedToWindow) {
+                (context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                    ?.restartInput(this)
+            }
+        }
+    }
 
     override fun onCheckIsTextEditor(): Boolean {
         if (imeInputLimited) return false

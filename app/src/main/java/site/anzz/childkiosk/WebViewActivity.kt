@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.DownloadManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -441,6 +442,29 @@ open class WebViewActivity : ComponentActivity() {
     private val pendingPopupWebViews = ConcurrentHashMap<WebView, PendingPopup>()
     private val pendingPopupReloads = ConcurrentHashMap<WebView, Runnable>()
     private val popupMainHandler = Handler(Looper.getMainLooper())
+    private var imeVisibleFromInsets = false
+    private var imePolicyReceiverRegistered = false
+    private val systemUiRecoveryRunnable = Runnable {
+        if (!isDestroyed && !isFinishing && !isImeVisible()) {
+            applySystemUiMode()
+        }
+    }
+    private val imePolicyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val policy = WebViewImePolicyBridge.read(intent) ?: return
+            runtimeConfig = runtimeConfig.copy(
+                limitImeInput = policy.limitImeInput,
+                normalSystemBars = policy.normalSystemBars
+            )
+            applyImeInputLimitToAllWebViews(refreshInputConnection = !policy.limitImeInput)
+            applySystemUiMode()
+            Log.i(
+                "ChildKioskWebView",
+                "Live IME policy applied: limited=${policy.limitImeInput}, " +
+                    "normalSystemBars=${policy.normalSystemBars}"
+            )
+        }
+    }
     private val pullToRefreshPageOptOut = ConcurrentHashMap<WebView, Boolean>()
     private val nativeLocationBridgeWatchIds = ConcurrentHashMap<String, String>()
     private val nativeLocationBridgeNativeRequestIds = ConcurrentHashMap<String, String>()
@@ -578,6 +602,13 @@ open class WebViewActivity : ComponentActivity() {
         requestedOrientation = KioskPrefs.requestedOrientationForMode(orientationMode)
 
         super.onCreate(savedInstanceState)
+        ContextCompat.registerReceiver(
+            this,
+            imePolicyReceiver,
+            WebViewImePolicyBridge.intentFilter(),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        imePolicyReceiverRegistered = true
         WebViewHostRuntime.register(this)?.finishForHostReplacement()
         recordTaskLifecycle("activity_created", intent)
         HighPerformanceSessionController.initialize(this, runtimeConfig.highPerformanceSnapshot)
@@ -600,39 +631,6 @@ open class WebViewActivity : ComponentActivity() {
         }
 
         applySystemUiMode()
-
-        // 监听 System UI / Window 边距变化，锁定态下被手势短暂唤起后自动收回。
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            window.decorView.setOnApplyWindowInsetsListener { view, insets ->
-                val shouldReapply = if (shouldUseNormalSystemBars()) {
-                    !shouldShowNormalStatusBar() &&
-                        insets.isVisible(android.view.WindowInsets.Type.statusBars())
-                } else {
-                    insets.isVisible(android.view.WindowInsets.Type.statusBars()) ||
-                        insets.isVisible(android.view.WindowInsets.Type.navigationBars())
-                }
-                if (shouldReapply) {
-                    view.postDelayed({
-                        if (!isDestroyed && !isFinishing) {
-                            applySystemUiMode()
-                        }
-                    }, 3000)
-                }
-                view.onApplyWindowInsets(insets)
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            window.decorView.setOnSystemUiVisibilityChangeListener { visibility ->
-                if ((!shouldUseNormalSystemBars() || !shouldShowNormalStatusBar()) &&
-                    (visibility and android.view.View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
-                    window.decorView.postDelayed({
-                        if (!isDestroyed && !isFinishing) {
-                            applySystemUiMode()
-                        }
-                    }, 3000)
-                }
-            }
-        }
 
         val webAppId = intent.getIntExtra(EXTRA_WEB_APP_ID, -1)
         launchedWebAppId = webAppId.takeIf { it > 0 }
@@ -681,21 +679,29 @@ open class WebViewActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        // 当输入法可见时，跳过系统 UI 模式重设，避免隐藏系统栏导致输入法被收起
-        if (hasFocus && !isImeVisible) applySystemUiMode()
+        if (hasFocus && !shouldDeferSystemUiForIme(
+                imeVisible = isImeVisible(),
+                focusedViewIsTextEditor = currentFocus?.onCheckIsTextEditor() == true
+            )
+        ) {
+            applySystemUiMode()
+        }
     }
 
-    private val isImeVisible: Boolean
-        get() =
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                window.decorView.rootWindowInsets?.isVisible(
-                    android.view.WindowInsets.Type.ime()
-                ) == true
-            } else {
-                false
-            }
+    private fun isImeVisible(): Boolean {
+        return imeVisibleFromInsets ||
+            ViewCompat.getRootWindowInsets(window.decorView)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+    }
 
+    private fun scheduleSystemUiRecovery() {
+        window.decorView.removeCallbacks(systemUiRecoveryRunnable)
+        window.decorView.postDelayed(systemUiRecoveryRunnable, SYSTEM_UI_RECOVERY_DELAY_MS)
+    }
 
+    private fun cancelSystemUiRecovery() {
+        window.decorView.removeCallbacks(systemUiRecoveryRunnable)
+    }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (runtimeConfig.limitVolumeKeys) {
@@ -746,6 +752,11 @@ open class WebViewActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        cancelSystemUiRecovery()
+        if (imePolicyReceiverRegistered) {
+            unregisterReceiver(imePolicyReceiver)
+            imePolicyReceiverRegistered = false
+        }
         HighPerformanceRuntimeBridge.clearSnapshotAppliedListener(this)
         WebViewHostRuntime.unregister(this)
         recordTaskLifecycle("activity_destroyed", intent)
@@ -1104,11 +1115,14 @@ open class WebViewActivity : ComponentActivity() {
      * 将当前 [WebViewRuntimeConfig.limitImeInput] 同步到所有已创建的 [PersistentWebView]，
      * 确保设置变更后对已存在的标签页立即生效。
      */
-    private fun applyImeInputLimitToAllWebViews() {
+    private fun applyImeInputLimitToAllWebViews(refreshInputConnection: Boolean = false) {
         val limited = runtimeConfig.limitImeInput
-        tabList.forEach { tab ->
-            (tab.webView as? PersistentWebView)?.let { it.imeInputLimited = limited }
-        }
+        (tabList.mapNotNull { it.webView } + webViewStack + pendingPopupWebViews.keys)
+            .distinct()
+            .filterIsInstance<PersistentWebView>()
+            .forEach { webView ->
+                webView.applyImeInputLimit(limited, refreshInputConnection)
+            }
     }
 
     private fun shouldUseNormalSystemBars(): Boolean {
@@ -1978,7 +1992,7 @@ open class WebViewActivity : ComponentActivity() {
             launchedConfig.highPerformanceSnapshot.configVersion
         )
         runtimeConfig = launchedConfig.copy(highPerformanceSnapshot = publishedSnapshot)
-        applyImeInputLimitToAllWebViews()
+        applyImeInputLimitToAllWebViews(refreshInputConnection = !runtimeConfig.limitImeInput)
         HighPerformanceSessionController.applySnapshot(
             publishedSnapshot,
             source = "activity_new_intent"
@@ -2240,6 +2254,20 @@ open class WebViewActivity : ComponentActivity() {
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val navigationBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
             val imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
+            val imeVisible = insets.isVisible(WindowInsetsCompat.Type.ime()) || imeInsets.bottom > 0
+            imeVisibleFromInsets = imeVisible
+            if (imeVisible) {
+                cancelSystemUiRecovery()
+            } else if (shouldRecoverSystemUiFromInsets(
+                    normalSystemBars = shouldUseNormalSystemBars(),
+                    showNormalStatusBar = shouldShowNormalStatusBar(),
+                    imeVisible = false,
+                    statusBarsVisible = insets.isVisible(WindowInsetsCompat.Type.statusBars()),
+                    navigationBarsVisible = insets.isVisible(WindowInsetsCompat.Type.navigationBars())
+                )
+            ) {
+                scheduleSystemUiRecovery()
+            }
             val shouldInsetForNormalMode = shouldUseNormalSystemBars()
             // IME insets 始终生效，确保输入法弹出时内容区域不被遮挡
             val imeBottom = imeInsets.bottom
@@ -4436,6 +4464,7 @@ open class WebViewActivity : ComponentActivity() {
         private const val HISTORY_RETENTION_MS = 90L * 24L * 60L * 60L * 1000L
         private const val HIGH_PERFORMANCE_RECOVERY_TIMEOUT_MS = 30_000L
         private const val POPUP_TARGET_TIMEOUT_MS = 10_000L
+        private const val SYSTEM_UI_RECOVERY_DELAY_MS = 3_000L
         private const val MAX_PENDING_POPUPS = 4
     }
 }
@@ -4496,7 +4525,7 @@ private fun createSecureWebView(
     return webView.apply {
         WebViewRuntime.applySettings(this, ctx, targetUrl, runtimeConfig)
         if (this is PersistentWebView) {
-            imeInputLimited = runtimeConfig.limitImeInput
+            applyImeInputLimit(runtimeConfig.limitImeInput)
         }
         WebViewRuntime.logWebViewDiagnostics(
             ctx,
