@@ -25,10 +25,10 @@ class PersistentWebView @JvmOverloads constructor(
     var imeInputLimited: Boolean = false
         private set
 
-    fun applyImeInputLimit(limited: Boolean, refreshInputConnection: Boolean = false) {
-        val changed = imeInputLimited != limited
+    fun applyImeInputLimit(limited: Boolean) {
+        val refreshInputConnection = shouldRefreshImeInputConnection(imeInputLimited, limited)
         imeInputLimited = limited
-        if (!changed && !refreshInputConnection) return
+        if (!refreshInputConnection) return
 
         post {
             if (isAttachedToWindow) {
@@ -42,4 +42,9 @@ class PersistentWebView @JvmOverloads constructor(
         if (imeInputLimited) return false
         return super.onCheckIsTextEditor()
     }
+}
+
+/** Only policy transitions invalidate Chromium's existing input connection. */
+internal fun shouldRefreshImeInputConnection(previousLimited: Boolean, nextLimited: Boolean): Boolean {
+    return previousLimited != nextLimited
 }

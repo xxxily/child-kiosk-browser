@@ -53,6 +53,18 @@ class WebViewImePolicyTest {
         )
     }
 
+    @Test
+    fun `unchanged unrestricted policy does not restart the input connection`() {
+        assertFalse(shouldRefreshImeInputConnection(previousLimited = false, nextLimited = false))
+    }
+
+    @Test
+    fun `only explicit ime restriction transitions restart the input connection`() {
+        assertTrue(shouldRefreshImeInputConnection(previousLimited = false, nextLimited = true))
+        assertTrue(shouldRefreshImeInputConnection(previousLimited = true, nextLimited = false))
+        assertFalse(shouldRefreshImeInputConnection(previousLimited = true, nextLimited = true))
+    }
+
     private fun roundTrip(policy: WebViewImePolicy): WebViewImePolicy? {
         return WebViewImePolicyBridge.read(WebViewImePolicyBridge.createIntent(context, policy))
     }

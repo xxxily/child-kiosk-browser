@@ -456,7 +456,7 @@ open class WebViewActivity : ComponentActivity() {
                 limitImeInput = policy.limitImeInput,
                 normalSystemBars = policy.normalSystemBars
             )
-            applyImeInputLimitToAllWebViews(refreshInputConnection = !policy.limitImeInput)
+            applyImeInputLimitToAllWebViews()
             applySystemUiMode()
             Log.i(
                 "ChildKioskWebView",
@@ -1113,13 +1113,13 @@ open class WebViewActivity : ComponentActivity() {
      * 将当前 [WebViewRuntimeConfig.limitImeInput] 同步到所有已创建的 [PersistentWebView]，
      * 确保设置变更后对已存在的标签页立即生效。
      */
-    private fun applyImeInputLimitToAllWebViews(refreshInputConnection: Boolean = false) {
+    private fun applyImeInputLimitToAllWebViews() {
         val limited = runtimeConfig.limitImeInput
         (tabList.mapNotNull { it.webView } + webViewStack + pendingPopupWebViews.keys)
             .distinct()
             .filterIsInstance<PersistentWebView>()
             .forEach { webView ->
-                webView.applyImeInputLimit(limited, refreshInputConnection)
+                webView.applyImeInputLimit(limited)
             }
     }
 
@@ -1990,7 +1990,7 @@ open class WebViewActivity : ComponentActivity() {
             launchedConfig.highPerformanceSnapshot.configVersion
         )
         runtimeConfig = launchedConfig.copy(highPerformanceSnapshot = publishedSnapshot)
-        applyImeInputLimitToAllWebViews(refreshInputConnection = !runtimeConfig.limitImeInput)
+        applyImeInputLimitToAllWebViews()
         HighPerformanceSessionController.applySnapshot(
             publishedSnapshot,
             source = "activity_new_intent"
