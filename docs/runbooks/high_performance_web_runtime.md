@@ -2,7 +2,13 @@
 
 ## Purpose and product boundary
 
-High-performance runtime protects only parent-approved top-level HTTP/HTTPS Origins. It combines a foreground service in `:webview`, a bounded partial CPU WakeLock, and a non-waived renderer-priority request. It improves survival probability; it does not guarantee uninterrupted JavaScript, timers, network sockets, or renderer memory.
+High-performance runtime protects only parent-approved top-level HTTP/HTTPS Origins. It combines a foreground service in `:webview`, a bounded partial CPU WakeLock, and a non-waived renderer-priority request. It improves survival probability; it does not guarantee uninterrupted JavaScript, timers, network sockets, renderer memory, or foreground-equivalent Chromium scheduling.
+
+The runtime must preserve Android's real WebView lifecycle contract. It does not falsify a
+WebView's visibility, window visibility, `isShown()`, screen state, or `onPause()` callbacks. Those
+signals are part of Chromium's focus and IME integration. FGS/WakeLock protect process and CPU
+availability; renderer priority is an OOM/offscreen-waiver hint. None of them make a hidden page a
+foreground view.
 
 ## Architecture signals
 
@@ -161,11 +167,12 @@ main heartbeat is older than 20 seconds, the session becomes `STALE` and the com
 `DEGRADED`, even when FGS and WakeLock remain healthy. This distinction prevents resource readiness
 from being reported as JavaScript continuity.
 
-The page runtime overrides Page Visibility at document start and suppresses trusted-page
-`visibilitychange`, `webkitvisibilitychange`, and `freeze` listeners. It deliberately does not block
-`pagehide`, because sites and BFCache use that event for navigation cleanup. An Android 16/WebView or
-OEM scheduler can still throttle or freeze Blink below all public Android APIs; no supported WebView
-API can guarantee arbitrary third-party JavaScript runs exactly like the foreground indefinitely.
+The page runtime may provide an Origin-scoped Page Visibility compatibility layer at document start
+for parent-approved pages. This layer is separate from Android View state and cannot replace it. It
+deliberately does not block `pagehide`, because sites and BFCache use that event for navigation
+cleanup. An Android 16/WebView or OEM scheduler can still throttle or freeze Blink below all public
+Android APIs; no supported WebView API can guarantee arbitrary third-party JavaScript runs exactly
+like the foreground indefinitely.
 
 For a reproducible screen-off report, capture at least 2-5 minutes of the three heartbeats plus page
 business timestamps from `docs/test-pages/high_performance_runtime_test.html`. If the injected main
@@ -194,6 +201,10 @@ was frozen. If all three stop, inspect process death, WakeLock renewal, Doze, an
 - Main/Worker JS heartbeat transitions from waiting to responsive to stale while native heartbeat and
   system-resource readiness remain independently visible.
 - Android 9, 12, 13, and 14; at least one AOSP-like device and two relevant OEM device families.
+- With `限制输入法调起` disabled, text/password/number/textarea fields summon the IME in normal and
+  child mode, including normal -> child -> normal on the same live page and on a protected page.
+- With the restriction enabled, webpage IME stays blocked; disabling it restores IME on the same
+  live page without recreating the WebView.
 
 ## Release blockers
 

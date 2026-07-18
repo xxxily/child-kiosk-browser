@@ -4,7 +4,9 @@ import android.content.Context
 import android.webkit.WebView
 import androidx.test.core.app.ApplicationProvider
 import org.junit.After
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -91,6 +93,36 @@ class HighPerformanceSessionControllerTest {
             true,
             shouldDeferForegroundServiceStart(
                 serviceAlreadyActive = false,
+                ownerInForeground = false
+            )
+        )
+    }
+
+    @Test
+    fun hiddenOrStoppedProtectedPageKeepsItsLogicalSession() {
+        HighPerformanceSessionController.onVisibilityChanged(webView, visible = false)
+        HighPerformanceSessionController.onActivityStateChanged(
+            OWNER_ID,
+            HighPerformanceActivityState.STOPPED
+        )
+
+        val state = HighPerformanceSessionController.debugStateForTests()
+
+        assertEquals(1, state.activeSessionCount)
+        assertEquals(1, state.stoppedRegistrationCount)
+    }
+
+    @Test
+    fun onlyANewBackgroundServiceStartIsDeferredForStoppedOwner() {
+        assertTrue(
+            shouldDeferForegroundServiceStart(
+                serviceAlreadyActive = false,
+                ownerInForeground = false
+            )
+        )
+        assertFalse(
+            shouldDeferForegroundServiceStart(
+                serviceAlreadyActive = true,
                 ownerInForeground = false
             )
         )
