@@ -32,13 +32,6 @@ class WebViewImePolicyTest {
     }
 
     @Test
-    fun `focused editor defers focus driven system ui reset before ime insets arrive`() {
-        assertTrue(shouldDeferSystemUiForIme(imeVisible = false, focusedViewIsTextEditor = true))
-        assertTrue(shouldDeferSystemUiForIme(imeVisible = true, focusedViewIsTextEditor = false))
-        assertFalse(shouldDeferSystemUiForIme(imeVisible = false, focusedViewIsTextEditor = false))
-    }
-
-    @Test
     fun `ime visibility always blocks delayed immersive recovery`() {
         assertFalse(
             shouldRecoverSystemUiFromInsets(

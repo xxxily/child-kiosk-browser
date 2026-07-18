@@ -446,7 +446,7 @@ open class WebViewActivity : ComponentActivity() {
     private var imePolicyReceiverRegistered = false
     private val systemUiRecoveryRunnable = Runnable {
         if (!isDestroyed && !isFinishing && !isImeVisible()) {
-            applySystemUiMode()
+            applySystemUiModeNow()
         }
     }
     private val imePolicyReceiver = object : BroadcastReceiver() {
@@ -675,17 +675,6 @@ open class WebViewActivity : ComponentActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         applySystemUiMode()
-    }
-
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        super.onWindowFocusChanged(hasFocus)
-        if (hasFocus && !shouldDeferSystemUiForIme(
-                imeVisible = isImeVisible(),
-                focusedViewIsTextEditor = currentFocus?.onCheckIsTextEditor() == true
-            )
-        ) {
-            applySystemUiMode()
-        }
     }
 
     private fun isImeVisible(): Boolean {
@@ -1099,6 +1088,15 @@ open class WebViewActivity : ComponentActivity() {
     }
 
     private fun applySystemUiMode() {
+        if (isImeVisible()) {
+            scheduleSystemUiRecovery()
+            webViewRoot?.let { ViewCompat.requestApplyInsets(it) }
+            return
+        }
+        applySystemUiModeNow()
+    }
+
+    private fun applySystemUiModeNow() {
         if (shouldUseNormalSystemBars()) {
             SystemUiHelper.enterNormal(
                 this,

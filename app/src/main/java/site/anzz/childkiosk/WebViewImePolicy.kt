@@ -45,11 +45,6 @@ internal object WebViewImePolicyBridge {
     fun intentFilter() = android.content.IntentFilter(ACTION_POLICY_CHANGED)
 }
 
-internal fun shouldDeferSystemUiForIme(
-    imeVisible: Boolean,
-    focusedViewIsTextEditor: Boolean
-): Boolean = imeVisible || focusedViewIsTextEditor
-
 internal fun shouldRecoverSystemUiFromInsets(
     normalSystemBars: Boolean,
     showNormalStatusBar: Boolean,

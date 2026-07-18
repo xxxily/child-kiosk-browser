@@ -16,10 +16,10 @@ runs in `:webview`. SharedPreferences are not a reliable live synchronization me
 those processes. Before this fix, the existing WebView host could retain the child-mode system-bar
 snapshot even though the main-process setting correctly reported `limitImeInput=false`.
 
-There was also an IME/system-bar ordering race. Window focus and system-bar callbacks could call
-`hide(systemBars)` while the IME was starting. The focus guard read IME visibility synchronously,
-worked only on Android 11+, and a separate delayed recovery callback did not re-check the IME before
-running. The keyboard could therefore be dismissed without the input-limit preference ever being
+There was also an IME/system-bar ordering race. `WebViewActivity.onWindowFocusChanged()` called
+`hide(systemBars)` whenever the Activity regained focus. Its old visibility check only worked on
+Android 11+, so on Android 9/10 it could reset immersive system bars while the IME was starting.
+That affected every mode and dismissed the keyboard without the input-limit preference ever being
 enabled.
 
 ## Fix strategy
@@ -27,7 +27,7 @@ enabled.
 - Publish `limitImeInput` and the effective system-bar mode explicitly to the live `:webview`
   Activity whenever sandbox or quick-mode settings change.
 - Track IME visibility through `WindowInsetsCompat`, including older Android versions.
-- Treat a focused text editor as an in-progress IME interaction before insets arrive.
+- Remove the focus-driven system-bar reset; use the root `WindowInsetsCompat` listener instead.
 - Cancel system-bar recovery while IME insets are visible and re-check visibility when the delayed
   recovery actually runs.
 - Restart each managed `PersistentWebView` input connection when an input restriction is removed.
