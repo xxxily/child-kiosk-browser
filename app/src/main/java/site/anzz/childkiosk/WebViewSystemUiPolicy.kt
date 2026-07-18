@@ -3,41 +3,36 @@ package site.anzz.childkiosk
 import android.content.Context
 import android.content.Intent
 
-internal data class WebViewImePolicy(
-    val limitImeInput: Boolean,
+/**
+ * Publishes the system-bar mode to a live WebView host in the isolated process.
+ * Web page text input deliberately follows the platform WebView behavior without policy overrides.
+ */
+internal data class WebViewSystemUiPolicy(
     val normalSystemBars: Boolean
 )
 
-/**
- * Publishes the small subset of settings that must update a live WebView host immediately.
- * The explicit broadcast avoids stale SharedPreferences reads in the isolated :webview process.
- */
-internal object WebViewImePolicyBridge {
+internal object WebViewSystemUiPolicyBridge {
     private const val ACTION_POLICY_CHANGED =
-        "site.anzz.childkiosk.action.WEBVIEW_IME_POLICY_CHANGED"
-    private const val EXTRA_LIMIT_IME_INPUT = "limitImeInput"
+        "site.anzz.childkiosk.action.WEBVIEW_SYSTEM_UI_POLICY_CHANGED"
     private const val EXTRA_NORMAL_SYSTEM_BARS = "normalSystemBars"
 
-    fun publish(context: Context, policy: WebViewImePolicy) {
+    fun publish(context: Context, policy: WebViewSystemUiPolicy) {
         context.sendBroadcast(createIntent(context, policy))
     }
 
-    internal fun createIntent(context: Context, policy: WebViewImePolicy): Intent {
+    internal fun createIntent(context: Context, policy: WebViewSystemUiPolicy): Intent {
         return Intent(ACTION_POLICY_CHANGED)
             .setPackage(context.packageName)
-            .putExtra(EXTRA_LIMIT_IME_INPUT, policy.limitImeInput)
             .putExtra(EXTRA_NORMAL_SYSTEM_BARS, policy.normalSystemBars)
     }
 
-    fun read(intent: Intent?): WebViewImePolicy? {
+    fun read(intent: Intent?): WebViewSystemUiPolicy? {
         if (intent?.action != ACTION_POLICY_CHANGED ||
-            !intent.hasExtra(EXTRA_LIMIT_IME_INPUT) ||
             !intent.hasExtra(EXTRA_NORMAL_SYSTEM_BARS)
         ) {
             return null
         }
-        return WebViewImePolicy(
-            limitImeInput = intent.getBooleanExtra(EXTRA_LIMIT_IME_INPUT, false),
+        return WebViewSystemUiPolicy(
             normalSystemBars = intent.getBooleanExtra(EXTRA_NORMAL_SYSTEM_BARS, false)
         )
     }

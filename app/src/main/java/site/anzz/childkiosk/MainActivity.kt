@@ -438,10 +438,9 @@ class MainActivity : ComponentActivity() {
         WebViewPool.warmupBlank()
         applySystemUiMode()
 
-        WebViewImePolicyBridge.publish(
+        WebViewSystemUiPolicyBridge.publish(
             this,
-            WebViewImePolicy(
-                limitImeInput = KioskPrefs.isLimitImeInputEnabled(this),
+            WebViewSystemUiPolicy(
                 normalSystemBars = isNormalSystemUiMode()
             )
         )

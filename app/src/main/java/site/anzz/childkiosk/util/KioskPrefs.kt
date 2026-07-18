@@ -43,7 +43,6 @@ data class WebViewRuntimeConfig(
     val limitFileChooser: Boolean,
     val limitFullscreenVideo: Boolean,
     val limitDownload: Boolean,
-    val limitImeInput: Boolean,
     val pullToRefreshEnabled: Boolean,
     val webDebugTool: String,
     val injectTimingMode: String,
@@ -109,7 +108,6 @@ data class WebViewRuntimeConfig(
             .put("limitFileChooser", limitFileChooser)
             .put("limitFullscreenVideo", limitFullscreenVideo)
             .put("limitDownload", limitDownload)
-            .put("limitImeInput", limitImeInput)
             .put("pullToRefreshEnabled", pullToRefreshEnabled)
             .put("webDebugTool", webDebugTool)
             .put("injectTimingMode", injectTimingMode)
@@ -187,7 +185,6 @@ data class WebViewRuntimeConfig(
                 limitFileChooser = json.optBoolean("limitFileChooser", fallback.limitFileChooser),
                 limitFullscreenVideo = json.optBoolean("limitFullscreenVideo", fallback.limitFullscreenVideo),
                 limitDownload = json.optBoolean("limitDownload", fallback.limitDownload),
-                limitImeInput = json.optBoolean("limitImeInput", fallback.limitImeInput),
                 pullToRefreshEnabled = json.optBoolean("pullToRefreshEnabled", fallback.pullToRefreshEnabled),
                 webDebugTool = json.optString("webDebugTool", fallback.webDebugTool),
                 injectTimingMode = json.optString("injectTimingMode", fallback.injectTimingMode),
@@ -347,7 +344,6 @@ object KioskPrefs {
     private const val KEY_LIMIT_FILE_CHOOSER = "limit_file_chooser"
     private const val KEY_LIMIT_FULLSCREEN_VIDEO = "limit_fullscreen_video"
     private const val KEY_LIMIT_AD_BLOCK = "limit_ad_block"
-    private const val KEY_LIMIT_IME_INPUT = "limit_ime_input"
     /** 屏幕固定软锁：调用 startLockTask() 触发系统「屏幕固定」，拦截 Home/最近任务。 */
     const val MODE_SOFT_LOCK = "SOFT_LOCK"
 
@@ -483,7 +479,6 @@ object KioskPrefs {
             .putBoolean(KEY_LIMIT_FILE_CHOOSER, false)
             .putBoolean(KEY_LIMIT_FULLSCREEN_VIDEO, false)
             .putBoolean(KEY_PULL_TO_REFRESH_ENABLED, false)
-            .putBoolean(KEY_LIMIT_IME_INPUT, false)
             .putBoolean("third_party_cookies_enabled", true)
             .putBoolean("strict_mixed_content", false)
             .putBoolean("use_browser_user_agent", true)
@@ -530,7 +525,6 @@ object KioskPrefs {
             .putBoolean(KEY_LIMIT_FILE_CHOOSER, true)
             .putBoolean(KEY_LIMIT_FULLSCREEN_VIDEO, true)
             .putBoolean(KEY_PULL_TO_REFRESH_ENABLED, false)
-            .putBoolean(KEY_LIMIT_IME_INPUT, false)
             .putBoolean("third_party_cookies_enabled", true)
             .putBoolean("strict_mixed_content", true)
             .putBoolean("use_browser_user_agent", true)
@@ -577,7 +571,6 @@ object KioskPrefs {
             .putBoolean(KEY_LIMIT_FILE_CHOOSER, false)
             .putBoolean(KEY_LIMIT_FULLSCREEN_VIDEO, false)
             .putBoolean(KEY_PULL_TO_REFRESH_ENABLED, false)
-            .putBoolean(KEY_LIMIT_IME_INPUT, false)
             .putBoolean("third_party_cookies_enabled", true)
             .putBoolean("strict_mixed_content", false)
             .putBoolean("use_browser_user_agent", true)
@@ -781,7 +774,6 @@ object KioskPrefs {
             limitFileChooser = isLimitFileChooserEnabled(context),
             limitFullscreenVideo = isLimitFullscreenVideoEnabled(context),
             limitDownload = isLimitDownloadEnabled(context),
-            limitImeInput = isLimitImeInputEnabled(context),
             pullToRefreshEnabled = isPullToRefreshEnabled(context),
             webDebugTool = getWebDebugTool(context),
             injectTimingMode = getInjectTimingMode(context),
@@ -1067,10 +1059,6 @@ object KioskPrefs {
     fun isLimitLongClickEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_long_click", false)
     fun setLimitLongClickEnabled(context: Context, enabled: Boolean) =
         customEditor(context).putBoolean("limit_long_click", enabled).apply()
-
-    fun isLimitImeInputEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_LIMIT_IME_INPUT, false)
-    fun setLimitImeInputEnabled(context: Context, enabled: Boolean) =
-        customEditor(context).putBoolean(KEY_LIMIT_IME_INPUT, enabled).apply()
 
     fun isLimitUrlRedirectEnabled(context: Context): Boolean = prefs(context).getBoolean("limit_url_redirect", false)
     fun setLimitUrlRedirectEnabled(context: Context, enabled: Boolean) =

@@ -201,10 +201,8 @@ was frozen. If all three stop, inspect process death, WakeLock renewal, Doze, an
 - Main/Worker JS heartbeat transitions from waiting to responsive to stale while native heartbeat and
   system-resource readiness remain independently visible.
 - Android 9, 12, 13, and 14; at least one AOSP-like device and two relevant OEM device families.
-- With `限制输入法调起` disabled, text/password/number/textarea fields summon the IME in normal and
-  child mode, including normal -> child -> normal on the same live page and on a protected page.
-- With the restriction enabled, webpage IME stays blocked; disabling it restores IME on the same
-  live page without recreating the WebView.
+- Text/password/number/textarea fields summon the IME in normal and child mode, including normal
+  -> child -> normal on the same live page and on a protected page.
 
 ## Release blockers
 

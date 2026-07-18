@@ -12,13 +12,13 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
-class WebViewImePolicyTest {
+class WebViewSystemUiPolicyTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 
     @Test
-    fun `live policy survives normal child normal round trip`() {
-        val normal = WebViewImePolicy(limitImeInput = false, normalSystemBars = true)
-        val child = WebViewImePolicy(limitImeInput = false, normalSystemBars = false)
+    fun `live system ui policy survives normal child normal round trip`() {
+        val normal = WebViewSystemUiPolicy(normalSystemBars = true)
+        val child = WebViewSystemUiPolicy(normalSystemBars = false)
 
         assertEquals(normal, roundTrip(normal))
         assertEquals(child, roundTrip(child))
@@ -27,8 +27,8 @@ class WebViewImePolicyTest {
 
     @Test
     fun `unrelated or incomplete broadcasts are rejected`() {
-        assertNull(WebViewImePolicyBridge.read(Intent("other.action")))
-        assertNull(WebViewImePolicyBridge.read(Intent()))
+        assertNull(WebViewSystemUiPolicyBridge.read(Intent("other.action")))
+        assertNull(WebViewSystemUiPolicyBridge.read(Intent()))
     }
 
     @Test
@@ -53,19 +53,9 @@ class WebViewImePolicyTest {
         )
     }
 
-    @Test
-    fun `unchanged unrestricted policy does not restart the input connection`() {
-        assertFalse(shouldRefreshImeInputConnection(previousLimited = false, nextLimited = false))
-    }
-
-    @Test
-    fun `only explicit ime restriction transitions restart the input connection`() {
-        assertTrue(shouldRefreshImeInputConnection(previousLimited = false, nextLimited = true))
-        assertTrue(shouldRefreshImeInputConnection(previousLimited = true, nextLimited = false))
-        assertFalse(shouldRefreshImeInputConnection(previousLimited = true, nextLimited = true))
-    }
-
-    private fun roundTrip(policy: WebViewImePolicy): WebViewImePolicy? {
-        return WebViewImePolicyBridge.read(WebViewImePolicyBridge.createIntent(context, policy))
+    private fun roundTrip(policy: WebViewSystemUiPolicy): WebViewSystemUiPolicy? {
+        return WebViewSystemUiPolicyBridge.read(
+            WebViewSystemUiPolicyBridge.createIntent(context, policy)
+        )
     }
 }

@@ -5,7 +5,6 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.DownloadManager
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -443,26 +442,16 @@ open class WebViewActivity : ComponentActivity() {
     private val pendingPopupReloads = ConcurrentHashMap<WebView, Runnable>()
     private val popupMainHandler = Handler(Looper.getMainLooper())
     private var imeVisibleFromInsets = false
-    private var imePolicyReceiverRegistered = false
     private val systemUiRecoveryRunnable = Runnable {
         if (!isDestroyed && !isFinishing && !isImeVisible()) {
             applySystemUiModeNow()
         }
     }
-    private val imePolicyReceiver = object : BroadcastReceiver() {
+    private val systemUiPolicyReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val policy = WebViewImePolicyBridge.read(intent) ?: return
-            runtimeConfig = runtimeConfig.copy(
-                limitImeInput = policy.limitImeInput,
-                normalSystemBars = policy.normalSystemBars
-            )
-            applyImeInputLimitToAllWebViews()
+            val policy = WebViewSystemUiPolicyBridge.read(intent) ?: return
+            runtimeConfig = runtimeConfig.copy(normalSystemBars = policy.normalSystemBars)
             applySystemUiMode()
-            Log.i(
-                "ChildKioskWebView",
-                "Live IME policy applied: limited=${policy.limitImeInput}, " +
-                    "normalSystemBars=${policy.normalSystemBars}"
-            )
         }
     }
     private val pullToRefreshPageOptOut = ConcurrentHashMap<WebView, Boolean>()
@@ -604,11 +593,10 @@ open class WebViewActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         ContextCompat.registerReceiver(
             this,
-            imePolicyReceiver,
-            WebViewImePolicyBridge.intentFilter(),
+            systemUiPolicyReceiver,
+            WebViewSystemUiPolicyBridge.intentFilter(),
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
-        imePolicyReceiverRegistered = true
         WebViewHostRuntime.register(this)?.finishForHostReplacement()
         recordTaskLifecycle("activity_created", intent)
         HighPerformanceSessionController.initialize(this, runtimeConfig.highPerformanceSnapshot)
@@ -742,10 +730,7 @@ open class WebViewActivity : ComponentActivity() {
 
     override fun onDestroy() {
         cancelSystemUiRecovery()
-        if (imePolicyReceiverRegistered) {
-            unregisterReceiver(imePolicyReceiver)
-            imePolicyReceiverRegistered = false
-        }
+        unregisterReceiver(systemUiPolicyReceiver)
         HighPerformanceRuntimeBridge.clearSnapshotAppliedListener(this)
         WebViewHostRuntime.unregister(this)
         recordTaskLifecycle("activity_destroyed", intent)
@@ -1107,20 +1092,6 @@ open class WebViewActivity : ComponentActivity() {
             SystemUiHelper.enterImmersive(this)
         }
         webViewRoot?.let { ViewCompat.requestApplyInsets(it) }
-    }
-
-    /**
-     * 将当前 [WebViewRuntimeConfig.limitImeInput] 同步到所有已创建的 [PersistentWebView]，
-     * 确保设置变更后对已存在的标签页立即生效。
-     */
-    private fun applyImeInputLimitToAllWebViews() {
-        val limited = runtimeConfig.limitImeInput
-        (tabList.mapNotNull { it.webView } + webViewStack + pendingPopupWebViews.keys)
-            .distinct()
-            .filterIsInstance<PersistentWebView>()
-            .forEach { webView ->
-                webView.applyImeInputLimit(limited)
-            }
     }
 
     private fun shouldUseNormalSystemBars(): Boolean {
@@ -1990,7 +1961,6 @@ open class WebViewActivity : ComponentActivity() {
             launchedConfig.highPerformanceSnapshot.configVersion
         )
         runtimeConfig = launchedConfig.copy(highPerformanceSnapshot = publishedSnapshot)
-        applyImeInputLimitToAllWebViews()
         HighPerformanceSessionController.applySnapshot(
             publishedSnapshot,
             source = "activity_new_intent"
@@ -4501,7 +4471,7 @@ private fun createSecureWebView(
     isPendingPopupTransport: Boolean = false,
     popupFilterContext: PopupFilterContext? = null
 ): WebView {
-    val webView = existingWebView ?: PersistentWebView(ctx)
+    val webView = existingWebView ?: WebView(ctx)
     val shouldClearInitialHistory = AtomicBoolean(clearHistoryOnFirstRealPageFinish)
     val currentTopUrl = java.util.concurrent.atomic.AtomicReference<String>(targetUrl)
 
@@ -4522,9 +4492,6 @@ private fun createSecureWebView(
 
     return webView.apply {
         WebViewRuntime.applySettings(this, ctx, targetUrl, runtimeConfig)
-        if (this is PersistentWebView) {
-            applyImeInputLimit(runtimeConfig.limitImeInput)
-        }
         WebViewRuntime.logWebViewDiagnostics(
             ctx,
             "create_secure_webview",
