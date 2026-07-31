@@ -113,6 +113,43 @@ class HighPerformanceSessionControllerTest {
     }
 
     @Test
+    fun protectedPageEnablesBackgroundContinuityOnlyWhenPausedOrStopped() {
+        assertFalse(HighPerformanceSessionController.isProtectedAndBackground(webView))
+
+        HighPerformanceSessionController.onActivityStateChanged(
+            OWNER_ID,
+            HighPerformanceActivityState.PAUSED
+        )
+        assertTrue(HighPerformanceSessionController.isProtectedAndBackground(webView))
+
+        HighPerformanceSessionController.onActivityStateChanged(
+            OWNER_ID,
+            HighPerformanceActivityState.STOPPED
+        )
+        assertTrue(HighPerformanceSessionController.isProtectedAndBackground(webView))
+
+        HighPerformanceSessionController.onActivityStateChanged(
+            OWNER_ID,
+            HighPerformanceActivityState.RESUMED
+        )
+        assertFalse(HighPerformanceSessionController.isProtectedAndBackground(webView))
+    }
+
+    @Test
+    fun unprotectedOrSuppressedPageNeverEnablesBackgroundContinuity() {
+        HighPerformanceSessionController.stopAll(
+            source = "test_stop",
+            suppressCurrentWebViews = true
+        )
+        HighPerformanceSessionController.onActivityStateChanged(
+            OWNER_ID,
+            HighPerformanceActivityState.STOPPED
+        )
+
+        assertFalse(HighPerformanceSessionController.isProtectedAndBackground(webView))
+    }
+
+    @Test
     fun onlyANewBackgroundServiceStartIsDeferredForStoppedOwner() {
         assertTrue(
             shouldDeferForegroundServiceStart(

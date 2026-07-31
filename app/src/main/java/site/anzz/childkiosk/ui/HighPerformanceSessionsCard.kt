@@ -131,7 +131,8 @@ private fun HighPerformanceSessionItem(
                     tone = when (session.activityState) {
                         HighPerformanceActivityState.RESUMED,
                         HighPerformanceActivityState.STARTED -> StatusTone.POSITIVE
-                        HighPerformanceActivityState.CREATED -> StatusTone.NEUTRAL
+                        HighPerformanceActivityState.CREATED,
+                        HighPerformanceActivityState.PAUSED -> StatusTone.NEUTRAL
                         HighPerformanceActivityState.STOPPED,
                         HighPerformanceActivityState.DESTROYED -> StatusTone.WARNING
                     }
@@ -296,6 +297,7 @@ private fun activityStateLabel(state: HighPerformanceActivityState): String = wh
     HighPerformanceActivityState.CREATED -> "已创建"
     HighPerformanceActivityState.STARTED -> "已启动"
     HighPerformanceActivityState.RESUMED -> "前台交互"
+    HighPerformanceActivityState.PAUSED -> "已暂停"
     HighPerformanceActivityState.STOPPED -> "已停止"
     HighPerformanceActivityState.DESTROYED -> "已销毁"
 }
