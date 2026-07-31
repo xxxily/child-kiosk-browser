@@ -1,3 +1,23 @@
+## Child Kiosk Browser v0.4.15
+
+修复可信高性能页面在切换后台或息屏后定时器与网络请求被 Chromium 内核节流/冻结的问题。在保持前台 100% 原生输入与渲染的前提下，为可信页面新增受控的后台持续运行（Background Continuity）机制。
+
+### 本轮核心变化
+
+* **受控可见性保持**：托管标签页改用 `PersistentWebView`。仅当页面处于活动高性能会话**且**宿主 Activity 已暂停/停止（真实后台或息屏）时，向 Chromium 上报 `VISIBLE`/`SCREEN_STATE_ON`，物理阻止 Blink 后台节流（Timer Throttling）与任务挂起（Task Suspend）；页面定时器与网络请求在后台/息屏下保持前台级执行。
+* **前台零影响**：Activity 处于 STARTED/RESUMED 时所有可见性、焦点、暂停回调 100% 原生透传，网页输入框 IME 不受影响（不再重复 v0.4.10 的无条件伪造问题）。
+* **Surface 稳定**：WebView 全程留在 Activity 原生布局树中，不做跨 Window 移动，杜绝 v0.4.13 的白屏/强制重载问题。
+* **配套完善**：Activity 生命周期新增 PAUSED 上报；后台保活启停有独立诊断事件（`webview_continuity_enabled/disabled`）可追踪。
+
+### 建议验证
+
+1. 开启“高性能持续运行”并添加可信 Origin，确认会话 ACTIVE、FGS/WakeLock 就绪。
+2. 切换 App 至后台 5 分钟以上，确认网页定时器与网络请求持续稳定执行。
+3. 息屏 5 分钟以上，确认页面持续运行；亮屏恢复后无白屏、无强制重载，同一页面继续可交互。
+4. 可信页面与普通页面分别验证文本/密码/数字/多行输入框正常调起输入法，前台→后台→前台循环后输入仍正常。
+
+---
+
 ## Child Kiosk Browser v0.4.14
 
 紧急修复切后台/息屏时网页崩溃与刷新问题：彻底撤销了 v0.4.13 中在 Activity 切后台/息屏时剥离 WebView 并挂载至悬浮窗的操作。脱离 View 树会强制触发 Chromium `onDetachedFromWindow()` 并销毁 Hardware/EGL Surface，导致网页切回前台时白屏挂掉或被重新加载。
