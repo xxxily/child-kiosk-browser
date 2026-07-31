@@ -143,7 +143,6 @@ internal fun HighPerformanceSetupChecklist(
     runtimeStatus: HighPerformanceRuntimeStatusReadResult,
     onRequestNotifications: () -> Unit,
     onOpenBatterySettings: () -> Unit,
-    onOpenOverlaySettings: () -> Unit,
     onOpenManufacturerSettings: () -> Unit
 ) {
     HighPerformanceCard {
@@ -157,12 +156,6 @@ internal fun HighPerformanceSetupChecklist(
             },
             action = "去授权",
             onClick = onRequestNotifications
-        )
-        SetupRow(
-            title = "悬浮窗保活",
-            status = if (status.overlayPermissionGranted) "已允许悬浮窗，阻止 Chromium 后台冻结" else "未允许悬浮窗，后台切屏易被降频限制",
-            action = "去授权",
-            onClick = onOpenOverlaySettings
         )
         SetupRow(
             title = "电池优化",

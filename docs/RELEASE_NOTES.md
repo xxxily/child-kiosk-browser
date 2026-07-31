@@ -1,3 +1,14 @@
+## Child Kiosk Browser v0.4.14
+
+紧急修复切后台/息屏时网页崩溃与刷新问题：彻底撤销了 v0.4.13 中在 Activity 切后台/息屏时剥离 WebView 并挂载至悬浮窗的操作。脱离 View 树会强制触发 Chromium `onDetachedFromWindow()` 并销毁 Hardware/EGL Surface，导致网页切回前台时白屏挂掉或被重新加载。
+
+### 本轮核心变化
+
+* **撤销 View 视口剥离**：WebView 恢复全生命周期稳定挂载在 Activity 原生布局中，不再尝试跨 Window 剥离/移动 View。
+* **保障 Surface 稳定性**：彻底修复从后台或息屏切回时网页崩溃、白屏或强制 Reload 的严重问题。
+
+---
+
 ## Child Kiosk Browser v0.4.13
 
 本版本重磅修复切后台与息屏时网页定时器及网络请求中断问题。在不违反 Android 生命周期、不破坏原生 IME 软键盘调起的前提下，通过系统悬浮窗 (`TYPE_APPLICATION_OVERLAY`) 物理级保活机制，防止 Chromium Blink C++ 内核在后台触发 Background Throttling 和 Task Suspend 冻结。

@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+## [0.4.14] - 2026-07-31
+
+### Fixed - 修复
+
+- 紧急撤销 v0.4.13 引入的悬浮窗 Overlay 视口剥离与重新挂载机制。解决切后台/息屏时 WebView 因触发 `onDetachedFromWindow` 导致 Surface Compositor 销毁、前台恢复时网页崩溃白屏或被强制 Reload 重载的问题。
+- WebView 恢复全程保持在原生 Activity View 布局树中，保障网页生命周期与渲染 Surface 稳定性。
+
 ## [0.4.13] - 2026-07-31
 
 ### Added - 新增

@@ -203,12 +203,6 @@ internal fun HighPerformanceDetailScreen(
                     HighPerformanceSystemStatusReader.applicationDetailsSettingsIntent(context)
                 )
             },
-            onOpenOverlaySettings = {
-                launchSystemIntent(
-                    HighPerformanceSystemStatusReader.overlaySettingsIntent(context),
-                    HighPerformanceSystemStatusReader.applicationDetailsSettingsIntent(context)
-                )
-            },
             onOpenManufacturerSettings = {
                 launchSystemIntent(HighPerformanceSystemStatusReader.applicationDetailsSettingsIntent(context))
             }
