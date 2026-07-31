@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+## [0.4.13] - 2026-07-31
+
+### Added - 新增
+
+- 新增基于系统悬浮窗 (`TYPE_APPLICATION_OVERLAY`) 的物理级保活机制。在 App 切换后台或屏幕关闭时，可信高性能 WebView 自动安全挂载至 1x1 悬浮 Window，物理保证 Chromium 感知 `WindowVisibility == VISIBLE`，阻止 Blink C++ 内核底层触发 Background Throttling 和 Task Suspend 冻结，同时前台运行时 100% 保持原生布局与软键盘 IME 调起。
+- 新增悬浮窗 Overlay 授权检测与授权跳转向导（`HighPerformanceOverlayManager`），在系统运行条件中显示悬浮窗保活状态。
+- 增强 Dedicated Worker 代理心跳与定时器维护策略。
+
 ## [0.4.12] - 2026-07-18
 
 ### Fixed - 修复

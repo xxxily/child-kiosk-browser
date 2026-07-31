@@ -217,7 +217,7 @@ internal object HighPerformancePageRuntime {
             listen(window, 'blur', 'blur', false);
             state.mainTimer = window.setInterval(function() { post('main'); }, $HEARTBEAT_INTERVAL_MS);
             try {
-                var source = "self.onmessage=function(e){if(e.data==='stop'){close();}};" +
+                var source = "self.onmessage=function(e){if(e.data==='stop'){close();}else if(e.data==='ping'){postMessage(Date.now());}};" +
                     "setInterval(function(){postMessage(Date.now());},$HEARTBEAT_INTERVAL_MS);";
                 var blobUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
                 state.worker = new Worker(blobUrl);

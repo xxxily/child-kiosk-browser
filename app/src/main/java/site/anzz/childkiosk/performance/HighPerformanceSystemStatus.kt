@@ -18,6 +18,7 @@ internal data class HighPerformanceSystemStatus(
     val foregroundServicePermissionDeclared: Boolean,
     val specialUseForegroundServicePermissionDeclared: Boolean,
     val wakeLockPermissionDeclared: Boolean,
+    val overlayPermissionGranted: Boolean,
     val manufacturer: String
 ) {
     val notificationsGranted: Boolean
@@ -32,12 +33,13 @@ internal data class HighPerformanceSystemStatus(
             wakeLockPermissionDeclared
 
     val isFullyReady: Boolean
-        get() = canStartFullForegroundProtection && batteryOptimizationIgnored
+        get() = canStartFullForegroundProtection && batteryOptimizationIgnored && overlayPermissionGranted
 
     val missingRequirements: Set<HighPerformanceSystemRequirement>
         get() = buildSet {
             if (!notificationsGranted) add(HighPerformanceSystemRequirement.NOTIFICATIONS)
             if (!batteryOptimizationIgnored) add(HighPerformanceSystemRequirement.BATTERY_OPTIMIZATION)
+            if (!overlayPermissionGranted) add(HighPerformanceSystemRequirement.OVERLAY_PERMISSION)
             if (!foregroundServicePermissionDeclared) add(HighPerformanceSystemRequirement.FOREGROUND_SERVICE_DECLARATION)
             if (!specialUseForegroundServicePermissionDeclared) {
                 add(HighPerformanceSystemRequirement.SPECIAL_USE_DECLARATION)
@@ -49,6 +51,7 @@ internal data class HighPerformanceSystemStatus(
 internal enum class HighPerformanceSystemRequirement {
     NOTIFICATIONS,
     BATTERY_OPTIMIZATION,
+    OVERLAY_PERMISSION,
     FOREGROUND_SERVICE_DECLARATION,
     SPECIAL_USE_DECLARATION,
     WAKE_LOCK_DECLARATION
@@ -73,6 +76,7 @@ internal object HighPerformanceSystemStatusReader {
             }
         }
         val powerManager = appContext.getSystemService(PowerManager::class.java)
+        val overlayGranted = Settings.canDrawOverlays(appContext)
 
         return HighPerformanceSystemStatus(
             notificationPermissionGranted = runtimeNotificationGranted,
@@ -86,6 +90,7 @@ internal object HighPerformanceSystemStatusReader {
             specialUseForegroundServicePermissionDeclared = Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
                 isPermissionDeclared(appContext, Manifest.permission.FOREGROUND_SERVICE_SPECIAL_USE),
             wakeLockPermissionDeclared = isPermissionDeclared(appContext, Manifest.permission.WAKE_LOCK),
+            overlayPermissionGranted = overlayGranted,
             manufacturer = Build.MANUFACTURER.orEmpty().trim().ifBlank { "unknown" }
         )
     }
@@ -93,6 +98,13 @@ internal object HighPerformanceSystemStatusReader {
     /** Opens the system-managed list; the project intentionally does not request direct exemption. */
     fun batteryOptimizationSettingsIntent(): Intent {
         return Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+    }
+
+    fun overlaySettingsIntent(context: Context): Intent {
+        return Intent(
+            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            android.net.Uri.parse("package:${context.packageName}")
+        )
     }
 
     fun notificationSettingsIntent(context: Context): Intent {

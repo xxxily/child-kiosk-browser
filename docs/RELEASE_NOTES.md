@@ -1,3 +1,21 @@
+## Child Kiosk Browser v0.4.13
+
+本版本重磅修复切后台与息屏时网页定时器及网络请求中断问题。在不违反 Android 生命周期、不破坏原生 IME 软键盘调起的前提下，通过系统悬浮窗 (`TYPE_APPLICATION_OVERLAY`) 物理级保活机制，防止 Chromium Blink C++ 内核在后台触发 Background Throttling 和 Task Suspend 冻结。
+
+### 本轮核心变化
+
+* **系统悬浮窗物理保活**：当 App 处于后台或屏幕熄灭时，可信高性能 WebView 自动安全挂载至 1x1 像素悬浮 Window，物理保证 Chromium 感知 `WindowVisibility == VISIBLE`，阻止内核暂停定时器和网络长连接。
+* **键盘 IME 零受损**：前台运行时 WebView 100% 保持在原本 Layout 容器中，保证文本/密码/数字框正常调起系统输入法。
+* **Doze 豁免与系统条件向导**：新增悬浮窗 Overlay 授权状态与系统的授权跳转支持。
+
+### 建议验证
+
+1. 开启“高性能持续运行”并添加可信 Origin。
+2. 授予悬浮窗 Overlay 权限与电池优化豁免。
+3. 切换 App 至后台或关屏，确认网页定时器与网络请求持续稳定执行。
+
+---
+
 ## Child Kiosk Browser v0.4.12
 
 网页输入现在始终使用 Android WebView 的原生输入连接与系统输入法。已移除“限制输入法调起”设置以及所有对输入连接的自定义拦截。无论正常模式、儿童模式还是调试模式，网页文本、密码、数字和多行输入框都可以正常调起输入法并输入内容。
