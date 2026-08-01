@@ -202,6 +202,25 @@ class HighPerformanceSessionControllerTest {
         )
     }
 
+    @Test
+    fun freezeSignalUnfreezesProtectedWebView() {
+        val token = HighPerformanceSessionController.prepareJavascriptHeartbeat(webView)
+        requireNotNull(token)
+        val before = HighPerformanceSessionController.debugStateForTests().unfreezeCount
+
+        HighPerformanceSessionController.onPageProbe(
+            webView,
+            token,
+            HighPerformanceProbeSignal(
+                type = HighPerformanceProbeType.FREEZE,
+                pageTimestamp = System.currentTimeMillis(),
+                token = token
+            )
+        )
+
+        assertEquals(before + 1, HighPerformanceSessionController.debugStateForTests().unfreezeCount)
+    }
+
     private fun trustedSnapshot(): HighPerformanceRuntimeSnapshot {
         return HighPerformanceRuntimeSnapshot(
             configVersion = 1,

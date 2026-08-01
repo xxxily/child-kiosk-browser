@@ -80,6 +80,7 @@ internal object HighPerformanceSessionController {
     private var lastInterruptionAt: Long? = null
     private var lastSystemState: HighPerformanceProcessSnapshot? = null
     private var nativeHeartbeatAt: Long = System.currentTimeMillis()
+    private var unfreezeCount = 0L
 
     private val heartbeat = object : Runnable {
         override fun run() {
@@ -112,6 +113,16 @@ internal object HighPerformanceSessionController {
                     reason = "health_check"
                 )
             }
+            if (currentSystem != null && previousSystem != null &&
+                currentSystem.screenInteractive != previousSystem.screenInteractive
+            ) {
+                HighPerformanceDiagnostics.record(
+                    type = if (currentSystem.screenInteractive) "screen_on" else "screen_off",
+                    result = "changed",
+                    reason = "health_check"
+                )
+            }
+            unfreezeStaleProtectedWebViews()
             syncSystemResources("health_check")
             publishStatus()
             scheduleHeartbeat()
@@ -640,6 +651,9 @@ internal object HighPerformanceSessionController {
                     sessionId = session.tokenId,
                     reason = signal.type.name.lowercase()
                 )
+                if (signal.type == HighPerformanceProbeType.FREEZE) {
+                    unfreezeWebView(webView, "freeze_signal")
+                }
                 publishStatus()
                 true
             }
@@ -806,7 +820,8 @@ internal object HighPerformanceSessionController {
             suppressedRegistrationCount = registrations.count { it.explicitlySuppressed },
             stoppedRegistrationCount = registrations.count {
                 it.activityState == HighPerformanceActivityState.STOPPED
-            }
+            },
+            unfreezeCount = unfreezeCount
         )
     }
 
@@ -851,6 +866,7 @@ internal object HighPerformanceSessionController {
         lastSessionStoppedAt = null
         lastInterruptionAt = null
         lastSystemState = null
+        unfreezeCount = 0L
         nativeHeartbeatAt = System.currentTimeMillis()
     }
 
@@ -922,6 +938,51 @@ internal object HighPerformanceSessionController {
         )
         syncSystemResources(source)
         publishStatus()
+    }
+
+    /**
+     * Blink freezes a hidden page about 60 seconds after the window goes invisible (Page Lifecycle
+     * freeze): every timer and network task is suspended until the page is shown again or
+     * unfrozen. `WebView.onResume()` maps to `WebContents.SetFrozen(false)` and revives the page
+     * without touching visibility or IME, so a freeze signal (or a stale main heartbeat as
+     * fallback) is answered by immediately unfreezing the WebView. Blink's freeze timer fires only
+     * once per hidden transition, so the page keeps running after the first unfreeze.
+     */
+    private fun unfreezeWebView(webView: WebView, reason: String) {
+        val session = find(webView)?.session ?: return
+        runCatching {
+            webView.onResume()
+        }.onSuccess {
+            unfreezeCount += 1
+            HighPerformanceDiagnostics.record(
+                type = "webview_unfrozen",
+                result = "ok",
+                originOrUrl = session.origin,
+                sessionId = session.tokenId,
+                reason = reason
+            )
+            publishStatus()
+        }.onFailure { failure ->
+            HighPerformanceDiagnostics.record(
+                type = "webview_unfreeze_failed",
+                result = "failed",
+                originOrUrl = session.origin,
+                sessionId = session.tokenId,
+                reason = failure.javaClass.simpleName
+            )
+        }
+    }
+
+    private fun unfreezeStaleProtectedWebViews() {
+        val now = System.currentTimeMillis()
+        registrations.forEach { managed ->
+            val webView = managed.webView.get() ?: return@forEach
+            val session = managed.session ?: return@forEach
+            val lastHeartbeat = session.lastMainJsHeartbeatAt ?: session.lastJsHeartbeatAt ?: return@forEach
+            if (now - lastHeartbeat > HIGH_PERFORMANCE_JS_HEARTBEAT_STALE_AFTER_MS) {
+                unfreezeWebView(webView, "heartbeat_stale")
+            }
+        }
     }
 
     private fun stopSession(managed: ManagedWebView, reason: String, restoreRenderer: Boolean) {
@@ -1322,5 +1383,6 @@ internal data class HighPerformanceControllerDebugState(
     val foregroundServiceState: HighPerformanceForegroundServiceState,
     val foregroundServiceError: String?,
     val suppressedRegistrationCount: Int,
-    val stoppedRegistrationCount: Int
+    val stoppedRegistrationCount: Int,
+    val unfreezeCount: Long
 )

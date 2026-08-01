@@ -176,6 +176,31 @@ main heartbeat is older than 20 seconds, the session becomes `STALE` and the com
 `DEGRADED`, even when FGS and WakeLock remain healthy. This distinction prevents resource readiness
 from being reported as JavaScript continuity.
 
+### Background freeze after ~60 seconds (Blink Page Lifecycle freeze)
+
+**Symptom**: FGS `RUNNING`, WakeLock `HELD`, battery ignored, renderer alive — but the page's JS
+stops ~60 seconds after switching to background or screen-off. The diagnostic stream shows
+`visibility_change`, then ~60 s later `page_lifecycle_signal reason=freeze`, then
+`js_heartbeat_stale reason=main_timer_missing`; everything resumes on the next foreground
+`reason=resume`/`js_heartbeat_responsive`.
+
+**Root cause**: Chromium freezes a hidden page (Page Lifecycle `freeze`) about 60 seconds after the
+window becomes invisible. A frozen page suspends every timer, worker, and network task. The
+FGS/WakeLock resource shell cannot prevent this; visibility falsification cannot either (v0.4.15,
+and it breaks IME), and moving the view to an overlay destroys its Surface (v0.4.13).
+
+**Fix (v0.4.17)**: `WebView.onResume()` maps to `WebContents.SetFrozen(false)` and revives a frozen
+page without touching visibility, focus, or IME. The session controller answers a `freeze` probe
+signal immediately with `webView.onResume()`, and the 30 s health heartbeat re-checks the main JS
+heartbeat and unfreezes any protected WebView whose main heartbeat is older than 20 s
+(`reason=heartbeat_stale` fallback, also covers providers that skip the freeze event). Because
+Blink's freeze timer fires once per hidden transition, the page keeps running after the first
+unfreeze; a worst-case device may show a short freeze→unfreeze cycle instead of a full stop.
+
+Verify with the diagnostic events `webview_unfrozen reason=freeze_signal|heartbeat_stale` (or
+`webview_unfreeze_failed`). For a screen-off report also check the new `screen_off`/`screen_on`
+events so background and screen-off freeze behavior can be distinguished.
+
 The page runtime may provide an Origin-scoped Page Visibility compatibility layer at document start
 for parent-approved pages. This layer is separate from Android View state and cannot replace it. It
 deliberately does not block `pagehide`, because sites and BFCache use that event for navigation
@@ -212,6 +237,13 @@ was frozen. If all three stop, inspect process death, WakeLock renewal, Doze, an
 - Android 9, 12, 13, and 14; at least one AOSP-like device and two relevant OEM device families.
 - Text/password/number/textarea fields summon the IME in normal and child mode, including normal
   -> child -> normal on the same live page and on a protected page.
+- A protected page keeps its JS timers and network activity during 5+ minutes of background and
+  5+ minutes of screen-off (wake lock held): freeze signals are answered by an immediate unfreeze
+  (`webview_unfrozen`), the main heartbeat stays `RESPONSIVE`, and returning to the foreground
+  resumes native rendering with working IME input on the same live document (no reload, no white
+  screen).
+- An unprotected page still receives the real freeze/visibility callbacks and background
+  throttling behavior is unchanged.
 
 ## Release blockers
 
