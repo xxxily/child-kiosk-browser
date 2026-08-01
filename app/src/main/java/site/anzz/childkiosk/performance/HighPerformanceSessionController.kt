@@ -942,17 +942,32 @@ internal object HighPerformanceSessionController {
 
     /**
      * Blink freezes a hidden page about 60 seconds after the window goes invisible (Page Lifecycle
-     * freeze): every timer and network task is suspended until the page is shown again or
-     * unfrozen. `WebView.onResume()` maps to `WebContents.SetFrozen(false)` and revives the page
-     * without touching visibility or IME, so a freeze signal (or a stale main heartbeat as
-     * fallback) is answered by immediately unfreezing the WebView. Blink's freeze timer fires only
-     * once per hidden transition, so the page keeps running after the first unfreeze.
+     * freeze) and suspends every timer/worker/network task until the next foreground resume.
+     * A single `WebView.onResume()` did not revive the page on Android 16 / WebView 150 (v0.4.17),
+     * so the unfreeze attempt is a combination: onResume, a transient view-visibility toggle that
+     * makes Chromium re-evaluate its own visibility state (window visibility untouched), then
+     * onResume again. Effectiveness is verified 10 s later from the JS heartbeat: a confirmed
+     * ineffective streak throttles further attempts to avoid a no-op loop, because a frozen page
+     * cannot resume without a real foreground transition on this platform.
      */
     private fun unfreezeWebView(webView: WebView, reason: String) {
         val session = find(webView)?.session ?: return
+        val now = System.currentTimeMillis()
+        if (session.unfreezeIneffectiveStreak >= MAX_INEFFECTIVE_UNFREEZE_STREAK) {
+            val lastAttempt = session.lastUnfreezeAttemptAt ?: 0L
+            if (now - lastAttempt < INEFFECTIVE_RETRY_INTERVAL_MS) return
+        }
+        val lastHeartbeatBefore = session.lastMainJsHeartbeatAt ?: session.lastJsHeartbeatAt
         runCatching {
             webView.onResume()
+            val currentVisibility = webView.visibility
+            if (currentVisibility != View.INVISIBLE) {
+                webView.visibility = View.INVISIBLE
+                webView.visibility = currentVisibility
+            }
+            webView.onResume()
         }.onSuccess {
+            session.lastUnfreezeAttemptAt = System.currentTimeMillis()
             unfreezeCount += 1
             HighPerformanceDiagnostics.record(
                 type = "webview_unfrozen",
@@ -960,6 +975,10 @@ internal object HighPerformanceSessionController {
                 originOrUrl = session.origin,
                 sessionId = session.tokenId,
                 reason = reason
+            )
+            mainHandler.postDelayed(
+                { verifyUnfreezeEffectiveness(webView, session, lastHeartbeatBefore) },
+                UNFREEZE_VERIFY_DELAY_MS
             )
             publishStatus()
         }.onFailure { failure ->
@@ -971,6 +990,30 @@ internal object HighPerformanceSessionController {
                 reason = failure.javaClass.simpleName
             )
         }
+    }
+
+    private fun verifyUnfreezeEffectiveness(
+        webView: WebView,
+        session: Session,
+        lastHeartbeatBefore: Long?
+    ) {
+        if (find(webView)?.session !== session) return
+        val lastHeartbeatNow = session.lastMainJsHeartbeatAt ?: session.lastJsHeartbeatAt
+        val effective = lastHeartbeatNow != null &&
+            (lastHeartbeatBefore == null || lastHeartbeatNow > lastHeartbeatBefore)
+        if (effective) {
+            session.unfreezeIneffectiveStreak = 0
+        } else {
+            session.unfreezeIneffectiveStreak += 1
+            HighPerformanceDiagnostics.record(
+                type = "webview_unfreeze_ineffective",
+                result = "degraded",
+                originOrUrl = session.origin,
+                sessionId = session.tokenId,
+                reason = "no_heartbeat_streak_${session.unfreezeIneffectiveStreak}"
+            )
+        }
+        publishStatus()
     }
 
     private fun unfreezeStaleProtectedWebViews() {
@@ -1370,11 +1413,16 @@ internal object HighPerformanceSessionController {
         var lastJsHeartbeatAt: Long? = null,
         var lastMainJsHeartbeatAt: Long? = null,
         var lastWorkerJsHeartbeatAt: Long? = null,
+        var lastUnfreezeAttemptAt: Long? = null,
+        var unfreezeIneffectiveStreak: Int = 0,
         var lastReportedJavascriptState: HighPerformanceJavascriptState =
             HighPerformanceJavascriptState.UNKNOWN
     )
 
     private const val STATUS_HEARTBEAT_MS = 30_000L
+    private const val UNFREEZE_VERIFY_DELAY_MS = 10_000L
+    private const val MAX_INEFFECTIVE_UNFREEZE_STREAK = 3
+    private const val INEFFECTIVE_RETRY_INTERVAL_MS = 5 * 60_000L
 }
 
 internal data class HighPerformanceControllerDebugState(

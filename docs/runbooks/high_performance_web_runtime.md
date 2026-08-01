@@ -189,17 +189,19 @@ window becomes invisible. A frozen page suspends every timer, worker, and networ
 FGS/WakeLock resource shell cannot prevent this; visibility falsification cannot either (v0.4.15,
 and it breaks IME), and moving the view to an overlay destroys its Surface (v0.4.13).
 
-**Fix (v0.4.17)**: `WebView.onResume()` maps to `WebContents.SetFrozen(false)` and revives a frozen
-page without touching visibility, focus, or IME. The session controller answers a `freeze` probe
-signal immediately with `webView.onResume()`, and the 30 s health heartbeat re-checks the main JS
-heartbeat and unfreezes any protected WebView whose main heartbeat is older than 20 s
-(`reason=heartbeat_stale` fallback, also covers providers that skip the freeze event). Because
-Blink's freeze timer fires once per hidden transition, the page keeps running after the first
-unfreeze; a worst-case device may show a short freeze→unfreeze cycle instead of a full stop.
-
-Verify with the diagnostic events `webview_unfrozen reason=freeze_signal|heartbeat_stale` (or
-`webview_unfreeze_failed`). For a screen-off report also check the new `screen_off`/`screen_on`
-events so background and screen-off freeze behavior can be distinguished.
+**Fix (v0.4.17, refined in v0.4.18)**: `WebView.onResume()` maps to `WebContents.SetFrozen(false)`
+in principle, but on Android 16 / WebView 150 a single onResume() did NOT revive the hidden-frozen
+page (verified: no `resume` signal and no heartbeat after the attempt; only the next foreground
+transition resumed it). v0.4.18 therefore uses a combination — onResume, a transient
+view-visibility toggle (INVISIBLE→restore, which makes Chromium re-evaluate its own visibility
+state without touching the window or IME), then onResume again — and verifies effectiveness 10 s
+later from the JS heartbeat (`webview_unfrozen` vs `webview_unfreeze_ineffective
+reason=no_heartbeat_streak_N`). A streak of 3 ineffective attempts throttles further attempts to
+one per 5 minutes so the log is not spammed by a no-op loop. If the diagnostics keep showing
+`webview_unfreeze_ineffective`, the page is fully frozen until the next foreground transition and
+no public API can keep it running exactly like the foreground; only a physical always-visible
+window (overlay/PiP, both with their own platform caveats) could avoid the hidden transition
+entirely.
 
 The page runtime may provide an Origin-scoped Page Visibility compatibility layer at document start
 for parent-approved pages. This layer is separate from Android View state and cannot replace it. It
