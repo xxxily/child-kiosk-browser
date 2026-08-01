@@ -1,3 +1,22 @@
+## Child Kiosk Browser v0.4.17
+
+修复可信高性能页面在后台/息屏约 60 秒后被 Chromium 内核冻结、定时器与网络请求全部停止的问题。基于诊断日志定位根因：资源层（FGS/WakeLock/渲染器）完全健康，断点在 Blink 对隐藏页面的 Page Lifecycle freeze。
+
+### 本轮核心变化
+
+* **冻结即解冻（Freeze & Unfreeze）**：页面注入探针检测到 `freeze` 信号后，立即调用 `WebView.onResume()`（对应 `WebContents.SetFrozen(false)`）唤醒冻结页面——不改变可见性、焦点与输入连接，对 IME 零影响。
+* **心跳兜底**：30 秒健康心跳发现主线程 JS 心跳超过 20 秒无响应（`heartbeat_stale`）时自动解冻，覆盖 freeze 事件缺失的 WebView 版本/站点。
+* **持续运行**：Blink 冻结计时器每次隐藏过渡仅触发一次，首次解冻后页面保持运行；最坏情况为短暂冻结→立即解冻循环，而非完全停止。
+* **诊断增强**：新增 `webview_unfrozen`/`webview_unfreeze_failed` 解冻事件与 `screen_off`/`screen_on` 屏幕状态事件，后台与息屏行为可区分排查。
+
+### 建议验证
+
+1. 可信站点切后台 5 分钟以上，诊断应出现 `freeze` → `webview_unfrozen` → 心跳恢复序列，网页定时器与网络请求持续执行。
+2. 息屏 5 分钟以上，`screen_off` 后页面保持运行；亮屏恢复后无白屏、无强制重载，输入法正常。
+3. 可信与非可信网站文本/密码/数字/多行输入框均正常调起输入法。
+
+---
+
 ## Child Kiosk Browser v0.4.16
 
 紧急回退 v0.4.15：撤销后台可见性保持（Background Continuity）机制，恢复网页输入法。

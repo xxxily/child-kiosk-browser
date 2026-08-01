@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+## [0.4.17] - 2026-08-01
+
+### Fixed - 修复
+
+- **修复后台/息屏 60 秒后页面被 Blink 冻结（Page Lifecycle freeze）导致定时器与网络请求停止的问题**：诊断确认切后台约 60 秒后 Chromium 对隐藏页面执行冻结，所有定时器/Worker/网络任务挂起，直至恢复前台。新增"冻结即解冻"机制——`WebView.onResume()` 对应 `WebContents.SetFrozen(false)`，可在不改变可见性/焦点/输入连接的前提下唤醒冻结页面：
+  - 收到页面 `freeze` 探针信号后立即调用 `webView.onResume()` 解冻；
+  - 30 秒健康心跳检测主线程心跳超过 20 秒无响应（`heartbeat_stale`）时兜底解冻（覆盖 freeze 事件缺失的场景）；
+  - Blink 冻结计时器每次隐藏过渡仅触发一次，首次解冻后页面将持续运行；最坏情况为短暂"冻结→立即解冻"循环而非完全停止。
+
+### Added - 新增
+
+- 诊断日志新增 `webview_unfrozen`（解冻动作）/`webview_unfreeze_failed` 事件，以及 `screen_off`/`screen_on` 屏幕状态事件，便于区分后台与息屏冻结行为。
+
+### 建议验证
+
+1. 可信站点切后台 5 分钟以上，确认诊断出现 `freeze` → `webview_unfrozen` → 心跳恢复的序列，页面定时器与网络请求持续执行。
+2. 息屏 5 分钟以上，确认 `screen_off` 后页面保持运行，亮屏恢复无白屏。
+3. 验证可信与非可信网站输入框 IME 正常（本机制不触碰可见性/焦点/输入连接）。
+
 ## [0.4.16] - 2026-08-01
 
 ### Fixed - 修复
