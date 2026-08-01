@@ -1,3 +1,24 @@
+## Child Kiosk Browser v0.4.19
+
+物理级悬浮窗保活（Overlay Keep-Alive）：可信高性能页面在切后台/息屏时移入保持"可见"的 1x1 系统悬浮窗，从物理上阻止 Chromium 对隐藏页面触发 60 秒 Blink 冻结，页面定时器与网络请求持续执行。
+
+### 本轮核心变化
+
+* **物理保活，不再依赖解冻**：v0.4.17/0.4.18 实测确认 `onResume()` 与可见性组合拳均无法解冻 Android 16 / WebView 150 的隐藏冻结。改为在 Activity `onStop`（切后台/息屏）时将受保护 WebView 移入 1x1 悬浮窗（`TYPE_APPLICATION_OVERLAY` + `FLAG_SHOW_WHEN_LOCKED`），窗口对 WindowManager 保持可见，页面从未进入 hidden 状态，冻结计时器无从触发。
+* **息屏兼容**：悬浮窗在息屏/锁屏时仍保持窗口可见状态；息屏信号在挂载期间被屏蔽（`overlay_screen_state_kept`），页面不被按"屏幕关闭"暂停。
+* **IME 零影响**：前台（Activity 可见）时 WebView 100% 原生布局与回调，不伪造任何可见性/焦点/暂停信号（v0.4.15 教训）；悬浮窗期间无输入场景，输入法不受影响。
+* **规避 v0.4.13 白屏**：挂载/移回时主动 `onResume()` + `invalidate()` 强制 Chromium 重新合成（`overlay_redraw_forced`），不再等待可能缺失的 Surface 事件。
+* **权限与降级**：需"显示在其他应用上层"权限（设置 → 应用 → 本应用 → 显示在其他应用上层）。未授权时自动降级为原有 FGS/WakeLock 保护，并记录 `overlay_permission_missing`。
+
+### 建议验证
+
+1. 开启"显示在其他应用上层"权限。
+2. 可信站点切后台 5 分钟以上：诊断出现 `overlay_attached` 且**无 `freeze` 事件**，心跳持续 `RESPONSIVE`。
+3. 息屏 5 分钟以上：页面持续运行；亮屏解锁后无白屏、无强制重载（`overlay_detached` + `overlay_redraw_forced`）。
+4. 可信与非可信网站输入框 IME 正常；前台→后台→前台循环后输入仍正常。
+
+---
+
 ## Child Kiosk Browser v0.4.18
 
 基于 v0.4.17 实测日志升级后台冻结解冻机制：单次 `WebView.onResume()` 在 Android 16 / WebView 150 上无法解冻隐藏页面的 Blink 冻结（解冻后页面心跳始终未恢复，仅前台恢复才生效），因此解冻尝试升级为组合拳，并加入有效性验证与无效降频。

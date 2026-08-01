@@ -6,6 +6,23 @@
 
 ## [Unreleased]
 
+## [0.4.19] - 2026-08-01
+
+### Added - 新增
+
+- **物理级悬浮窗保活（Overlay Keep-Alive）**：诊断确认 Android 16 / WebView 150 的隐藏页面冻结无法通过 `onResume()`/可见性组合解冻（v0.4.17/0.4.18 均无效，仅前台恢复生效）。v0.4.19 采用物理方案：Activity 切后台/息屏（`onStop`，非关闭）时，将受保护的可信 WebView 移入 1x1 系统悬浮窗（`TYPE_APPLICATION_OVERLAY` + `FLAG_SHOW_WHEN_LOCKED`）。
+  - 悬浮窗窗口对 WindowManager 保持"可见"（息屏锁屏时亦然），Chromium 始终认为页面可见，**不再触发 60 秒 Blink 冻结计时器**；
+  - 息屏的 `SCREEN_STATE_OFF` 信号在挂载期间被屏蔽（`overlay_screen_state_kept`），防止 Chromium 按"屏幕关闭"暂停页面；前台 100% 原生回调，IME 输入完全不受影响；
+  - 挂载/移回时主动强制 Chromium 重新合成（`overlay_redraw_forced`），规避 v0.4.13 剥离 View 导致的 Surface 销毁白屏问题；
+  - 需系统"显示在其他应用上层"权限；未授权时自动降级为原资源保护行为并记录 `overlay_permission_missing`。
+
+### 建议验证
+
+1. 在系统设置中为本应用开启"显示在其他应用上层"权限（授权路径见发布说明）。
+2. 可信站点切后台 5 分钟以上：诊断应出现 `overlay_attached` 且**不再出现 `freeze`**，心跳持续 `RESPONSIVE`。
+3. 息屏 5 分钟以上：确认页面持续运行，亮屏解锁后无白屏、无强制重载（`overlay_detached` + `overlay_redraw_forced`）。
+4. 可信与非可信网站输入框 IME 正常。
+
 ## [0.4.18] - 2026-08-01
 
 ### Fixed - 修复
