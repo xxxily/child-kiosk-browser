@@ -44,8 +44,8 @@ android {
         applicationId = "site.anzz.childkiosk"
         minSdk = 28 // API 28 (Android 9.0 Pie) 是 setLockTaskFeatures 的推荐版本
         targetSdk = 34
-        versionCode = 92
-        versionName = "0.4.17"
+        versionCode = 93
+        versionName = "0.4.18"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
