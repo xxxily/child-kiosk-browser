@@ -189,31 +189,19 @@ window becomes invisible. A frozen page suspends every timer, worker, and networ
 FGS/WakeLock resource shell cannot prevent this; visibility falsification cannot either (v0.4.15,
 and it breaks IME), and moving the view to an overlay destroys its Surface (v0.4.13).
 
-**Fix attempts and current state**: `WebView.onResume()` maps to `WebContents.SetFrozen(false)`
+**Fix attempts and final conclusion**: `WebView.onResume()` maps to `WebContents.SetFrozen(false)`
 in principle, but on Android 16 / WebView 150 neither a single onResume() (v0.4.17) nor an
-onResume + view-visibility-toggle combination (v0.4.18, verified by the
-`webview_unfreeze_ineffective` events) revived a hidden-frozen page; only the next foreground
-transition resumes it. Because the freeze follows the window becoming invisible, the only
-remaining lever is to keep the protected WebView in a window that never becomes invisible:
-
-- **v0.4.19 physical overlay keep-alive**: on Activity `onStop` (background or screen-off, not
-  finishing) every protected WebView is moved into a 1x1 `TYPE_APPLICATION_OVERLAY` window with
-  `FLAG_SHOW_WHEN_LOCKED`. The overlay window stays "visible" to WindowManager even while the
-  display is off (keyguard up), so Chromium never receives the hidden transition and the ~60 s
-  freeze timer never starts. The screen-off signal is masked by `PersistentWebView` while the view
-  is attached (`overlay_screen_state_kept`); foreground callbacks stay 100% native so IME is
-  untouched. `onStart` moves the view back and forces re-compositing (`overlay_redraw_forced`)
-  because window switching destroys the Surface (the v0.4.13 white-screen failure).
-- Overlay requires the "display over other apps" permission; without it the runtime degrades to
-  the pre-v0.4.19 resource-shell behavior and records `overlay_permission_missing`.
-
-Verify with the diagnostic events `overlay_attached` (or `overlay_permission_missing` /
-`overlay_attach_failed`), absence of `freeze` while backgrounded, `overlay_detached` +
-`overlay_redraw_forced` on foreground, and a `RESPONSIVE` heartbeat through the whole background
-period. If the heartbeat still goes stale, the device/OEM hides overlay windows while the display
-is off or suspends them; then no public WebView API can keep the page foreground-like and the
-remaining options are PiP (background only) or accepting freeze with page-side freeze/resume
-handling.
+onResume + view-visibility-toggle combination (v0.4.18, verified via
+`webview_unfreeze_ineffective`) revived a hidden-frozen page; only the next foreground transition
+resumes it. The physical overlay keep-alive (v0.4.19/v0.4.20, `TYPE_APPLICATION_OVERLAY` 1x1 with
+`FLAG_SHOW_WHEN_LOCKED`, with the SYSTEM_ALERT_WINDOW declaration and forced re-compositing) was
+also a verified failure on OnePlus/Android 16: the window move destroyed the page (white screen /
+forced reload, same as v0.4.13) even though the overlay attached and no freeze occurred. **Do not
+reintroduce any of these three paths.** The page is fully frozen until the next foreground
+transition on this platform; remaining product options are page-side freeze/resume handling on the
+site (recommended — the protected site is parent-owned), PiP for background-only (screen-off still
+freezes, kiosk/Lock Task behavior unverified), or accepting process-alive + foreground-restore
+semantics.
 
 The page runtime may provide an Origin-scoped Page Visibility compatibility layer at document start
 for parent-approved pages. This layer is separate from Android View state and cannot replace it. It
