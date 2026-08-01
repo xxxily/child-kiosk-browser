@@ -104,6 +104,7 @@ import site.anzz.childkiosk.util.WebViewRuntimeConfig
 import site.anzz.childkiosk.util.WebViewPool
 import site.anzz.childkiosk.performance.HighPerformanceActivityState
 import site.anzz.childkiosk.performance.HighPerformanceDiagnostics
+import site.anzz.childkiosk.performance.HighPerformanceOverlayManager
 import site.anzz.childkiosk.performance.HighPerformancePageRuntime
 import site.anzz.childkiosk.performance.HighPerformanceRuntimeBridge
 import site.anzz.childkiosk.performance.HighPerformanceRuntimePublisher
@@ -653,6 +654,20 @@ open class WebViewActivity : ComponentActivity() {
             highPerformanceOwnerId,
             HighPerformanceActivityState.STARTED
         )
+        restoreProtectedOverlayWebViews()
+    }
+
+    private fun restoreProtectedOverlayWebViews() {
+        tabList.mapNotNull { it.webView }.forEach { webView ->
+            if (HighPerformanceOverlayManager.isAttached(webView)) {
+                HighPerformanceOverlayManager.detach(webView)
+                addWebViewToRoot(webView)
+                HighPerformanceOverlayManager.forceRedraw(webView, "foreground_restored")
+            }
+        }
+        tabList.firstOrNull { it.id == activeTabId }?.webView?.let { currentWebView ->
+            setWebViewVisible(currentWebView, true)
+        }
     }
 
     override fun onPause() {
@@ -702,6 +717,11 @@ open class WebViewActivity : ComponentActivity() {
         val protectedWebViews = tabList.mapNotNull { it.webView }
             .filter(HighPerformanceSessionController::isProtected)
             .toSet()
+        if (protectedWebViews.isNotEmpty() && !isFinishing) {
+            protectedWebViews.forEach { webView ->
+                HighPerformanceOverlayManager.attach(this, webView)
+            }
+        }
         val retainProtectedRequests = shouldRetainProtectedNativeLocationRequestsOnStop(
             hasProtectedSession = protectedWebViews.isNotEmpty(),
             isFinishing = isFinishing,
@@ -4471,7 +4491,7 @@ private fun createSecureWebView(
     isPendingPopupTransport: Boolean = false,
     popupFilterContext: PopupFilterContext? = null
 ): WebView {
-    val webView = existingWebView ?: WebView(ctx)
+    val webView = existingWebView ?: PersistentWebView(ctx)
     val shouldClearInitialHistory = AtomicBoolean(clearHistoryOnFirstRealPageFinish)
     val currentTopUrl = java.util.concurrent.atomic.AtomicReference<String>(targetUrl)
 
