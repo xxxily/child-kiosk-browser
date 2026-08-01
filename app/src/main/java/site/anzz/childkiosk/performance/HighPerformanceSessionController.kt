@@ -530,23 +530,6 @@ internal object HighPerformanceSessionController {
         return find(webView)?.session != null
     }
 
-    /**
-     * True when the WebView has an active protected session AND its host Activity is paused or
-     * stopped (real background or screen-off).
-     *
-     * [site.anzz.childkiosk.PersistentWebView] uses this to keep Chromium scheduling alive while
-     * the host is not visible, without touching foreground IME/focus behavior: every deception is
-     * disabled as soon as the Activity returns to STARTED/RESUMED.
-     */
-    fun isProtectedAndBackground(webView: WebView): Boolean {
-        ensureMainThread()
-        val managed = find(webView) ?: return false
-        return managed.session != null && (
-            managed.activityState == HighPerformanceActivityState.PAUSED ||
-                managed.activityState == HighPerformanceActivityState.STOPPED
-            )
-    }
-
     fun prepareJavascriptHeartbeat(webView: WebView): String? {
         ensureMainThread()
         val session = find(webView)?.session ?: return null

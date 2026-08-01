@@ -2,16 +2,22 @@
 
 ## Purpose and product boundary
 
-High-performance runtime protects only parent-approved top-level HTTP/HTTPS Origins. It combines a foreground service in `:webview`, a bounded partial CPU WakeLock, a non-waived renderer-priority request, and a managed `PersistentWebView` background-continuity layer. It improves survival probability; it does not guarantee uninterrupted JavaScript, timers, network sockets, renderer memory, or foreground-equivalent Chromium scheduling under all OEM power policies.
+High-performance runtime protects only parent-approved top-level HTTP/HTTPS Origins. It combines a foreground service in `:webview`, a bounded partial CPU WakeLock, and a non-waived renderer-priority request. It improves survival probability; it does not guarantee uninterrupted JavaScript, timers, network sockets, renderer memory, or foreground-equivalent Chromium scheduling.
 
-The runtime preserves Android's real WebView lifecycle contract while the host is visible. Only
-while BOTH conditions hold — the page has an active protected session AND its host Activity is
-paused/stopped (real background or screen-off) — does the `PersistentWebView` host report
-`VISIBLE`/`SCREEN_STATE_ON` to Chromium so Blink does not throttle timers or suspend the page.
-While the Activity is started/resumed every visibility, screen-state, focus, and pause callback
-passes through untouched: those signals are part of Chromium's focus and IME integration, and
-falsifying them in the foreground breaks webpage input (v0.4.10 regression). FGS/WakeLock protect
-process and CPU availability; renderer priority is an OOM/offscreen-waiver hint.
+The runtime must preserve Android's real WebView lifecycle contract. It does not falsify a
+WebView's visibility, window visibility, `isShown()`, screen state, or `onPause()` callbacks. Those
+signals are part of Chromium's focus and IME integration. FGS/WakeLock protect process and CPU
+availability; renderer priority is an OOM/offscreen-waiver hint. None of them make a hidden page a
+foreground view.
+
+> **v0.4.15 regression (reverted in v0.4.16)**: a "controlled" variant that faked visibility/screen
+> state ONLY while a protected page's Activity was paused/stopped still broke IME globally. Even
+> gated deception desynchronizes the window-level input channel from Chromium's input state: after
+> a background/foreground cycle the IME can no longer be summoned on ANY WebView in the window,
+> protected or not. This confirms the v0.4.10 conclusion structurally: Chromium input connections
+> are window-scoped, so faking view/window visibility is never safe. Do not reintroduce any
+> visibility/screen-state/onPause falsification for this feature; the physical overlay attempt
+> (v0.4.13) had its own Surface-detach failure and is also not a verified path.
 
 ## Architecture signals
 
@@ -19,11 +25,6 @@ process and CPU availability; renderer priority is an OOM/offscreen-waiver hint.
 - A versioned AtomicFile is the cross-process runtime source. The main process writes it after a successful Room transaction and broadcasts only that a newer version exists.
 - If AtomicFile publication or the config-update signal fails after Room commits, a disabled snapshot at the new config version becomes the disk/cache source of truth and `publication_failed` stops existing sessions. The admin UI must report the synchronization failure and allow retry; it must not claim the change was fully applied.
 - `WebViewActivity` reevaluates only managed top-level WebViews. Preload/blank WebViews and subresources cannot create sessions.
-- Managed tabs use `PersistentWebView` as their host. Its background-continuity deception is
-  enabled only when `isProtectedAndBackground` is true (active session AND Activity paused/stopped);
-  transitions are recorded once per WebView as `webview_continuity_enabled` /
-  `webview_continuity_disabled`. When the Activity returns to STARTED/RESUMED the view restores
-  native callbacks immediately, so Chromium input connections are rebuilt from real window state.
 - `HighPerformanceForegroundService` and `WebViewActivity` must both report the package process suffix `:webview`.
 - The Service owns the only partial WakeLock. Page/session code never acquires a WakeLock directly.
 - Runtime status is written by `:webview` and is considered stale after its documented freshness window.
@@ -178,11 +179,9 @@ from being reported as JavaScript continuity.
 The page runtime may provide an Origin-scoped Page Visibility compatibility layer at document start
 for parent-approved pages. This layer is separate from Android View state and cannot replace it. It
 deliberately does not block `pagehide`, because sites and BFCache use that event for navigation
-cleanup. Since v0.4.15 the `PersistentWebView` host covers the common background/screen-off path by
-keeping Chromium's window/screen state visible for protected pages; an Android 16/WebView or OEM
-scheduler can still throttle or freeze Blink below all public Android APIs, and no supported
-WebView API can guarantee arbitrary third-party JavaScript runs exactly like the foreground
-indefinitely.
+cleanup. An Android 16/WebView or OEM scheduler can still throttle or freeze Blink below all public
+Android APIs; no supported WebView API can guarantee arbitrary third-party JavaScript runs exactly
+like the foreground indefinitely.
 
 For a reproducible screen-off report, capture at least 2-5 minutes of the three heartbeats plus page
 business timestamps from `docs/test-pages/high_performance_runtime_test.html`. If the injected main
@@ -213,11 +212,6 @@ was frozen. If all three stop, inspect process death, WakeLock renewal, Doze, an
 - Android 9, 12, 13, and 14; at least one AOSP-like device and two relevant OEM device families.
 - Text/password/number/textarea fields summon the IME in normal and child mode, including normal
   -> child -> normal on the same live page and on a protected page.
-- A protected page keeps its JS timers and network activity during 5+ minutes of background and
-  5+ minutes of screen-off (wake lock held); returning to the foreground resumes native rendering
-  with working IME input on the same live document (no reload, no white screen).
-- An unprotected page still receives the real GONE/screen-off callbacks and background throttling
-  behavior is unchanged.
 
 ## Release blockers
 

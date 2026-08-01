@@ -20,7 +20,6 @@ enum class HighPerformanceActivityState {
     CREATED,
     STARTED,
     RESUMED,
-    PAUSED,
     STOPPED,
     DESTROYED
 }
