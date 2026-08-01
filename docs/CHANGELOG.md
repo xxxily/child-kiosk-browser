@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+## [0.4.21] - 2026-08-01
+
+### Fixed - 修复
+
+- **紧急回退 v0.4.19/0.4.20 的悬浮窗物理保活（Overlay Keep-Alive）**：实测确认将受保护 WebView 移入系统悬浮窗（即使配合 `FLAG_SHOW_WHEN_LOCKED` 与强制重绘）在 Android 16 / WebView 150 上仍会破坏页面渲染——切后台/息屏挂载后页面直接丢失、恢复前台需重新加载（与 v0.4.13 的 Surface 剥离失败一致）。已移除 `HighPerformanceOverlayManager`、`PersistentWebView` 及 `SYSTEM_ALERT_WINDOW` 权限声明，恢复 v0.4.18 行为，保证页面不再丢失。
+- **最终结论记录**：Android 16 / WebView 150 的隐藏页面冻结（后台约 60 秒触发）无公开 API 可阻止或解冻。已实证证伪三条路径：可见性伪造（破坏 IME，v0.4.15）、`onResume()`/组合拳解冻（无效，v0.4.17/0.4.18）、悬浮窗物理保活（页面丢失，v0.4.13/0.4.19）。当前能力边界为：FGS/WakeLock/渲染器优先级保障进程与资源存活，页面冻结后仅能通过恢复前台自动续行。
+- 若需"前台级"持续运行体验，建议在站点侧适配 Page Lifecycle（监听 `freeze`/`resume`，冻结时保存状态、恢复后续传）；后续可评估 PiP（仅切后台场景）或调整产品预期。
+
 ## [0.4.20] - 2026-08-01
 
 ### Fixed - 修复
