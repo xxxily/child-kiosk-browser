@@ -44,6 +44,49 @@ enum class HighPerformanceJavascriptState {
     STALE
 }
 
+/**
+ * What the runtime can actually prove about a page while its host is not foreground.
+ *
+ * This is deliberately derived from the page's real Page Visibility signal and the native
+ * heartbeat. Activity.onStop() alone is not evidence that Chromium marked the document hidden.
+ */
+enum class HighPerformanceContinuityState {
+    UNKNOWN,
+    FOREGROUND_RESPONSIVE,
+    BACKGROUND_VISIBLE_CONTINUITY,
+    SCREEN_OFF_VISIBLE_CONTINUITY,
+    HIDDEN_DEGRADED,
+    STALE
+}
+
+internal fun classifyContinuityState(
+    screenInteractive: Boolean,
+    activityState: HighPerformanceActivityState,
+    javascriptState: HighPerformanceJavascriptState,
+    documentHidden: Boolean?
+): HighPerformanceContinuityState {
+    if (javascriptState == HighPerformanceJavascriptState.STALE) {
+        return HighPerformanceContinuityState.STALE
+    }
+    if (javascriptState != HighPerformanceJavascriptState.RESPONSIVE) {
+        return HighPerformanceContinuityState.UNKNOWN
+    }
+    if (activityState == HighPerformanceActivityState.RESUMED ||
+        activityState == HighPerformanceActivityState.STARTED
+    ) {
+        return HighPerformanceContinuityState.FOREGROUND_RESPONSIVE
+    }
+    return when (documentHidden) {
+        true -> HighPerformanceContinuityState.HIDDEN_DEGRADED
+        false -> if (screenInteractive) {
+            HighPerformanceContinuityState.BACKGROUND_VISIBLE_CONTINUITY
+        } else {
+            HighPerformanceContinuityState.SCREEN_OFF_VISIBLE_CONTINUITY
+        }
+        null -> HighPerformanceContinuityState.UNKNOWN
+    }
+}
+
 internal fun classifyJavascriptHeartbeat(
     now: Long,
     installedAt: Long?,
@@ -64,17 +107,27 @@ internal fun refreshHeartbeatDerivedState(
     now: Long
 ): HighPerformanceRuntimeStatus {
     val sessions = status.sessions.map { session ->
+        val javascriptState = classifyJavascriptHeartbeat(
+            now = now,
+            installedAt = session.jsHeartbeatInstalledAt,
+            lastMainHeartbeatAt = session.lastMainJsHeartbeatAt
+        )
         session.copy(
-            javascriptState = classifyJavascriptHeartbeat(
-                now = now,
-                installedAt = session.jsHeartbeatInstalledAt,
-                lastMainHeartbeatAt = session.lastMainJsHeartbeatAt
+            javascriptState = javascriptState,
+            continuityState = classifyContinuityState(
+                screenInteractive = status.screenInteractive,
+                activityState = session.activityState,
+                javascriptState = javascriptState,
+                documentHidden = session.documentHidden
             )
         )
     }
     val compositeState = if (
         status.compositeState == HighPerformanceCompositeState.ACTIVE &&
-        sessions.any { it.javascriptState != HighPerformanceJavascriptState.RESPONSIVE }
+        sessions.any {
+            it.javascriptState != HighPerformanceJavascriptState.RESPONSIVE ||
+                it.continuityState == HighPerformanceContinuityState.HIDDEN_DEGRADED
+        }
     ) {
         HighPerformanceCompositeState.DEGRADED
     } else {
@@ -98,7 +151,12 @@ data class HighPerformanceSessionStatus(
     val visible: Boolean,
     val activityState: HighPerformanceActivityState,
     val rendererPolicy: HighPerformanceRendererPolicy,
-    val fullSystemProtection: Boolean
+    val fullSystemProtection: Boolean,
+    val documentHidden: Boolean? = null,
+    val documentVisibilityState: String? = null,
+    val lastVisibilityProbeAt: Long? = null,
+    val pageLoadId: String? = null,
+    val continuityState: HighPerformanceContinuityState = HighPerformanceContinuityState.UNKNOWN
 ) {
     internal fun toJson(): JSONObject = JSONObject()
         .put("tokenId", tokenId)
@@ -116,8 +174,16 @@ data class HighPerformanceSessionStatus(
         .put("activityState", activityState.name)
         .put("rendererPolicy", rendererPolicy.name)
         .put("fullSystemProtection", fullSystemProtection)
+        .putNullable("documentHidden", documentHidden)
+        .putNullable("documentVisibilityState", documentVisibilityState)
+        .putNullable("lastVisibilityProbeAt", lastVisibilityProbeAt)
+        .putNullable("pageLoadId", pageLoadId)
+        .put("continuityState", continuityState.name)
 
     companion object {
+        private val VALID_VISIBILITY_STATES = setOf("visible", "hidden", "prerender", "unloaded")
+        private const val MAX_PAGE_LOAD_ID_LENGTH = 96
+
         internal fun fromJson(json: JSONObject): HighPerformanceSessionStatus? {
             val tokenId = json.optString("tokenId").takeIf { it.isNotBlank() } ?: return null
             val tabId = json.optString("tabId").takeIf { it.isNotBlank() } ?: return null
@@ -148,7 +214,16 @@ data class HighPerformanceSessionStatus(
                     json.optString("rendererPolicy"),
                     HighPerformanceRendererPolicy.BASELINE_IMPORTANT_WAIVED
                 ),
-                fullSystemProtection = json.optBoolean("fullSystemProtection", false)
+                fullSystemProtection = json.optBoolean("fullSystemProtection", false),
+                documentHidden = json.optNullableBoolean("documentHidden"),
+                documentVisibilityState = json.optNullableString("documentVisibilityState")
+                    ?.takeIf { it in VALID_VISIBILITY_STATES },
+                lastVisibilityProbeAt = json.optNullableLong("lastVisibilityProbeAt"),
+                pageLoadId = json.optNullableString("pageLoadId")?.take(MAX_PAGE_LOAD_ID_LENGTH),
+                continuityState = enumValueOrDefault(
+                    json.optString("continuityState"),
+                    HighPerformanceContinuityState.UNKNOWN
+                )
             )
         }
     }
@@ -177,6 +252,9 @@ data class HighPerformanceRuntimeStatus(
     val notificationsVisible: Boolean,
     val ignoringBatteryOptimizations: Boolean,
     val screenInteractive: Boolean,
+    val keyguardShowing: Boolean = false,
+    val keyguardSecure: Boolean = false,
+    val keyguardReadyForScreenOff: Boolean = false,
     val foregroundServiceDeclared: Boolean,
     val specialUseTypeDeclared: Boolean,
     val foregroundServiceState: HighPerformanceForegroundServiceState,
@@ -215,6 +293,9 @@ data class HighPerformanceRuntimeStatus(
         .put("notificationsVisible", notificationsVisible)
         .put("ignoringBatteryOptimizations", ignoringBatteryOptimizations)
         .put("screenInteractive", screenInteractive)
+        .put("keyguardShowing", keyguardShowing)
+        .put("keyguardSecure", keyguardSecure)
+        .put("keyguardReadyForScreenOff", keyguardReadyForScreenOff)
         .put("foregroundServiceDeclared", foregroundServiceDeclared)
         .put("specialUseTypeDeclared", specialUseTypeDeclared)
         .put("foregroundServiceState", foregroundServiceState.name)
@@ -235,12 +316,16 @@ data class HighPerformanceRuntimeStatus(
         })
 
     companion object {
-        const val STATUS_SCHEMA_VERSION = 3
+        const val STATUS_SCHEMA_VERSION = 4
+        private const val MIN_SUPPORTED_STATUS_SCHEMA_VERSION = 3
         private const val MAX_PERSISTED_SESSIONS = 32
         private const val MAX_PERSISTED_EVENTS = 80
 
         internal fun fromJson(json: JSONObject): HighPerformanceRuntimeStatus? {
-            if (json.optInt("schemaVersion", -1) != STATUS_SCHEMA_VERSION) return null
+            val schemaVersion = json.optInt("schemaVersion", -1)
+            if (schemaVersion !in MIN_SUPPORTED_STATUS_SCHEMA_VERSION..STATUS_SCHEMA_VERSION) {
+                return null
+            }
             val processInstanceId = json.optString("processInstanceId").takeIf { it.isNotBlank() }
                 ?: return null
             val processName = json.optString("processName").takeIf { it.isNotBlank() } ?: return null
@@ -281,6 +366,9 @@ data class HighPerformanceRuntimeStatus(
                 notificationsVisible = json.optBoolean("notificationsVisible", false),
                 ignoringBatteryOptimizations = json.optBoolean("ignoringBatteryOptimizations", false),
                 screenInteractive = json.optBoolean("screenInteractive", true),
+                keyguardShowing = json.optBoolean("keyguardShowing", false),
+                keyguardSecure = json.optBoolean("keyguardSecure", false),
+                keyguardReadyForScreenOff = json.optBoolean("keyguardReadyForScreenOff", false),
                 foregroundServiceDeclared = json.optBoolean("foregroundServiceDeclared", false),
                 specialUseTypeDeclared = json.optBoolean("specialUseTypeDeclared", false),
                 foregroundServiceState = enumValueOrDefault(
@@ -408,6 +496,11 @@ private fun JSONObject.putNullable(name: String, value: Any?): JSONObject =
 private fun JSONObject.optNullableLong(name: String): Long? {
     if (!has(name) || isNull(name)) return null
     return optLong(name)
+}
+
+private fun JSONObject.optNullableBoolean(name: String): Boolean? {
+    if (!has(name) || isNull(name)) return null
+    return if (opt(name) is Boolean) optBoolean(name) else null
 }
 
 private fun JSONObject.optNullableString(name: String): String? {

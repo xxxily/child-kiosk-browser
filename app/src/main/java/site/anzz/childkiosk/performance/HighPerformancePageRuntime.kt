@@ -27,7 +27,10 @@ internal enum class HighPerformanceProbeType {
 internal data class HighPerformanceProbeSignal(
     val type: HighPerformanceProbeType,
     val pageTimestamp: Long,
-    val token: String
+    val token: String,
+    val documentHidden: Boolean? = null,
+    val documentVisibilityState: String? = null,
+    val loadId: String? = null
 )
 
 internal data class HighPerformancePageRuntimeInstallResult(
@@ -36,7 +39,7 @@ internal data class HighPerformancePageRuntimeInstallResult(
     val reason: String? = null
 )
 
-/** Installs trusted-page lifecycle protection before any page script can observe the document. */
+/** Installs Origin-scoped lifecycle diagnostics without changing the document's native state. */
 internal object HighPerformancePageRuntime {
     private const val BRIDGE_NAME = "ChildKioskHighPerformance"
     private const val PROTOCOL_VERSION = 1
@@ -180,41 +183,74 @@ internal object HighPerformancePageRuntime {
             if (window[key] && typeof window[key].deactivate === 'function') {
                 window[key].deactivate(false);
             }
-            var state = { mainTimer: 0, worker: null, handlers: [], active: true, token: '' };
+            var state = {
+                mainTimer: 0,
+                worker: null,
+                handlers: [],
+                active: true,
+                token: '',
+                loadId: String(
+                    window.performance && Number.isFinite(window.performance.timeOrigin)
+                        ? Math.trunc(window.performance.timeOrigin)
+                        : Date.now()
+                )
+            };
+            var readVisibility = function() {
+                var hidden = null;
+                var visibilityState = null;
+                try {
+                    var hiddenDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'hidden');
+                    if (hiddenDescriptor && typeof hiddenDescriptor.get === 'function') {
+                        hidden = hiddenDescriptor.get.call(document) === true;
+                    }
+                } catch (_) {}
+                try {
+                    var visibilityDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState');
+                    if (visibilityDescriptor && typeof visibilityDescriptor.get === 'function') {
+                        visibilityState = visibilityDescriptor.get.call(document);
+                    }
+                } catch (_) {}
+                if (hidden === null) {
+                    try { hidden = document.hidden === true; } catch (_) {}
+                }
+                if (typeof visibilityState !== 'string') {
+                    try { visibilityState = document.visibilityState; } catch (_) {}
+                }
+                if (typeof visibilityState !== 'string' || visibilityState.length > 32) {
+                    visibilityState = null;
+                }
+                return { hidden: hidden, visibilityState: visibilityState };
+            };
             var post = function(type) {
                 if (!state.active || !state.token) return;
                 try {
-                    bridge.postMessage(JSON.stringify({ v: $PROTOCOL_VERSION, type: type, ts: Date.now(), token: state.token }));
+                    var visibility = readVisibility();
+                    bridge.postMessage(JSON.stringify({
+                        v: $PROTOCOL_VERSION,
+                        type: type,
+                        ts: Date.now(),
+                        token: state.token,
+                        hidden: visibility.hidden,
+                        visibilityState: visibility.visibilityState,
+                        loadId: state.loadId
+                    }));
                 } catch (_) {}
             };
-            var defineVisible = function(name, value) {
-                try {
-                    Object.defineProperty(document, name, {
-                        configurable: true,
-                        get: function() { return value; }
-                    });
-                } catch (_) {}
-            };
-            defineVisible('visibilityState', 'visible');
-            defineVisible('hidden', false);
-            defineVisible('webkitVisibilityState', 'visible');
-            defineVisible('webkitHidden', false);
-            var listen = function(target, name, type, block) {
-                var handler = function(event) {
+            var listen = function(target, name, type) {
+                var handler = function() {
                     post(type);
-                    if (block && state.active) event.stopImmediatePropagation();
                 };
                 target.addEventListener(name, handler, true);
                 state.handlers.push([target, name, handler]);
             };
-            listen(document, 'visibilitychange', 'visibility_change', true);
-            listen(document, 'webkitvisibilitychange', 'visibility_change', true);
-            listen(document, 'freeze', 'freeze', true);
-            listen(document, 'resume', 'resume', false);
-            listen(window, 'pagehide', 'page_hide', false);
-            listen(window, 'pageshow', 'page_show', false);
-            listen(window, 'focus', 'focus', false);
-            listen(window, 'blur', 'blur', false);
+            listen(document, 'visibilitychange', 'visibility_change');
+            listen(document, 'webkitvisibilitychange', 'visibility_change');
+            listen(document, 'freeze', 'freeze');
+            listen(document, 'resume', 'resume');
+            listen(window, 'pagehide', 'page_hide');
+            listen(window, 'pageshow', 'page_show');
+            listen(window, 'focus', 'focus');
+            listen(window, 'blur', 'blur');
             state.mainTimer = window.setInterval(function() { post('main'); }, $HEARTBEAT_INTERVAL_MS);
             try {
                 var source = "self.onmessage=function(e){if(e.data==='stop'){close();}else if(e.data==='ping'){postMessage(Date.now());}};" +
@@ -244,9 +280,6 @@ internal object HighPerformancePageRuntime {
                     item[0].removeEventListener(item[1], item[2], true);
                 });
                 state.handlers = [];
-                ['visibilityState', 'hidden', 'webkitVisibilityState', 'webkitHidden'].forEach(function(name) {
-                    try { delete document[name]; } catch (_) {}
-                });
                 try { delete window[key]; } catch (_) { window[key] = null; }
             };
             window[key] = state;
@@ -266,7 +299,8 @@ internal object HighPerformanceProbeProtocol {
         if (raw.isNullOrBlank() || raw.length > MAX_PROBE_MESSAGE_LENGTH) return null
         return runCatching {
             val json = JSONObject(raw)
-            if (json.length() != 4 || json.optInt("v", -1) != PROBE_PROTOCOL_VERSION) return null
+            if ((json.length() != 4 && json.length() != 7) ||
+                json.optInt("v", -1) != PROBE_PROTOCOL_VERSION) return null
             val type = when (json.optString("type")) {
                 "init" -> HighPerformanceProbeType.INIT
                 "main" -> HighPerformanceProbeType.MAIN
@@ -284,18 +318,50 @@ internal object HighPerformanceProbeProtocol {
             }
             val token = json.optString("token")
             if (token.isBlank() || token.length > MAX_PROBE_TOKEN_LENGTH) return null
+            val hasVisibility = json.length() == 7
+            val documentHidden = if (hasVisibility) {
+                if (!json.has("hidden")) return null
+                if (json.isNull("hidden")) null
+                else if (json.opt("hidden") is Boolean) json.optBoolean("hidden")
+                else return null
+            } else {
+                null
+            }
+            val documentVisibilityState = if (hasVisibility) {
+                if (!json.has("visibilityState") || (!json.isNull("visibilityState") &&
+                        json.opt("visibilityState") !is String)
+                ) return null
+                json.optString("visibilityState").takeIf { it in VALID_VISIBILITY_STATES }
+            } else {
+                null
+            }
+            val loadId = if (hasVisibility) {
+                json.optString("loadId").takeIf { it.isNotBlank() && it.length <= MAX_LOAD_ID_LENGTH }
+                    ?: return null
+            } else {
+                null
+            }
             val timestampValue = json.opt("ts") as? Number ?: return null
             val timestamp = timestampValue.toLong()
             if (timestamp <= 0L || timestampValue.toDouble() != timestamp.toDouble()) return null
             if (kotlin.math.abs(System.currentTimeMillis() - timestamp) > MAX_PROBE_CLOCK_SKEW_MS) {
                 return null
             }
-            HighPerformanceProbeSignal(type, timestamp, token)
+            HighPerformanceProbeSignal(
+                type = type,
+                pageTimestamp = timestamp,
+                token = token,
+                documentHidden = documentHidden,
+                documentVisibilityState = documentVisibilityState,
+                loadId = loadId
+            )
         }.getOrNull()
     }
 
     private const val PROBE_PROTOCOL_VERSION = 1
     private const val MAX_PROBE_MESSAGE_LENGTH = 512
     private const val MAX_PROBE_TOKEN_LENGTH = 128
+    private const val MAX_LOAD_ID_LENGTH = 96
     private const val MAX_PROBE_CLOCK_SKEW_MS = 24L * 60L * 60L * 1_000L
+    private val VALID_VISIBILITY_STATES = setOf("visible", "hidden", "prerender", "unloaded")
 }

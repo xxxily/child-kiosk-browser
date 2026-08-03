@@ -58,14 +58,37 @@ class HighPerformancePageRuntimeTest {
     }
 
     @Test
-    fun documentStartScriptProtectsVisibilityWithoutBlockingPageHide() {
+    fun documentStartScriptObservesRealVisibilityWithoutMutatingIt() {
         val script = HighPerformancePageRuntime.lifecycleScript()
 
-        assertTrue(script.contains("defineVisible('visibilityState', 'visible')"))
-        assertTrue(script.contains("listen(document, 'freeze', 'freeze', true)"))
-        assertTrue(script.contains("listen(window, 'pagehide', 'page_hide', false)"))
-        assertFalse(script.contains("listen(window, 'pagehide', 'page_hide', true)"))
+        assertTrue(script.contains("Object.getOwnPropertyDescriptor(Document.prototype, 'hidden')"))
+        assertTrue(script.contains("hidden: visibility.hidden"))
+        assertTrue(script.contains("visibilityState: visibility.visibilityState"))
+        assertTrue(script.contains("listen(document, 'freeze', 'freeze')"))
+        assertTrue(script.contains("listen(window, 'pagehide', 'page_hide')"))
+        assertFalse(script.contains("Object.defineProperty(document"))
+        assertFalse(script.contains("stopImmediatePropagation"))
         assertTrue(script.contains("new Worker(blobUrl)"))
+    }
+
+    @Test
+    fun probeProtocolCarriesVisibilityAndStableLoadId() {
+        val now = System.currentTimeMillis()
+        val signal = HighPerformanceProbeProtocol.parse(
+            JSONObject()
+                .put("v", 1)
+                .put("type", "main")
+                .put("ts", now)
+                .put("token", "session-token")
+                .put("hidden", false)
+                .put("visibilityState", "visible")
+                .put("loadId", "1785688589181")
+                .toString()
+        )
+
+        assertEquals(false, signal?.documentHidden)
+        assertEquals("visible", signal?.documentVisibilityState)
+        assertEquals("1785688589181", signal?.loadId)
     }
 
     private fun snapshot(rules: List<HighPerformanceRuntimeRule>) =

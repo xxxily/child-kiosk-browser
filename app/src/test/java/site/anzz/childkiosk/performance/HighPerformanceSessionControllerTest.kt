@@ -203,10 +203,10 @@ class HighPerformanceSessionControllerTest {
     }
 
     @Test
-    fun freezeSignalUnfreezesProtectedWebView() {
+    fun freezeSignalRecordsHiddenDegradationWithoutMutatingWebView() {
         val token = HighPerformanceSessionController.prepareJavascriptHeartbeat(webView)
         requireNotNull(token)
-        val before = HighPerformanceSessionController.debugStateForTests().unfreezeCount
+        val before = HighPerformanceSessionController.debugStateForTests().hiddenDegradedCount
 
         HighPerformanceSessionController.onPageProbe(
             webView,
@@ -214,11 +214,17 @@ class HighPerformanceSessionControllerTest {
             HighPerformanceProbeSignal(
                 type = HighPerformanceProbeType.FREEZE,
                 pageTimestamp = System.currentTimeMillis(),
-                token = token
+                token = token,
+                documentHidden = true,
+                documentVisibilityState = "hidden",
+                loadId = "test-load"
             )
         )
 
-        assertEquals(before + 1, HighPerformanceSessionController.debugStateForTests().unfreezeCount)
+        assertEquals(
+            before + 1,
+            HighPerformanceSessionController.debugStateForTests().hiddenDegradedCount
+        )
     }
 
     private fun trustedSnapshot(): HighPerformanceRuntimeSnapshot {

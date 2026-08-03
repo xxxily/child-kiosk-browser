@@ -35,11 +35,13 @@ internal fun shouldUninstallPageRuntimeForStop(suppressCurrentWebViews: Boolean)
 
 internal fun highPerformanceCompositeStateForActiveSessions(
     resourceProtectionReady: Boolean,
-    javascriptStates: List<HighPerformanceJavascriptState>
+    javascriptStates: List<HighPerformanceJavascriptState>,
+    continuityStates: List<HighPerformanceContinuityState> = emptyList()
 ): HighPerformanceCompositeState = if (
     resourceProtectionReady &&
     javascriptStates.isNotEmpty() &&
-    javascriptStates.all { it == HighPerformanceJavascriptState.RESPONSIVE }
+    javascriptStates.all { it == HighPerformanceJavascriptState.RESPONSIVE } &&
+    continuityStates.none { it == HighPerformanceContinuityState.HIDDEN_DEGRADED }
 ) {
     HighPerformanceCompositeState.ACTIVE
 } else {
@@ -80,7 +82,7 @@ internal object HighPerformanceSessionController {
     private var lastInterruptionAt: Long? = null
     private var lastSystemState: HighPerformanceProcessSnapshot? = null
     private var nativeHeartbeatAt: Long = System.currentTimeMillis()
-    private var unfreezeCount = 0L
+    private var hiddenDegradedCount = 0L
 
     private val heartbeat = object : Runnable {
         override fun run() {
@@ -122,7 +124,6 @@ internal object HighPerformanceSessionController {
                     reason = "health_check"
                 )
             }
-            unfreezeStaleProtectedWebViews()
             syncSystemResources("health_check")
             publishStatus()
             scheduleHeartbeat()
@@ -203,6 +204,10 @@ internal object HighPerformanceSessionController {
         active.lastJsHeartbeatAt = null
         active.lastMainJsHeartbeatAt = null
         active.lastWorkerJsHeartbeatAt = null
+        active.documentHidden = null
+        active.documentVisibilityState = null
+        active.lastVisibilityProbeAt = null
+        active.loadId = null
         val provisionalOrigin = url?.let(::strictOriginOrNull)
         if (provisionalOrigin == null || provisionalOrigin != active.origin) {
             stopSession(managed, reason = "top_level_navigation_started", restoreRenderer = true)
@@ -564,13 +569,24 @@ internal object HighPerformanceSessionController {
         webView: WebView,
         token: String,
         source: HighPerformanceProbeType,
-        pageTimestamp: Long
+        pageTimestamp: Long,
+        documentHidden: Boolean? = null,
+        documentVisibilityState: String? = null,
+        loadId: String? = null
     ): Boolean {
         ensureMainThread()
         val session = find(webView)?.session ?: return false
         if (token.isBlank() || token != session.jsHeartbeatToken || pageTimestamp <= 0L) return false
         if (source == HighPerformanceProbeType.DEACTIVATED) return false
         val now = System.currentTimeMillis()
+        updatePageObservation(
+            session = session,
+            documentHidden = documentHidden,
+            documentVisibilityState = documentVisibilityState,
+            loadId = loadId,
+            observedAt = now,
+            source = source
+        )
         val wasState = classifyJavascriptHeartbeat(
             now = now,
             installedAt = session.jsHeartbeatInstalledAt,
@@ -640,20 +656,28 @@ internal object HighPerformanceSessionController {
                 webView = webView,
                 token = token,
                 source = signal.type,
-                pageTimestamp = signal.pageTimestamp
+                pageTimestamp = signal.pageTimestamp,
+                documentHidden = signal.documentHidden,
+                documentVisibilityState = signal.documentVisibilityState,
+                loadId = signal.loadId
             )
             else -> {
                 val session = find(webView)?.session ?: return false
                 if (token.isBlank() || token != session.jsHeartbeatToken) return false
+                updatePageObservation(
+                    session = session,
+                    documentHidden = signal.documentHidden,
+                    documentVisibilityState = signal.documentVisibilityState,
+                    loadId = signal.loadId,
+                    observedAt = System.currentTimeMillis(),
+                    source = signal.type
+                )
                 HighPerformanceDiagnostics.record(
                     type = "page_lifecycle_signal",
                     originOrUrl = session.origin,
                     sessionId = session.tokenId,
                     reason = signal.type.name.lowercase()
                 )
-                if (signal.type == HighPerformanceProbeType.FREEZE) {
-                    unfreezeWebView(webView, "freeze_signal")
-                }
                 publishStatus()
                 true
             }
@@ -821,7 +845,7 @@ internal object HighPerformanceSessionController {
             stoppedRegistrationCount = registrations.count {
                 it.activityState == HighPerformanceActivityState.STOPPED
             },
-            unfreezeCount = unfreezeCount
+            hiddenDegradedCount = hiddenDegradedCount
         )
     }
 
@@ -866,7 +890,7 @@ internal object HighPerformanceSessionController {
         lastSessionStoppedAt = null
         lastInterruptionAt = null
         lastSystemState = null
-        unfreezeCount = 0L
+        hiddenDegradedCount = 0L
         nativeHeartbeatAt = System.currentTimeMillis()
     }
 
@@ -940,91 +964,39 @@ internal object HighPerformanceSessionController {
         publishStatus()
     }
 
-    /**
-     * Blink freezes a hidden page about 60 seconds after the window goes invisible (Page Lifecycle
-     * freeze) and suspends every timer/worker/network task until the next foreground resume.
-     * A single `WebView.onResume()` did not revive the page on Android 16 / WebView 150 (v0.4.17),
-     * so the unfreeze attempt is a combination: onResume, a transient view-visibility toggle that
-     * makes Chromium re-evaluate its own visibility state (window visibility untouched), then
-     * onResume again. Effectiveness is verified 10 s later from the JS heartbeat: a confirmed
-     * ineffective streak throttles further attempts to avoid a no-op loop, because a frozen page
-     * cannot resume without a real foreground transition on this platform.
-     */
-    private fun unfreezeWebView(webView: WebView, reason: String) {
-        val session = find(webView)?.session ?: return
-        val now = System.currentTimeMillis()
-        if (session.unfreezeIneffectiveStreak >= MAX_INEFFECTIVE_UNFREEZE_STREAK) {
-            val lastAttempt = session.lastUnfreezeAttemptAt ?: 0L
-            if (now - lastAttempt < INEFFECTIVE_RETRY_INTERVAL_MS) return
-        }
-        val lastHeartbeatBefore = session.lastMainJsHeartbeatAt ?: session.lastJsHeartbeatAt
-        runCatching {
-            webView.onResume()
-            val currentVisibility = webView.visibility
-            if (currentVisibility != View.INVISIBLE) {
-                webView.visibility = View.INVISIBLE
-                webView.visibility = currentVisibility
-            }
-            webView.onResume()
-        }.onSuccess {
-            session.lastUnfreezeAttemptAt = System.currentTimeMillis()
-            unfreezeCount += 1
-            HighPerformanceDiagnostics.record(
-                type = "webview_unfrozen",
-                result = "ok",
-                originOrUrl = session.origin,
-                sessionId = session.tokenId,
-                reason = reason
-            )
-            mainHandler.postDelayed(
-                { verifyUnfreezeEffectiveness(webView, session, lastHeartbeatBefore) },
-                UNFREEZE_VERIFY_DELAY_MS
-            )
-            publishStatus()
-        }.onFailure { failure ->
-            HighPerformanceDiagnostics.record(
-                type = "webview_unfreeze_failed",
-                result = "failed",
-                originOrUrl = session.origin,
-                sessionId = session.tokenId,
-                reason = failure.javaClass.simpleName
-            )
-        }
-    }
-
-    private fun verifyUnfreezeEffectiveness(
-        webView: WebView,
+    private fun updatePageObservation(
         session: Session,
-        lastHeartbeatBefore: Long?
+        documentHidden: Boolean?,
+        documentVisibilityState: String?,
+        loadId: String?,
+        observedAt: Long,
+        source: HighPerformanceProbeType
     ) {
-        if (find(webView)?.session !== session) return
-        val lastHeartbeatNow = session.lastMainJsHeartbeatAt ?: session.lastJsHeartbeatAt
-        val effective = lastHeartbeatNow != null &&
-            (lastHeartbeatBefore == null || lastHeartbeatNow > lastHeartbeatBefore)
-        if (effective) {
-            session.unfreezeIneffectiveStreak = 0
-        } else {
-            session.unfreezeIneffectiveStreak += 1
+        if (documentHidden == null && documentVisibilityState == null && loadId == null) return
+        val previousHidden = session.documentHidden
+        val previousLoadId = session.loadId
+        session.documentHidden = documentHidden
+        session.documentVisibilityState = documentVisibilityState
+        session.lastVisibilityProbeAt = observedAt
+        session.loadId = loadId ?: session.loadId
+        if (previousLoadId != null && loadId != null && previousLoadId != loadId) {
             HighPerformanceDiagnostics.record(
-                type = "webview_unfreeze_ineffective",
-                result = "degraded",
+                type = "page_load_id_changed",
+                result = "interrupted",
                 originOrUrl = session.origin,
                 sessionId = session.tokenId,
-                reason = "no_heartbeat_streak_${session.unfreezeIneffectiveStreak}"
+                reason = source.name.lowercase()
             )
         }
-        publishStatus()
-    }
-
-    private fun unfreezeStaleProtectedWebViews() {
-        val now = System.currentTimeMillis()
-        registrations.forEach { managed ->
-            val webView = managed.webView.get() ?: return@forEach
-            val session = managed.session ?: return@forEach
-            val lastHeartbeat = session.lastMainJsHeartbeatAt ?: session.lastJsHeartbeatAt ?: return@forEach
-            if (now - lastHeartbeat > HIGH_PERFORMANCE_JS_HEARTBEAT_STALE_AFTER_MS) {
-                unfreezeWebView(webView, "heartbeat_stale")
-            }
+        if (documentHidden != null && documentHidden != previousHidden) {
+            if (documentHidden) hiddenDegradedCount += 1
+            HighPerformanceDiagnostics.record(
+                type = if (documentHidden) "page_became_hidden" else "page_became_visible",
+                result = if (documentHidden) "degraded" else "ok",
+                originOrUrl = session.origin,
+                sessionId = session.tokenId,
+                reason = source.name.lowercase()
+            )
         }
     }
 
@@ -1073,6 +1045,10 @@ internal object HighPerformanceSessionController {
         session.lastJsHeartbeatAt = null
         session.lastMainJsHeartbeatAt = null
         session.lastWorkerJsHeartbeatAt = null
+        session.documentHidden = null
+        session.documentVisibilityState = null
+        session.lastVisibilityProbeAt = null
+        session.loadId = null
         session.lastReportedJavascriptState = HighPerformanceJavascriptState.UNKNOWN
     }
 
@@ -1162,6 +1138,24 @@ internal object HighPerformanceSessionController {
         val system = HighPerformanceProcessState.collect(context).also { lastSystemState = it }
         val sessions = registrations.mapNotNull { managed ->
             val session = managed.session ?: return@mapNotNull null
+            val javascriptState = classifyJavascriptHeartbeat(
+                now = now,
+                installedAt = session.jsHeartbeatInstalledAt,
+                lastMainHeartbeatAt = session.lastMainJsHeartbeatAt
+            ).also { state ->
+                if (state == HighPerformanceJavascriptState.STALE &&
+                    session.lastReportedJavascriptState != HighPerformanceJavascriptState.STALE
+                ) {
+                    HighPerformanceDiagnostics.record(
+                        type = "js_heartbeat_stale",
+                        result = "degraded",
+                        originOrUrl = session.origin,
+                        sessionId = session.tokenId,
+                        reason = "main_timer_missing"
+                    )
+                }
+                session.lastReportedJavascriptState = state
+            }
             HighPerformanceSessionStatus(
                 tokenId = session.tokenId,
                 tabId = managed.tabId,
@@ -1173,24 +1167,7 @@ internal object HighPerformanceSessionController {
                 lastJsHeartbeatAt = session.lastJsHeartbeatAt,
                 lastMainJsHeartbeatAt = session.lastMainJsHeartbeatAt,
                 lastWorkerJsHeartbeatAt = session.lastWorkerJsHeartbeatAt,
-                javascriptState = classifyJavascriptHeartbeat(
-                    now = now,
-                    installedAt = session.jsHeartbeatInstalledAt,
-                    lastMainHeartbeatAt = session.lastMainJsHeartbeatAt
-                ).also { state ->
-                    if (state == HighPerformanceJavascriptState.STALE &&
-                        session.lastReportedJavascriptState != HighPerformanceJavascriptState.STALE
-                    ) {
-                        HighPerformanceDiagnostics.record(
-                            type = "js_heartbeat_stale",
-                            result = "degraded",
-                            originOrUrl = session.origin,
-                            sessionId = session.tokenId,
-                            reason = "main_timer_missing"
-                        )
-                    }
-                    session.lastReportedJavascriptState = state
-                },
+                javascriptState = javascriptState,
                 visible = managed.visible,
                 activityState = managed.activityState,
                 rendererPolicy = if (session.rendererApplied) {
@@ -1202,7 +1179,17 @@ internal object HighPerformanceSessionController {
                     foregroundServiceState == HighPerformanceForegroundServiceState.RUNNING &&
                     wakeLockSnapshot.state == HighPerformanceWakeLockState.HELD &&
                     system.notificationsVisible &&
-                    system.ignoringBatteryOptimizations
+                    system.ignoringBatteryOptimizations,
+                documentHidden = session.documentHidden,
+                documentVisibilityState = session.documentVisibilityState,
+                lastVisibilityProbeAt = session.lastVisibilityProbeAt,
+                pageLoadId = session.loadId,
+                continuityState = classifyContinuityState(
+                    screenInteractive = system.screenInteractive,
+                    activityState = managed.activityState,
+                    javascriptState = javascriptState,
+                    documentHidden = session.documentHidden
+                )
             )
         }
         val status = HighPerformanceRuntimeStatus(
@@ -1227,6 +1214,9 @@ internal object HighPerformanceSessionController {
             notificationsVisible = system.notificationsVisible,
             ignoringBatteryOptimizations = system.ignoringBatteryOptimizations,
             screenInteractive = system.screenInteractive,
+            keyguardShowing = system.keyguardShowing,
+            keyguardSecure = system.keyguardSecure,
+            keyguardReadyForScreenOff = system.keyguardReadyForScreenOff,
             foregroundServiceDeclared = system.foregroundServiceDeclared,
             specialUseTypeDeclared = system.specialUseTypeDeclared,
             foregroundServiceState = foregroundServiceState,
@@ -1304,7 +1294,8 @@ internal object HighPerformanceSessionController {
                 wakeLockSnapshot.state == HighPerformanceWakeLockState.HELD &&
                 system.notificationsVisible &&
                     system.ignoringBatteryOptimizations,
-                javascriptStates = sessions.map(HighPerformanceSessionStatus::javascriptState)
+                javascriptStates = sessions.map(HighPerformanceSessionStatus::javascriptState),
+                continuityStates = sessions.map(HighPerformanceSessionStatus::continuityState)
             )
         }
         if (lastInterruptionAt != null &&
@@ -1413,16 +1404,15 @@ internal object HighPerformanceSessionController {
         var lastJsHeartbeatAt: Long? = null,
         var lastMainJsHeartbeatAt: Long? = null,
         var lastWorkerJsHeartbeatAt: Long? = null,
-        var lastUnfreezeAttemptAt: Long? = null,
-        var unfreezeIneffectiveStreak: Int = 0,
+        var documentHidden: Boolean? = null,
+        var documentVisibilityState: String? = null,
+        var lastVisibilityProbeAt: Long? = null,
+        var loadId: String? = null,
         var lastReportedJavascriptState: HighPerformanceJavascriptState =
             HighPerformanceJavascriptState.UNKNOWN
     )
 
     private const val STATUS_HEARTBEAT_MS = 30_000L
-    private const val UNFREEZE_VERIFY_DELAY_MS = 10_000L
-    private const val MAX_INEFFECTIVE_UNFREEZE_STREAK = 3
-    private const val INEFFECTIVE_RETRY_INTERVAL_MS = 5 * 60_000L
 }
 
 internal data class HighPerformanceControllerDebugState(
@@ -1432,5 +1422,5 @@ internal data class HighPerformanceControllerDebugState(
     val foregroundServiceError: String?,
     val suppressedRegistrationCount: Int,
     val stoppedRegistrationCount: Int,
-    val unfreezeCount: Long
+    val hiddenDegradedCount: Long
 )

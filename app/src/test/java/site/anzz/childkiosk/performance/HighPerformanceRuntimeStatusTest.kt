@@ -62,7 +62,12 @@ class HighPerformanceRuntimeStatusTest {
             visible = false,
             activityState = HighPerformanceActivityState.STOPPED,
             rendererPolicy = HighPerformanceRendererPolicy.HIGH_PERFORMANCE_IMPORTANT_NOT_WAIVED,
-            fullSystemProtection = true
+            fullSystemProtection = true,
+            documentHidden = false,
+            documentVisibilityState = "visible",
+            lastVisibilityProbeAt = 4_000L,
+            pageLoadId = "load-1",
+            continuityState = HighPerformanceContinuityState.SCREEN_OFF_VISIBLE_CONTINUITY
         )
 
         val json = original.toJson()
@@ -80,6 +85,26 @@ class HighPerformanceRuntimeStatusTest {
             .put("processName", "site.anzz.childkiosk:webview")
 
         assertNull(HighPerformanceRuntimeStatus.fromJson(json))
+    }
+
+    @Test
+    fun previousRuntimeSchemaRemainsReadableWithUnknownContinuity() {
+        val json = runtimeStatus(
+            compositeState = HighPerformanceCompositeState.ACTIVE,
+            sessionState = HighPerformanceJavascriptState.RESPONSIVE,
+            installedAt = 1_000L,
+            lastMainAt = 2_000L
+        ).toJson().put("schemaVersion", 3)
+        val session = json.getJSONArray("sessions").getJSONObject(0)
+        session.remove("documentHidden")
+        session.remove("documentVisibilityState")
+        session.remove("lastVisibilityProbeAt")
+        session.remove("pageLoadId")
+        session.remove("continuityState")
+
+        val restored = HighPerformanceRuntimeStatus.fromJson(json)
+
+        assertEquals(HighPerformanceContinuityState.UNKNOWN, restored?.sessions?.single()?.continuityState)
     }
 
     @Test
@@ -102,10 +127,49 @@ class HighPerformanceRuntimeStatusTest {
             )
         )
         assertEquals(
+            HighPerformanceCompositeState.DEGRADED,
+            highPerformanceCompositeStateForActiveSessions(
+                resourceProtectionReady = true,
+                javascriptStates = listOf(HighPerformanceJavascriptState.RESPONSIVE),
+                continuityStates = listOf(HighPerformanceContinuityState.HIDDEN_DEGRADED)
+            )
+        )
+        assertEquals(
             HighPerformanceCompositeState.ACTIVE,
             highPerformanceCompositeStateForActiveSessions(
                 resourceProtectionReady = true,
                 javascriptStates = listOf(HighPerformanceJavascriptState.RESPONSIVE)
+            )
+        )
+    }
+
+    @Test
+    fun screenOffContinuityRequiresRealVisibleDocumentAndResponsiveMainTimer() {
+        assertEquals(
+            HighPerformanceContinuityState.SCREEN_OFF_VISIBLE_CONTINUITY,
+            classifyContinuityState(
+                screenInteractive = false,
+                activityState = HighPerformanceActivityState.STOPPED,
+                javascriptState = HighPerformanceJavascriptState.RESPONSIVE,
+                documentHidden = false
+            )
+        )
+        assertEquals(
+            HighPerformanceContinuityState.HIDDEN_DEGRADED,
+            classifyContinuityState(
+                screenInteractive = false,
+                activityState = HighPerformanceActivityState.STOPPED,
+                javascriptState = HighPerformanceJavascriptState.RESPONSIVE,
+                documentHidden = true
+            )
+        )
+        assertEquals(
+            HighPerformanceContinuityState.STALE,
+            classifyContinuityState(
+                screenInteractive = false,
+                activityState = HighPerformanceActivityState.STOPPED,
+                javascriptState = HighPerformanceJavascriptState.STALE,
+                documentHidden = false
             )
         )
     }
@@ -124,6 +188,32 @@ class HighPerformanceRuntimeStatusTest {
         assertEquals(HighPerformanceJavascriptState.STALE, refreshed.sessions.single().javascriptState)
         assertEquals(HighPerformanceCompositeState.DEGRADED, refreshed.compositeState)
         assertEquals(10_000L, refreshed.sessions.single().lastMainJsHeartbeatAt)
+    }
+
+    @Test
+    fun persistedHiddenSessionCannotRemainActiveJustBecauseHeartbeatIsResponsive() {
+        val persisted = runtimeStatus(
+            compositeState = HighPerformanceCompositeState.ACTIVE,
+            sessionState = HighPerformanceJavascriptState.RESPONSIVE,
+            installedAt = 1_000L,
+            lastMainAt = 39_000L
+        ).let { status ->
+            status.copy(
+                sessions = status.sessions.map { session ->
+                    session.copy(
+                        documentHidden = true,
+                        documentVisibilityState = "hidden",
+                        continuityState = HighPerformanceContinuityState.HIDDEN_DEGRADED
+                    )
+                }
+            )
+        }
+
+        val refreshed = refreshHeartbeatDerivedState(persisted, now = 40_000L)
+
+        assertEquals(HighPerformanceJavascriptState.RESPONSIVE, refreshed.sessions.single().javascriptState)
+        assertEquals(HighPerformanceContinuityState.HIDDEN_DEGRADED, refreshed.sessions.single().continuityState)
+        assertEquals(HighPerformanceCompositeState.DEGRADED, refreshed.compositeState)
     }
 
     private fun runtimeStatus(
@@ -153,6 +243,9 @@ class HighPerformanceRuntimeStatusTest {
         notificationsVisible = true,
         ignoringBatteryOptimizations = true,
         screenInteractive = false,
+        keyguardShowing = false,
+        keyguardSecure = false,
+        keyguardReadyForScreenOff = true,
         foregroundServiceDeclared = true,
         specialUseTypeDeclared = true,
         foregroundServiceState = HighPerformanceForegroundServiceState.RUNNING,
@@ -181,7 +274,12 @@ class HighPerformanceRuntimeStatusTest {
                 visible = false,
                 activityState = HighPerformanceActivityState.STOPPED,
                 rendererPolicy = HighPerformanceRendererPolicy.HIGH_PERFORMANCE_IMPORTANT_NOT_WAIVED,
-                fullSystemProtection = true
+                fullSystemProtection = true,
+                documentHidden = false,
+                documentVisibilityState = "visible",
+                lastVisibilityProbeAt = lastMainAt,
+                pageLoadId = "load-1",
+                continuityState = HighPerformanceContinuityState.SCREEN_OFF_VISIBLE_CONTINUITY
             )
         ),
         recentEvents = emptyList()

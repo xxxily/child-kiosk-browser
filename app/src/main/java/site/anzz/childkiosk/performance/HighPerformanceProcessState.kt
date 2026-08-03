@@ -2,6 +2,7 @@ package site.anzz.childkiosk.performance
 
 import android.Manifest
 import android.app.ActivityManager
+import android.app.KeyguardManager
 import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Context
@@ -42,6 +43,9 @@ data class HighPerformanceProcessSnapshot(
     val notificationsVisible: Boolean,
     val ignoringBatteryOptimizations: Boolean,
     val screenInteractive: Boolean,
+    val keyguardShowing: Boolean,
+    val keyguardSecure: Boolean,
+    val keyguardReadyForScreenOff: Boolean,
     val foregroundServiceDeclared: Boolean,
     val specialUseTypeDeclared: Boolean
 )
@@ -58,6 +62,10 @@ object HighPerformanceProcessState {
             NotificationManagerCompat.from(appContext).areNotificationsEnabled() &&
             notificationChannelVisible(appContext)
         val powerManager = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val keyguardManager = appContext.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        val keyguardReadyForScreenOff = keyguardManager != null &&
+            !keyguardManager.isKeyguardSecure &&
+            !keyguardManager.isKeyguardLocked
         val declaration = foregroundServiceDeclaration(appContext)
         val appPackageInfo = appPackageInfo(appContext)
         val webViewPackageInfo = runCatching {
@@ -81,6 +89,9 @@ object HighPerformanceProcessState {
             notificationsVisible = notificationsVisible,
             ignoringBatteryOptimizations = powerManager?.isIgnoringBatteryOptimizations(appContext.packageName) == true,
             screenInteractive = powerManager?.isInteractive != false,
+            keyguardShowing = keyguardManager?.isKeyguardLocked == true,
+            keyguardSecure = keyguardManager?.isKeyguardSecure == true,
+            keyguardReadyForScreenOff = keyguardReadyForScreenOff,
             foregroundServiceDeclared = declaration.first,
             specialUseTypeDeclared = declaration.second
         )

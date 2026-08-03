@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import site.anzz.childkiosk.performance.HighPerformanceActivityState
 import site.anzz.childkiosk.performance.HighPerformanceForegroundServiceState
+import site.anzz.childkiosk.performance.HighPerformanceContinuityState
 import site.anzz.childkiosk.performance.HighPerformanceJavascriptState
 import site.anzz.childkiosk.performance.HighPerformanceRendererPolicy
 import site.anzz.childkiosk.performance.HighPerformanceRuntimeStatusReadResult
@@ -57,6 +58,21 @@ internal fun HighPerformanceSessionsCard(
             activeStatus.wakeLockError?.let { error ->
                 RuntimeErrorText(prefix = "CPU 唤醒锁最近错误", error = error)
             }
+            RuntimeStatusPill(
+                label = "Keyguard：" + when {
+                    activeStatus.keyguardReadyForScreenOff -> "无安全锁/未显示"
+                    activeStatus.keyguardShowing -> "正在显示"
+                    activeStatus.keyguardSecure -> "有安全凭据"
+                    else -> "未显示/无安全凭据"
+                },
+                tone = if (activeStatus.keyguardShowing || activeStatus.keyguardSecure) {
+                    StatusTone.WARNING
+                } else if (activeStatus.keyguardReadyForScreenOff) {
+                    StatusTone.POSITIVE
+                } else {
+                    StatusTone.NEUTRAL
+                }
+            )
             activeStatus.sessions.forEach { session ->
                 HighPerformanceSessionItem(
                     session = session,
@@ -123,8 +139,23 @@ private fun HighPerformanceSessionItem(
                     tone = if (session.fullSystemProtection) StatusTone.POSITIVE else StatusTone.WARNING
                 )
                 RuntimeStatusPill(
-                    label = if (session.visible) "页面可见" else "页面在后台",
-                    tone = if (session.visible) StatusTone.POSITIVE else StatusTone.NEUTRAL
+                    label = "页面：${documentVisibilityLabel(session.documentHidden, session.documentVisibilityState)}",
+                    tone = when (session.documentHidden) {
+                        false -> StatusTone.POSITIVE
+                        true -> StatusTone.WARNING
+                        null -> StatusTone.NEUTRAL
+                    }
+                )
+                RuntimeStatusPill(
+                    label = "连续性：${continuityStateLabel(session.continuityState)}",
+                    tone = when (session.continuityState) {
+                        HighPerformanceContinuityState.FOREGROUND_RESPONSIVE,
+                        HighPerformanceContinuityState.BACKGROUND_VISIBLE_CONTINUITY,
+                        HighPerformanceContinuityState.SCREEN_OFF_VISIBLE_CONTINUITY -> StatusTone.POSITIVE
+                        HighPerformanceContinuityState.HIDDEN_DEGRADED -> StatusTone.WARNING
+                        HighPerformanceContinuityState.STALE -> StatusTone.ERROR
+                        HighPerformanceContinuityState.UNKNOWN -> StatusTone.NEUTRAL
+                    }
                 )
                 RuntimeStatusPill(
                     label = "Activity：${activityStateLabel(session.activityState)}",
@@ -226,6 +257,13 @@ private fun HighPerformanceSessionItem(
                 lineHeight = 15.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Text(
+                "页面 load ID：${session.pageLoadId ?: "尚未收到"} · " +
+                    "可见性采样：${session.lastVisibilityProbeAt?.let(::formatTimestamp) ?: "尚未收到"}",
+                fontSize = 10.sp,
+                lineHeight = 15.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -235,6 +273,21 @@ private fun javascriptStateLabel(state: HighPerformanceJavascriptState): String 
     HighPerformanceJavascriptState.AWAITING_FIRST_HEARTBEAT -> "等待首个心跳"
     HighPerformanceJavascriptState.RESPONSIVE -> "诊断脚本响应"
     HighPerformanceJavascriptState.STALE -> "心跳已停止"
+}
+
+private fun documentVisibilityLabel(hidden: Boolean?, state: String?): String = when (hidden) {
+    true -> state ?: "hidden"
+    false -> state ?: "visible"
+    null -> "未知"
+}
+
+private fun continuityStateLabel(state: HighPerformanceContinuityState): String = when (state) {
+    HighPerformanceContinuityState.UNKNOWN -> "待确认"
+    HighPerformanceContinuityState.FOREGROUND_RESPONSIVE -> "前台响应"
+    HighPerformanceContinuityState.BACKGROUND_VISIBLE_CONTINUITY -> "后台仍可见"
+    HighPerformanceContinuityState.SCREEN_OFF_VISIBLE_CONTINUITY -> "息屏持续运行"
+    HighPerformanceContinuityState.HIDDEN_DEGRADED -> "hidden 降级"
+    HighPerformanceContinuityState.STALE -> "心跳中断"
 }
 
 @Composable

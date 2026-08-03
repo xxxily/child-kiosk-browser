@@ -699,6 +699,11 @@ open class WebViewActivity : ComponentActivity() {
             highPerformanceOwnerId,
             HighPerformanceActivityState.STOPPED
         )
+        HighPerformanceDiagnostics.record(
+            type = "activity_stop_observation_only",
+            result = "ok",
+            reason = "page_visibility_probe_is_authoritative"
+        )
         val protectedWebViews = tabList.mapNotNull { it.webView }
             .filter(HighPerformanceSessionController::isProtected)
             .toSet()

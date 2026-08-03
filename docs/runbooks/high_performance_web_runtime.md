@@ -4,6 +4,8 @@
 
 High-performance runtime protects only parent-approved top-level HTTP/HTTPS Origins. It combines a foreground service in `:webview`, a bounded partial CPU WakeLock, and a non-waived renderer-priority request. It improves survival probability; it does not guarantee uninterrupted JavaScript, timers, network sockets, renderer memory, or foreground-equivalent Chromium scheduling.
 
+For the post-v0.4.21 source-level investigation of experimental CDP, virtual-time, audio, custom-Provider, and visual-screen-off options, see [background_continuity_deep_research.md](../background_continuity_deep_research.md). Those options are not enabled by this runbook's production baseline.
+
 The runtime must preserve Android's real WebView lifecycle contract. It does not falsify a
 WebView's visibility, window visibility, `isShown()`, screen state, or `onPause()` callbacks. Those
 signals are part of Chromium's focus and IME integration. FGS/WakeLock protect process and CPU
@@ -185,30 +187,63 @@ stops ~60 seconds after switching to background or screen-off. The diagnostic st
 `reason=resume`/`js_heartbeat_responsive`.
 
 **Root cause**: Chromium freezes a hidden page (Page Lifecycle `freeze`) about 60 seconds after the
-window becomes invisible. A frozen page suspends every timer, worker, and network task. The
+window becomes invisible. A frozen page suspends every timer, worker, and network task. Do not infer
+hidden solely from `Activity.onStop()`: on one Android 10 device with secure Keyguard removed, a
+power-button screen-off stopped the Activity but left `document.visibilityState=visible`; main,
+Worker, and fetch kept foreground cadence for about 19 minutes. A second run with WebView debugging
+and CDP disabled reproduced it for more than six minutes, so DevTools was not the cause. This is
+OEM/version behavior, not a portable guarantee. The
 FGS/WakeLock resource shell cannot prevent this; visibility falsification cannot either (v0.4.15,
 and it breaks IME), and moving the view to an overlay destroys its Surface (v0.4.13).
 
 **Fix attempts and final conclusion**: `WebView.onResume()` maps to `WebContents.SetFrozen(false)`
 in principle, but on Android 16 / WebView 150 neither a single onResume() (v0.4.17) nor an
 onResume + view-visibility-toggle combination (v0.4.18, verified via
-`webview_unfreeze_ineffective`) revived a hidden-frozen page; only the next foreground transition
-resumes it. The physical overlay keep-alive (v0.4.19/v0.4.20, `TYPE_APPLICATION_OVERLAY` 1x1 with
+`webview_unfreeze_ineffective`) revived a hidden-frozen page; among these supported production
+attempts, recovery occurred only on the next real foreground transition. The physical overlay
+keep-alive (v0.4.19/v0.4.20, `TYPE_APPLICATION_OVERLAY` 1x1 with
 `FLAG_SHOW_WHEN_LOCKED`, with the SYSTEM_ALERT_WINDOW declaration and forced re-compositing) was
 also a verified failure on OnePlus/Android 16: the window move destroyed the page (white screen /
 forced reload, same as v0.4.13) even though the overlay attached and no freeze occurred. **Do not
-reintroduce any of these three paths.** The page is fully frozen until the next foreground
-transition on this platform; remaining product options are page-side freeze/resume handling on the
-site (recommended — the protected site is parent-owned), PiP for background-only (screen-off still
+reintroduce any of these three paths.** On the tested platform and current supported production
+baseline, the page remains frozen until the next foreground transition. Experimental CDP, virtual
+time, audio, and custom-Provider paths are tracked separately in the deep-research document and do
+not change this baseline. Remaining product options are page-side freeze/resume handling on the site
+(recommended — the protected site is parent-owned), PiP for background-only (screen-off still
 freezes, kiosk/Lock Task behavior unverified), or accepting process-alive + foreground-restore
-semantics.
+semantics. An isolated Android 10 / WebView 150 PoC later demonstrated an experimental exception:
+an APK with the same UID can connect to its own abstract WebView DevTools socket and send a
+`Page.setWebLifecycleState(frozen)` → `active` edge after `onStop`. This prevented a second full
+freeze without ADB forwarding, and a later run kept the same page and renderer alive for 7.45
+hours. The long run's two-hour WakeLock lease expired, after which CPU suspend caused
+multi-minute/hour-scale scheduling gaps, so it proves survival rather than uninterrupted
+JavaScript. While naturally hidden, the page's main timer/fetch still degraded to roughly
+one-minute cadence after about five minutes while a Dedicated Worker remained near one-second
+cadence whenever the CPU was awake. Treat this as **experimental “no full freeze”, not
+foreground-level JavaScript continuity**; it is not enabled in the production app. Foreground
+recovery and IME passed on Android 10. A mandatory `document.hidden` gate was also added after
+proving that sending CDP `frozen` during a pure screen-off that remained naturally visible could
+poison visibility after wake. Android 16, navigation, renderer-rebuild, renewable-WakeLock
+long-duration execution, and security validation remain open.
 
-The page runtime may provide an Origin-scoped Page Visibility compatibility layer at document start
-for parent-approved pages. This layer is separate from Android View state and cannot replace it. It
-deliberately does not block `pagehide`, because sites and BFCache use that event for navigation
-cleanup. An Android 16/WebView or OEM scheduler can still throttle or freeze Blink below all public
-Android APIs; no supported WebView API can guarantee arbitrary third-party JavaScript runs exactly
-like the foreground indefinitely.
+Since v0.4.22, production uses an observation-only page runtime. It reads the native
+`Document.prototype.hidden` / `visibilityState` getters, reports a stable per-document load ID, and
+does not override Page Visibility properties, suppress lifecycle events, toggle `View.visibility`,
+call `WebView.onResume()` as a background unfreeze attempt, or enable CDP. The runtime classifies:
+
+- `SCREEN_OFF_VISIBLE_CONTINUITY`: screen non-interactive, Activity stopped, real document visible,
+  and main-thread heartbeat responsive;
+- `HIDDEN_DEGRADED`: real document hidden even if a recent heartbeat still exists;
+- `STALE`: the main-thread heartbeat is no longer responsive.
+
+The Android 10 / WebView 150 production app-module self-test used a debuggable diagnostic build
+signed with the release certificate. It kept the same PID and load ID for seven minutes of
+power-button screen-off/Dozing, with real `document.hidden=false`, FGS `RUNNING`, WakeLock `HELD`,
+advancing main/Worker heartbeats, Chrome Inspect disabled, and no CDP connection. The isolated H4
+PoC separately reproduced the no-Keyguard path with a true non-debug release APK and
+debugging/CDP disabled. This remains a device capability result, not a public Android guarantee. An
+Android 16/WebView or OEM scheduler can still hide, throttle, or freeze Blink; no supported WebView
+API can guarantee arbitrary third-party JavaScript runs exactly like the foreground indefinitely.
 
 For a reproducible screen-off report, capture at least 2-5 minutes of the three heartbeats plus page
 business timestamps from `docs/test-pages/high_performance_runtime_test.html`. If the injected main

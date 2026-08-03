@@ -170,6 +170,11 @@ internal fun HighPerformanceDiagnosticsDialog(
                             DiagnosticItem(label = "忽略电池优化", value = if (status.ignoringBatteryOptimizations) "是" else "否")
                             DiagnosticItem(label = "通知权限 (系统/FGS)", value = "${if (status.notificationPermissionGranted) "已允许" else "未允许"} / ${if (status.notificationsVisible) "已显示" else "未显示"}")
                             DiagnosticItem(label = "屏幕状态 (亮屏)", value = if (status.screenInteractive) "是" else "否")
+                            DiagnosticItem(
+                                label = "Keyguard",
+                                value = "显示=${status.keyguardShowing} / 安全=${status.keyguardSecure} / " +
+                                    "息屏前提就绪=${status.keyguardReadyForScreenOff}"
+                            )
                             DiagnosticItem(label = "运行规则配置", value = "v${status.appliedConfigVersion} (共 ${status.configuredRuleCount} 条规则)")
                         }
 
@@ -201,6 +206,10 @@ internal fun HighPerformanceDiagnosticsDialog(
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                                             ) {
                                                 HighPerformanceRecordChip("可见: ${if (session.visible) "是" else "否"}")
+                                                HighPerformanceRecordChip(
+                                                    "Document: ${session.documentVisibilityState ?: "未知"} / hidden=${session.documentHidden}"
+                                                )
+                                                HighPerformanceRecordChip("连续性: ${session.continuityState}")
                                                 HighPerformanceRecordChip("Activity: ${session.activityState}")
                                                 HighPerformanceRecordChip("内核特权: ${if (session.rendererPolicy.name.contains("HIGH_PERFORMANCE")) "高" else "默认"}")
                                                 HighPerformanceRecordChip("JS: ${session.javascriptState}")
@@ -208,6 +217,12 @@ internal fun HighPerformanceDiagnosticsDialog(
                                             Text(
                                                 "JS 主线程心跳: ${session.lastMainJsHeartbeatAt?.let(::formatTimestamp) ?: "尚未收到"}；" +
                                                     "Worker: ${session.lastWorkerJsHeartbeatAt?.let(::formatTimestamp) ?: "尚未收到"}",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(
+                                                "页面 load ID: ${session.pageLoadId ?: "尚未收到"}；" +
+                                                    "可见性采样: ${session.lastVisibilityProbeAt?.let(::formatTimestamp) ?: "尚未收到"}",
                                                 fontSize = 11.sp,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
@@ -467,6 +482,10 @@ private fun diagnosticText(result: HighPerformanceRuntimeStatusReadResult): Stri
         appendLine("batteryIgnored=${status.ignoringBatteryOptimizations}")
         appendLine("screenInteractive=${status.screenInteractive}")
         appendLine(
+            "keyguardShowing=${status.keyguardShowing} keyguardSecure=${status.keyguardSecure} " +
+                "keyguardReadyForScreenOff=${status.keyguardReadyForScreenOff}"
+        )
+        appendLine(
             "fgsManifest=${status.foregroundServiceDeclared} " +
                 "specialUse=${status.specialUseTypeDeclared}"
         )
@@ -479,6 +498,9 @@ private fun diagnosticText(result: HighPerformanceRuntimeStatusReadResult): Stri
                     "renderer=${session.rendererPolicy} full=${session.fullSystemProtection} " +
                     "lastCallback=${formatTimestamp(session.lastPageCallbackAt)} " +
                     "js=${session.javascriptState} " +
+                    "documentHidden=${session.documentHidden} " +
+                    "documentVisibility=${session.documentVisibilityState.orEmpty()} " +
+                    "continuity=${session.continuityState} loadId=${session.pageLoadId.orEmpty()} " +
                     "jsInstalled=${session.jsHeartbeatInstalledAt?.let(::formatTimestamp).orEmpty()} " +
                     "jsLast=${session.lastJsHeartbeatAt?.let(::formatTimestamp).orEmpty()} " +
                     "jsMain=${session.lastMainJsHeartbeatAt?.let(::formatTimestamp).orEmpty()} " +

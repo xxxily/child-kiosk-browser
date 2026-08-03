@@ -1,6 +1,7 @@
 package site.anzz.childkiosk
 
 import android.app.ActivityManager
+import android.app.KeyguardManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
@@ -474,8 +475,35 @@ class MainActivity : ComponentActivity() {
             // 继续全局禁用 StatusBar 会在部分刘海屏/OEM 上把系统信息区也压成黑条。
             dpm.setStatusBarDisabled(admin, false)
         }
+        val requestedKeyguardDisabled = KioskPrefs.isLimitKeyguardEnabled(this)
         runCatching {
-            dpm.setKeyguardDisabled(admin, KioskPrefs.isLimitKeyguardEnabled(this))
+            dpm.setKeyguardDisabled(admin, requestedKeyguardDisabled)
+        }.onSuccess { accepted ->
+            val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+            val ready = keyguardManager != null &&
+                !keyguardManager.isKeyguardSecure &&
+                !keyguardManager.isKeyguardLocked
+            Log.i(
+                TAG,
+                "Keyguard policy applied: requested=$requestedKeyguardDisabled " +
+                    "accepted=$accepted ready=$ready"
+            )
+            if (requestedKeyguardDisabled && (!accepted || !ready)) {
+                Toast.makeText(
+                    this,
+                    "系统未接受禁用 Keyguard，请先移除 PIN/图案/密码",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }.onFailure { failure ->
+            Log.w(TAG, "Failed to apply Keyguard policy", failure)
+            if (requestedKeyguardDisabled) {
+                Toast.makeText(
+                    this,
+                    "禁用 Keyguard 失败：${failure.javaClass.simpleName}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 
