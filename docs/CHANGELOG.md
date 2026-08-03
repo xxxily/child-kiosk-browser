@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+## [0.4.22] - 2026-08-03
+
+### Fixed - 修复
+
+- **新增真实息屏连续性诊断与条件化路径**：高性能 WebView 运行时改为 observation-only，不再伪造 `document.hidden`/`visibilityState`、拦截生命周期事件、移动 WebView、切换 View 可见性或用 `WebView.onResume()` 伪造解冻；改为上报真实 Page Visibility、稳定页面 load ID、Keyguard 条件和连续性状态。
+- **避免误报 ACTIVE**：真实页面进入 hidden 时显示 `HIDDEN_DEGRADED`，主线程心跳停止时显示 `STALE`；跨进程状态读取会重新计算心跳和降级状态。
+- **受管设备支持自然 visible 息屏路径**：在移除安全 Keyguard 的设备上，若电源键息屏后页面仍保持真实 visible 且心跳持续，诊断显示 `SCREEN_OFF_VISIBLE_CONTINUITY`；这依赖 Android/OEM 行为，不能视为通用平台保证。
+- **Keyguard 条件反馈**：Device Owner 应用 Keyguard 策略后记录系统实际接受结果，并在安全凭据仍存在或策略未生效时提示管理员。
+
+### Tests - 测试与研究
+
+- 新增隔离 `continuity-poc`，覆盖同 UID CDP 生命周期实验、无安全 Keyguard 对照、前台恢复、IME 和长时页面/renderer 存活；实验机制不接入生产模块。
+- OnePlus 6 / Android 10 / WebView 150 已完成生产 app 模块诊断构建约七分钟息屏采样；Android 16/OEM 目标设备仍需逐机复测。
+
 ## [0.4.21] - 2026-08-01
 
 ### Fixed - 修复

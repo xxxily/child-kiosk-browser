@@ -1,3 +1,21 @@
+## Child Kiosk Browser v0.4.22
+
+### 本轮核心变化
+
+* **真实 Page Visibility 观测**：高性能 WebView 运行时不再覆盖网页的 `document.hidden`、`visibilityState` 或生命周期事件，也不再移动 WebView、切换 View 可见性或尝试用 `WebView.onResume()` 解冻。诊断现在显示真实页面可见性、稳定 load ID、主线程/Worker 心跳和连续性状态。
+* **明确降级而不误报**：页面真实进入 hidden 时标记 `HIDDEN_DEGRADED`，主线程心跳停止时标记 `STALE`；即使短时间仍有心跳，也不会把 hidden 页面宣称为 `ACTIVE`。
+* **受管设备的自然 visible 息屏路径**：设备移除安全 Keyguard 后，若目标 OEM 在电源键息屏时仍让 WebView 文档保持 visible，运行时可报告 `SCREEN_OFF_VISIBLE_CONTINUITY`。这是设备能力检测，不是 Android 公共 API 的通用承诺。
+* **Keyguard 实际状态反馈**：Device Owner 应用禁用 Keyguard 后记录系统接受结果和实际安全状态，帮助管理员判断息屏连续运行前提是否满足。
+* **隔离研究工具**：新增 `continuity-poc`、CDP 客户端、日志分析脚本和运行手册，用于继续验证 Android 16/不同 WebView；CDP 不会随生产 APK 启用。
+
+### 验证结果
+
+* 已通过 Standard 单元测试、Standard/Enhanced Kotlin 编译、Standard Debug/Release 构建、Release lint/R8 和隔离 PoC Release 构建。
+* OnePlus 6 / Android 10 / Google WebView `150.0.7871.181` 上，同发布证书的 debuggable 诊断构建完成约七分钟息屏采样；隔离 H4 使用 true non-debug release APK 且关闭 debugging/CDP 后也复现自然 visible 路径。
+* Android 16 设备尚未完成本版本的最终实测，安装后请重点观察管理后台的 `document.hidden`、连续性状态、PID 和 load ID。
+
+---
+
 ## Child Kiosk Browser v0.4.21
 
 紧急回退 v0.4.19/0.4.20 的悬浮窗物理保活（Overlay Keep-Alive）机制，恢复 v0.4.18 行为，保证网页不再因悬浮窗挂载而丢失。
