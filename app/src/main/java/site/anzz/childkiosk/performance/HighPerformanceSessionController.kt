@@ -50,6 +50,17 @@ internal fun highPerformanceCompositeStateForActiveSessions(
     continuityStates.none { it == HighPerformanceContinuityState.HIDDEN_DEGRADED }
 ) {
     HighPerformanceCompositeState.ACTIVE
+} else if (
+    resourceProtectionReady &&
+    javascriptStates.isNotEmpty() &&
+    javascriptStates.all {
+        it == HighPerformanceJavascriptState.RESPONSIVE ||
+            it == HighPerformanceJavascriptState.LOW_FREQUENCY_RESPONSIVE
+    } &&
+    javascriptStates.any { it == HighPerformanceJavascriptState.LOW_FREQUENCY_RESPONSIVE } &&
+    continuityStates.none { it == HighPerformanceContinuityState.HIDDEN_DEGRADED }
+) {
+    HighPerformanceCompositeState.BACKGROUND_THROTTLED
 } else {
     HighPerformanceCompositeState.DEGRADED
 }
@@ -328,7 +339,8 @@ internal object HighPerformanceSessionController {
             return null
         }
         val safeOwnerId = safeRuntimeId(ownerId)
-        return registrations.asSequence()
+        val owned = registrations.filter { managed -> managed.ownerId == safeOwnerId }
+        val candidate = owned.asSequence()
             .filter { managed -> managed.ownerId == safeOwnerId && managed.visible }
             .mapNotNull { managed ->
                 val session = managed.session ?: return@mapNotNull null
@@ -344,6 +356,16 @@ internal object HighPerformanceSessionController {
                 )
             }
             .firstOrNull()
+        if (candidate == null) {
+            HighPerformanceDiagnostics.recordVerbose(
+                type = "experimental_cdp_candidate_filtered",
+                result = "inactive",
+                reason = "owned_${owned.size}_visible_${owned.count { it.visible }}_" +
+                    "session_${owned.count { it.session != null }}_" +
+                    "token_${owned.count { it.session?.jsHeartbeatToken != null }}"
+            )
+        }
+        return candidate
     }
 
     /** Applies only monotonically newer/equal snapshots; a lower version can never revive old rules. */
@@ -361,6 +383,7 @@ internal object HighPerformanceSessionController {
         val reenabled = !current.enabled && snapshot.enabled
         recordRuleSnapshotChanges(current, snapshot, source)
         runtimeSnapshot = snapshot
+        HighPerformanceDiagnostics.setVerboseEnabled(snapshot.verboseDiagnosticsEnabled)
         if (reenabled) {
             restartPolicy.clearSuppression()
             registrations.forEach { managed ->
@@ -620,7 +643,9 @@ internal object HighPerformanceSessionController {
         val wasState = classifyJavascriptHeartbeat(
             now = now,
             installedAt = session.jsHeartbeatInstalledAt,
-            lastMainHeartbeatAt = session.lastMainJsHeartbeatAt
+            lastMainHeartbeatAt = session.lastMainJsHeartbeatAt,
+            lastWorkerHeartbeatAt = session.lastWorkerJsHeartbeatAt,
+            backgrounded = find(webView)?.activityState == HighPerformanceActivityState.STOPPED
         )
         when (source) {
             HighPerformanceProbeType.INIT -> session.lastJsHeartbeatAt = now
@@ -645,7 +670,9 @@ internal object HighPerformanceSessionController {
         val newState = classifyJavascriptHeartbeat(
             now = now,
             installedAt = session.jsHeartbeatInstalledAt,
-            lastMainHeartbeatAt = session.lastMainJsHeartbeatAt
+            lastMainHeartbeatAt = session.lastMainJsHeartbeatAt,
+            lastWorkerHeartbeatAt = session.lastWorkerJsHeartbeatAt,
+            backgrounded = find(webView)?.activityState == HighPerformanceActivityState.STOPPED
         )
         val stateChanged = newState != wasState
         if (source == HighPerformanceProbeType.WORKER_ERROR) {
@@ -664,6 +691,27 @@ internal object HighPerformanceSessionController {
                 originOrUrl = session.origin,
                 sessionId = session.tokenId,
                 reason = source.name.lowercase()
+            )
+        }
+        if (newState == HighPerformanceJavascriptState.LOW_FREQUENCY_RESPONSIVE &&
+            wasState != HighPerformanceJavascriptState.LOW_FREQUENCY_RESPONSIVE
+        ) {
+            HighPerformanceDiagnostics.record(
+                type = "js_heartbeat_low_frequency",
+                result = "throttled",
+                originOrUrl = session.origin,
+                sessionId = session.tokenId,
+                reason = "worker_alive_main_delayed"
+            )
+        }
+        if (runtimeSnapshot.verboseDiagnosticsEnabled &&
+            (source == HighPerformanceProbeType.MAIN || source == HighPerformanceProbeType.WORKER)
+        ) {
+            HighPerformanceDiagnostics.recordVerbose(
+                type = "js_heartbeat_sample",
+                originOrUrl = session.origin,
+                sessionId = session.tokenId,
+                reason = heartbeatDiagnosticReason(session, now, source)
             )
         }
         if (stateChanged || source == HighPerformanceProbeType.WORKER_ERROR) {
@@ -885,7 +933,9 @@ internal object HighPerformanceSessionController {
         return classifyJavascriptHeartbeat(
             now = System.currentTimeMillis(),
             installedAt = session.jsHeartbeatInstalledAt,
-            lastMainHeartbeatAt = session.lastMainJsHeartbeatAt
+            lastMainHeartbeatAt = session.lastMainJsHeartbeatAt,
+            lastWorkerHeartbeatAt = session.lastWorkerJsHeartbeatAt,
+            backgrounded = find(webView)?.activityState == HighPerformanceActivityState.STOPPED
         )
     }
 
@@ -901,6 +951,7 @@ internal object HighPerformanceSessionController {
         ownerStates.clear()
         ownersWarnedAboutProtectedMemoryCap.clear()
         restartPolicy.clearSuppression()
+        HighPerformanceDiagnostics.setVerboseEnabled(false)
         appContext = null
         runtimeSnapshot = HighPerformanceRuntimeSnapshot.disabled()
         foregroundServiceState = HighPerformanceForegroundServiceState.STOPPED
@@ -1171,7 +1222,9 @@ internal object HighPerformanceSessionController {
             val javascriptState = classifyJavascriptHeartbeat(
                 now = now,
                 installedAt = session.jsHeartbeatInstalledAt,
-                lastMainHeartbeatAt = session.lastMainJsHeartbeatAt
+                lastMainHeartbeatAt = session.lastMainJsHeartbeatAt,
+                lastWorkerHeartbeatAt = session.lastWorkerJsHeartbeatAt,
+                backgrounded = managed.activityState == HighPerformanceActivityState.STOPPED
             ).also { state ->
                 if (state == HighPerformanceJavascriptState.STALE &&
                     session.lastReportedJavascriptState != HighPerformanceJavascriptState.STALE
@@ -1181,7 +1234,11 @@ internal object HighPerformanceSessionController {
                         result = "degraded",
                         originOrUrl = session.origin,
                         sessionId = session.tokenId,
-                        reason = "main_timer_missing"
+                        reason = if (session.lastWorkerJsHeartbeatAt != null) {
+                            "main_and_worker_timers_missing"
+                        } else {
+                            "main_timer_missing"
+                        }
                     )
                 }
                 session.lastReportedJavascriptState = state
@@ -1241,6 +1298,8 @@ internal object HighPerformanceSessionController {
             configuredRuleCount = runtimeSnapshot.enabledRules.size,
             experimentalCdpContinuityEnabled =
                 runtimeSnapshot.enabled && runtimeSnapshot.experimentalCdpContinuityEnabled,
+            experimentalCdpTimingProfile = runtimeSnapshot.experimentalCdpTimingProfile,
+            verboseDiagnosticsEnabled = runtimeSnapshot.verboseDiagnosticsEnabled,
             compositeState = compositeState(system, sessions),
             notificationPermissionGranted = system.notificationPermissionGranted,
             notificationsVisible = system.notificationsVisible,
@@ -1380,6 +1439,7 @@ internal object HighPerformanceSessionController {
         registrations.firstOrNull { it.webView.get() === webView }
 
     private fun installPageRuntime(webView: WebView, snapshot: HighPerformanceRuntimeSnapshot) {
+        HighPerformanceDiagnostics.setVerboseEnabled(snapshot.verboseDiagnosticsEnabled)
         val result = HighPerformancePageRuntime.install(webView, snapshot) { sourceWebView, signal ->
             onPageProbe(sourceWebView, signal.token, signal)
         }
@@ -1392,6 +1452,17 @@ internal object HighPerformanceSessionController {
     }
 
     private fun activeSessions(): List<Session> = registrations.mapNotNull(ManagedWebView::session)
+
+    private fun heartbeatDiagnosticReason(
+        session: Session,
+        now: Long,
+        source: HighPerformanceProbeType
+    ): String {
+        val mainAge = session.lastMainJsHeartbeatAt?.let { (now - it).coerceAtLeast(0L) }
+        val workerAge = session.lastWorkerJsHeartbeatAt?.let { (now - it).coerceAtLeast(0L) }
+        return "source_${source.name.lowercase()}_main_${mainAge ?: -1}ms_worker_${workerAge ?: -1}ms_" +
+            "hidden_${session.documentHidden}_load_${session.loadId.orEmpty()}"
+    }
 
     private fun strictOriginOrNull(url: String): String? = runCatching {
         HighPerformanceOriginParser.extractFromUrl(url).value

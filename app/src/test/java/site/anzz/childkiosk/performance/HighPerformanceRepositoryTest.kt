@@ -111,6 +111,20 @@ class HighPerformanceRepositoryTest {
     }
 
     @Test
+    fun debugControlsPersistAndPublishThroughRuntimeSnapshot() = runBlocking {
+        val verbose = repository.setVerboseDiagnosticsEnabled(true)
+        assertTrue(verbose.state.verboseDiagnosticsEnabled)
+        assertTrue(verbose.snapshot.verboseDiagnosticsEnabled)
+
+        val timing = repository.setExperimentalCdpTimingProfile(
+            ExperimentalCdpTimingProfile.CONSERVATIVE
+        )
+        assertEquals(ExperimentalCdpTimingProfile.CONSERVATIVE, timing.state.experimentalCdpTimingProfile)
+        assertEquals(ExperimentalCdpTimingProfile.CONSERVATIVE, timing.snapshot.experimentalCdpTimingProfile)
+        assertEquals(listOf(1L, 2L), publisher.snapshots.map { it.configVersion })
+    }
+
+    @Test
     fun publicationFailureIsSurfacedAfterDatabaseCommit() = runBlocking {
         publisher.nextPublication = failure("snapshot_write:IOException")
 

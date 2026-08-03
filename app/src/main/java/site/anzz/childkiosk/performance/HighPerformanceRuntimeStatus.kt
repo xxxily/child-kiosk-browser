@@ -14,6 +14,7 @@ enum class HighPerformanceCompositeState {
     NEEDS_BATTERY_SETUP,
     READY,
     ACTIVE,
+    BACKGROUND_THROTTLED,
     DEGRADED,
     INTERRUPTED,
     ERROR
@@ -41,6 +42,7 @@ enum class HighPerformanceJavascriptState {
     UNKNOWN,
     AWAITING_FIRST_HEARTBEAT,
     RESPONSIVE,
+    LOW_FREQUENCY_RESPONSIVE,
     STALE
 }
 
@@ -55,6 +57,7 @@ enum class HighPerformanceContinuityState {
     FOREGROUND_RESPONSIVE,
     BACKGROUND_VISIBLE_CONTINUITY,
     SCREEN_OFF_VISIBLE_CONTINUITY,
+    HIDDEN_LOW_FREQUENCY_CONTINUITY,
     HIDDEN_DEGRADED,
     STALE
 }
@@ -67,6 +70,13 @@ internal fun classifyContinuityState(
 ): HighPerformanceContinuityState {
     if (javascriptState == HighPerformanceJavascriptState.STALE) {
         return HighPerformanceContinuityState.STALE
+    }
+    if (javascriptState == HighPerformanceJavascriptState.LOW_FREQUENCY_RESPONSIVE) {
+        return if (activityState == HighPerformanceActivityState.STOPPED && documentHidden == true) {
+            HighPerformanceContinuityState.HIDDEN_LOW_FREQUENCY_CONTINUITY
+        } else {
+            HighPerformanceContinuityState.UNKNOWN
+        }
     }
     if (javascriptState != HighPerformanceJavascriptState.RESPONSIVE) {
         return HighPerformanceContinuityState.UNKNOWN
@@ -91,6 +101,8 @@ internal fun classifyJavascriptHeartbeat(
     now: Long,
     installedAt: Long?,
     lastMainHeartbeatAt: Long?,
+    lastWorkerHeartbeatAt: Long? = null,
+    backgrounded: Boolean = false,
     staleAfterMs: Long = HIGH_PERFORMANCE_JS_HEARTBEAT_STALE_AFTER_MS
 ): HighPerformanceJavascriptState = when {
     installedAt == null || installedAt <= 0L -> HighPerformanceJavascriptState.UNKNOWN
@@ -99,6 +111,10 @@ internal fun classifyJavascriptHeartbeat(
     lastMainHeartbeatAt != null && lastMainHeartbeatAt > 0L &&
         now - lastMainHeartbeatAt in 0L..staleAfterMs ->
         HighPerformanceJavascriptState.RESPONSIVE
+    backgrounded && lastMainHeartbeatAt != null && lastMainHeartbeatAt in 1L..now &&
+        lastWorkerHeartbeatAt != null && lastWorkerHeartbeatAt > 0L &&
+        now - lastWorkerHeartbeatAt in 0L..HIGH_PERFORMANCE_BACKGROUND_WORKER_STALE_AFTER_MS ->
+        HighPerformanceJavascriptState.LOW_FREQUENCY_RESPONSIVE
     else -> HighPerformanceJavascriptState.STALE
 }
 
@@ -110,7 +126,9 @@ internal fun refreshHeartbeatDerivedState(
         val javascriptState = classifyJavascriptHeartbeat(
             now = now,
             installedAt = session.jsHeartbeatInstalledAt,
-            lastMainHeartbeatAt = session.lastMainJsHeartbeatAt
+            lastMainHeartbeatAt = session.lastMainJsHeartbeatAt,
+            lastWorkerHeartbeatAt = session.lastWorkerJsHeartbeatAt,
+            backgrounded = session.activityState == HighPerformanceActivityState.STOPPED
         )
         session.copy(
             javascriptState = javascriptState,
@@ -122,16 +140,30 @@ internal fun refreshHeartbeatDerivedState(
             )
         )
     }
-    val compositeState = if (
-        status.compositeState == HighPerformanceCompositeState.ACTIVE &&
-        sessions.any {
+    val canReclassifyActiveRuntime = status.compositeState == HighPerformanceCompositeState.ACTIVE ||
+        status.compositeState == HighPerformanceCompositeState.BACKGROUND_THROTTLED
+    val compositeState = when {
+        canReclassifyActiveRuntime &&
+            sessions.any { it.javascriptState == HighPerformanceJavascriptState.STALE } ->
+            HighPerformanceCompositeState.DEGRADED
+        canReclassifyActiveRuntime && sessions.any {
+            it.javascriptState == HighPerformanceJavascriptState.LOW_FREQUENCY_RESPONSIVE ||
+                it.continuityState == HighPerformanceContinuityState.HIDDEN_LOW_FREQUENCY_CONTINUITY
+        } && sessions.none {
+            it.continuityState == HighPerformanceContinuityState.HIDDEN_DEGRADED
+        } -> HighPerformanceCompositeState.BACKGROUND_THROTTLED
+        canReclassifyActiveRuntime && sessions.any {
+            it.continuityState == HighPerformanceContinuityState.HIDDEN_DEGRADED
+        } -> HighPerformanceCompositeState.DEGRADED
+        status.compositeState == HighPerformanceCompositeState.BACKGROUND_THROTTLED &&
+            sessions.all { it.javascriptState == HighPerformanceJavascriptState.RESPONSIVE } &&
+            sessions.none { it.continuityState == HighPerformanceContinuityState.HIDDEN_DEGRADED } ->
+            HighPerformanceCompositeState.ACTIVE
+        status.compositeState == HighPerformanceCompositeState.ACTIVE && sessions.any {
             it.javascriptState != HighPerformanceJavascriptState.RESPONSIVE ||
                 it.continuityState == HighPerformanceContinuityState.HIDDEN_DEGRADED
-        }
-    ) {
-        HighPerformanceCompositeState.DEGRADED
-    } else {
-        status.compositeState
+        } -> HighPerformanceCompositeState.DEGRADED
+        else -> status.compositeState
     }
     return status.copy(sessions = sessions, compositeState = compositeState)
 }
@@ -248,6 +280,9 @@ data class HighPerformanceRuntimeStatus(
     val appliedConfigVersion: Long,
     val configuredRuleCount: Int,
     val experimentalCdpContinuityEnabled: Boolean = false,
+    val experimentalCdpTimingProfile: ExperimentalCdpTimingProfile =
+        ExperimentalCdpTimingProfile.BALANCED,
+    val verboseDiagnosticsEnabled: Boolean = false,
     val compositeState: HighPerformanceCompositeState,
     val notificationPermissionGranted: Boolean,
     val notificationsVisible: Boolean,
@@ -290,6 +325,8 @@ data class HighPerformanceRuntimeStatus(
         .put("appliedConfigVersion", appliedConfigVersion)
         .put("configuredRuleCount", configuredRuleCount)
         .put("experimentalCdpContinuityEnabled", experimentalCdpContinuityEnabled)
+        .put("experimentalCdpTimingProfile", experimentalCdpTimingProfile.name)
+        .put("verboseDiagnosticsEnabled", verboseDiagnosticsEnabled)
         .put("compositeState", compositeState.name)
         .put("notificationPermissionGranted", notificationPermissionGranted)
         .put("notificationsVisible", notificationsVisible)
@@ -318,7 +355,7 @@ data class HighPerformanceRuntimeStatus(
         })
 
     companion object {
-        const val STATUS_SCHEMA_VERSION = 5
+        const val STATUS_SCHEMA_VERSION = 6
         private const val MIN_SUPPORTED_STATUS_SCHEMA_VERSION = 3
         private const val MAX_PERSISTED_SESSIONS = 32
         private const val MAX_PERSISTED_EVENTS = 80
@@ -364,6 +401,11 @@ data class HighPerformanceRuntimeStatus(
                     "experimentalCdpContinuityEnabled",
                     false
                 ),
+                experimentalCdpTimingProfile = enumValueOrDefault(
+                    json.optString("experimentalCdpTimingProfile"),
+                    ExperimentalCdpTimingProfile.BALANCED
+                ),
+                verboseDiagnosticsEnabled = json.optBoolean("verboseDiagnosticsEnabled", false),
                 compositeState = enumValueOrDefault(
                     json.optString("compositeState"),
                     HighPerformanceCompositeState.ERROR
@@ -495,6 +537,7 @@ internal const val HIGH_PERFORMANCE_RUNTIME_STATUS_FILE_NAME =
     "high_performance_runtime_status.json"
 
 internal const val HIGH_PERFORMANCE_JS_HEARTBEAT_STALE_AFTER_MS = 20_000L
+internal const val HIGH_PERFORMANCE_BACKGROUND_WORKER_STALE_AFTER_MS = 90_000L
 
 private fun JSONObject.putNullable(name: String, value: Any?): JSONObject =
     put(name, value ?: JSONObject.NULL)

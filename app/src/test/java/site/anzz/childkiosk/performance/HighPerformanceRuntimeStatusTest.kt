@@ -12,7 +12,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class HighPerformanceRuntimeStatusTest {
     @Test
-    fun javascriptHeartbeatClassificationRequiresRealMainTimerTick() {
+    fun javascriptHeartbeatClassificationUsesWorkerOnlyForBackgroundLowFrequencyEvidence() {
         val installedAt = 1_000L
 
         assertEquals(
@@ -33,6 +33,36 @@ class HighPerformanceRuntimeStatusTest {
                 now = 40_000L,
                 installedAt = installedAt,
                 lastMainHeartbeatAt = 9_000L
+            )
+        )
+        assertEquals(
+            HighPerformanceJavascriptState.STALE,
+            classifyJavascriptHeartbeat(
+                now = 40_000L,
+                installedAt = installedAt,
+                lastMainHeartbeatAt = 9_000L,
+                lastWorkerHeartbeatAt = 39_000L,
+                backgrounded = false
+            )
+        )
+        assertEquals(
+            HighPerformanceJavascriptState.LOW_FREQUENCY_RESPONSIVE,
+            classifyJavascriptHeartbeat(
+                now = 40_000L,
+                installedAt = installedAt,
+                lastMainHeartbeatAt = 9_000L,
+                lastWorkerHeartbeatAt = 39_000L,
+                backgrounded = true
+            )
+        )
+        assertEquals(
+            HighPerformanceJavascriptState.STALE,
+            classifyJavascriptHeartbeat(
+                now = 100_000L,
+                installedAt = installedAt,
+                lastMainHeartbeatAt = null,
+                lastWorkerHeartbeatAt = 99_000L,
+                backgrounded = true
             )
         )
         assertEquals(
@@ -110,6 +140,11 @@ class HighPerformanceRuntimeStatusTest {
             HighPerformanceRuntimeStatus.fromJson(previous)
                 ?.experimentalCdpContinuityEnabled
         )
+        assertEquals(
+            ExperimentalCdpTimingProfile.BALANCED,
+            HighPerformanceRuntimeStatus.fromJson(previous)?.experimentalCdpTimingProfile
+        )
+        assertEquals(false, HighPerformanceRuntimeStatus.fromJson(previous)?.verboseDiagnosticsEnabled)
     }
 
     @Test
@@ -166,6 +201,16 @@ class HighPerformanceRuntimeStatusTest {
                 javascriptStates = listOf(HighPerformanceJavascriptState.RESPONSIVE)
             )
         )
+        assertEquals(
+            HighPerformanceCompositeState.BACKGROUND_THROTTLED,
+            highPerformanceCompositeStateForActiveSessions(
+                resourceProtectionReady = true,
+                javascriptStates = listOf(HighPerformanceJavascriptState.LOW_FREQUENCY_RESPONSIVE),
+                continuityStates = listOf(
+                    HighPerformanceContinuityState.HIDDEN_LOW_FREQUENCY_CONTINUITY
+                )
+            )
+        )
     }
 
     @Test
@@ -213,6 +258,38 @@ class HighPerformanceRuntimeStatusTest {
         assertEquals(HighPerformanceJavascriptState.STALE, refreshed.sessions.single().javascriptState)
         assertEquals(HighPerformanceCompositeState.DEGRADED, refreshed.compositeState)
         assertEquals(10_000L, refreshed.sessions.single().lastMainJsHeartbeatAt)
+    }
+
+    @Test
+    fun persistedHiddenWorkerHeartbeatIsReclassifiedAsBackgroundThrottled() {
+        val persisted = runtimeStatus(
+            compositeState = HighPerformanceCompositeState.ACTIVE,
+            sessionState = HighPerformanceJavascriptState.RESPONSIVE,
+            installedAt = 1_000L,
+            lastMainAt = 10_000L
+        ).let { status ->
+            status.copy(
+                sessions = status.sessions.map { session ->
+                    session.copy(
+                        lastWorkerJsHeartbeatAt = 39_000L,
+                        documentHidden = true,
+                        documentVisibilityState = "hidden"
+                    )
+                }
+            )
+        }
+
+        val refreshed = refreshHeartbeatDerivedState(persisted, now = 40_001L)
+
+        assertEquals(
+            HighPerformanceJavascriptState.LOW_FREQUENCY_RESPONSIVE,
+            refreshed.sessions.single().javascriptState
+        )
+        assertEquals(
+            HighPerformanceContinuityState.HIDDEN_LOW_FREQUENCY_CONTINUITY,
+            refreshed.sessions.single().continuityState
+        )
+        assertEquals(HighPerformanceCompositeState.BACKGROUND_THROTTLED, refreshed.compositeState)
     }
 
     @Test

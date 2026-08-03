@@ -1,6 +1,7 @@
 package site.anzz.childkiosk.performance
 
 import android.net.Uri
+import android.util.Log
 import org.json.JSONObject
 import java.net.IDN
 import java.util.ArrayDeque
@@ -24,6 +25,32 @@ object HighPerformanceDiagnostics {
 
     private val lock = Any()
     private val events = ArrayDeque<HighPerformanceAuditEvent>(MAX_EVENTS)
+    @Volatile
+    private var verboseEnabled = false
+
+    fun setVerboseEnabled(enabled: Boolean) {
+        verboseEnabled = enabled
+    }
+
+    fun recordVerbose(
+        type: String,
+        result: String = "debug",
+        originOrUrl: String? = null,
+        sessionId: String? = null,
+        reason: String? = null
+    ) {
+        if (!verboseEnabled) return
+        val safeType = safeIdentifier(type, "unknown_event")
+        val safeResult = safeIdentifier(result, "debug")
+        val safeOrigin = originOrUrl?.let(::originOnly)
+        val safeSession = sessionId?.let { safeIdentifier(it, "unknown") }
+        val safeDetail = reason?.let(::safeReason)?.takeIf(String::isNotBlank)
+        Log.d(
+            "ChildKioskContinuity",
+            "$safeType/$safeResult origin=${safeOrigin.orEmpty()} " +
+                "session=${safeSession.orEmpty()} reason=${safeDetail.orEmpty()}"
+        )
+    }
 
     fun record(
         type: String,

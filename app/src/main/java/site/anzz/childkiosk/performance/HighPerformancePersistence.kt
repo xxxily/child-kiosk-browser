@@ -24,6 +24,10 @@ data class HighPerformanceConfigEntity(
     @ColumnInfo(name = "enabled", defaultValue = "0") val enabled: Boolean = false,
     @ColumnInfo(name = "experimental_cdp_continuity_enabled", defaultValue = "0")
     val experimentalCdpContinuityEnabled: Boolean = false,
+    @ColumnInfo(name = "experimental_cdp_timing_profile", defaultValue = "'BALANCED'")
+    val experimentalCdpTimingProfile: String = ExperimentalCdpTimingProfile.BALANCED.name,
+    @ColumnInfo(name = "verbose_diagnostics_enabled", defaultValue = "0")
+    val verboseDiagnosticsEnabled: Boolean = false,
     @ColumnInfo(name = "risk_acknowledged_at") val riskAcknowledgedAt: Long? = null,
     @ColumnInfo(name = "config_version", defaultValue = "0") val configVersion: Long = 0L,
     @ColumnInfo(name = "updated_at", defaultValue = "0") val updatedAt: Long = 0L
@@ -111,6 +115,8 @@ internal data class HighPerformancePersistedRule(
 internal data class HighPerformancePersistedState(
     val enabled: Boolean,
     val experimentalCdpContinuityEnabled: Boolean,
+    val experimentalCdpTimingProfile: ExperimentalCdpTimingProfile,
+    val verboseDiagnosticsEnabled: Boolean,
     val riskAcknowledgedAt: Long?,
     val configVersion: Long,
     val updatedAt: Long,
@@ -232,6 +238,32 @@ internal class HighPerformanceConfigRepository(
                         current.copy(experimentalCdpContinuityEnabled = enabled)
                     ) == 1
                 )
+                true
+            }
+        }
+    }
+
+    suspend fun setExperimentalCdpTimingProfile(
+        profile: ExperimentalCdpTimingProfile
+    ): HighPerformanceMutationResult {
+        return mutate { _ ->
+            val current = requireNotNull(dao.getConfig())
+            if (current.experimentalCdpTimingProfile == profile.name) {
+                false
+            } else {
+                check(dao.updateConfig(current.copy(experimentalCdpTimingProfile = profile.name)) == 1)
+                true
+            }
+        }
+    }
+
+    suspend fun setVerboseDiagnosticsEnabled(enabled: Boolean): HighPerformanceMutationResult {
+        return mutate { _ ->
+            val current = requireNotNull(dao.getConfig())
+            if (current.verboseDiagnosticsEnabled == enabled) {
+                false
+            } else {
+                check(dao.updateConfig(current.copy(verboseDiagnosticsEnabled = enabled)) == 1)
                 true
             }
         }
@@ -419,6 +451,10 @@ private fun persistedState(
     return HighPerformancePersistedState(
         enabled = config.enabled,
         experimentalCdpContinuityEnabled = config.experimentalCdpContinuityEnabled,
+        experimentalCdpTimingProfile = runCatching {
+            ExperimentalCdpTimingProfile.valueOf(config.experimentalCdpTimingProfile)
+        }.getOrDefault(ExperimentalCdpTimingProfile.BALANCED),
+        verboseDiagnosticsEnabled = config.verboseDiagnosticsEnabled,
         riskAcknowledgedAt = config.riskAcknowledgedAt,
         configVersion = config.configVersion,
         updatedAt = config.updatedAt,
@@ -443,6 +479,8 @@ private fun HighPerformancePersistedState.toRuntimeSnapshot(generatedAt: Long): 
             configVersion = configVersion,
             enabled = enabled,
             experimentalCdpContinuityEnabled = experimentalCdpContinuityEnabled,
+            experimentalCdpTimingProfile = experimentalCdpTimingProfile,
+            verboseDiagnosticsEnabled = verboseDiagnosticsEnabled,
             generatedAt = generatedAt.coerceAtLeast(0L),
             rules = rules.map { rule ->
                 val parsedOrigin = HighPerformanceOriginParser.parseRuleOrigin(rule.origin)

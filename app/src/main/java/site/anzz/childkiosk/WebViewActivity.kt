@@ -706,6 +706,8 @@ open class WebViewActivity : ComponentActivity() {
         window.decorView.removeCallbacks(systemUiRecoveryRunnable)
     }
 
+    @Suppress("RestrictedApi")
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (runtimeConfig.limitVolumeKeys) {
             val keyCode = event.keyCode
@@ -837,7 +839,8 @@ open class WebViewActivity : ComponentActivity() {
             candidate = HighPerformanceSessionController.continuityCandidate(
                 highPerformanceOwnerId
             ),
-            enabled = snapshot.enabled && snapshot.experimentalCdpContinuityEnabled
+            enabled = snapshot.enabled && snapshot.experimentalCdpContinuityEnabled,
+            timingProfile = snapshot.experimentalCdpTimingProfile
         )
     }
 

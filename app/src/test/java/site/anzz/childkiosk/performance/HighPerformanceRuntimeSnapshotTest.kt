@@ -13,6 +13,8 @@ class HighPerformanceRuntimeSnapshotTest {
             configVersion = 42L,
             enabled = true,
             experimentalCdpContinuityEnabled = true,
+            experimentalCdpTimingProfile = ExperimentalCdpTimingProfile.CONSERVATIVE,
+            verboseDiagnosticsEnabled = true,
             generatedAt = 100L,
             rules = listOf(
                 rule(id = "b", origin = "https://b.example", updatedAt = 3L),
@@ -24,6 +26,8 @@ class HighPerformanceRuntimeSnapshotTest {
 
         assertTrue(parsed.enabled)
         assertTrue(parsed.experimentalCdpContinuityEnabled)
+        assertEquals(ExperimentalCdpTimingProfile.CONSERVATIVE, parsed.experimentalCdpTimingProfile)
+        assertTrue(parsed.verboseDiagnosticsEnabled)
         assertEquals(42L, parsed.configVersion)
         assertEquals(listOf("https://b.example", "https://example.com"), parsed.rules.map { it.origin })
     }
@@ -38,6 +42,23 @@ class HighPerformanceRuntimeSnapshotTest {
 
         assertTrue(parsed.enabled)
         assertFalse(parsed.experimentalCdpContinuityEnabled)
+        assertEquals(ExperimentalCdpTimingProfile.BALANCED, parsed.experimentalCdpTimingProfile)
+        assertFalse(parsed.verboseDiagnosticsEnabled)
+    }
+
+    @Test
+    fun previousRuntimeSchemaDefaultsNewDebugControls() {
+        val json = validJson().apply {
+            put("schemaVersion", 1)
+            remove("experimentalCdpTimingProfile")
+            remove("verboseDiagnosticsEnabled")
+        }
+
+        val parsed = HighPerformanceRuntimeSnapshot.parseOrDisabled(json.toString())
+
+        assertTrue(parsed.enabled)
+        assertEquals(ExperimentalCdpTimingProfile.BALANCED, parsed.experimentalCdpTimingProfile)
+        assertFalse(parsed.verboseDiagnosticsEnabled)
     }
 
     @Test

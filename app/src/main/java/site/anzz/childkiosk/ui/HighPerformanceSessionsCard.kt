@@ -152,6 +152,7 @@ private fun HighPerformanceSessionItem(
                         HighPerformanceContinuityState.FOREGROUND_RESPONSIVE,
                         HighPerformanceContinuityState.BACKGROUND_VISIBLE_CONTINUITY,
                         HighPerformanceContinuityState.SCREEN_OFF_VISIBLE_CONTINUITY -> StatusTone.POSITIVE
+                        HighPerformanceContinuityState.HIDDEN_LOW_FREQUENCY_CONTINUITY,
                         HighPerformanceContinuityState.HIDDEN_DEGRADED -> StatusTone.WARNING
                         HighPerformanceContinuityState.STALE -> StatusTone.ERROR
                         HighPerformanceContinuityState.UNKNOWN -> StatusTone.NEUTRAL
@@ -175,6 +176,7 @@ private fun HighPerformanceSessionItem(
                     label = "JS：${javascriptStateLabel(session.javascriptState)}",
                     tone = when (session.javascriptState) {
                         HighPerformanceJavascriptState.RESPONSIVE -> StatusTone.POSITIVE
+                        HighPerformanceJavascriptState.LOW_FREQUENCY_RESPONSIVE -> StatusTone.WARNING
                         HighPerformanceJavascriptState.AWAITING_FIRST_HEARTBEAT,
                         HighPerformanceJavascriptState.UNKNOWN -> StatusTone.NEUTRAL
                         HighPerformanceJavascriptState.STALE -> StatusTone.ERROR
@@ -272,6 +274,7 @@ private fun javascriptStateLabel(state: HighPerformanceJavascriptState): String 
     HighPerformanceJavascriptState.UNKNOWN -> "未知"
     HighPerformanceJavascriptState.AWAITING_FIRST_HEARTBEAT -> "等待首个心跳"
     HighPerformanceJavascriptState.RESPONSIVE -> "诊断脚本响应"
+    HighPerformanceJavascriptState.LOW_FREQUENCY_RESPONSIVE -> "后台低频响应"
     HighPerformanceJavascriptState.STALE -> "心跳已停止"
 }
 
@@ -286,6 +289,7 @@ private fun continuityStateLabel(state: HighPerformanceContinuityState): String 
     HighPerformanceContinuityState.FOREGROUND_RESPONSIVE -> "前台响应"
     HighPerformanceContinuityState.BACKGROUND_VISIBLE_CONTINUITY -> "后台仍可见"
     HighPerformanceContinuityState.SCREEN_OFF_VISIBLE_CONTINUITY -> "息屏持续运行"
+    HighPerformanceContinuityState.HIDDEN_LOW_FREQUENCY_CONTINUITY -> "hidden 低频运行"
     HighPerformanceContinuityState.HIDDEN_DEGRADED -> "hidden 降级"
     HighPerformanceContinuityState.STALE -> "心跳中断"
 }

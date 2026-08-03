@@ -5,6 +5,7 @@ import android.os.Looper
 import android.os.Process
 import site.anzz.childkiosk.performance.HighPerformanceContinuityCandidate
 import site.anzz.childkiosk.performance.HighPerformanceDiagnostics
+import site.anzz.childkiosk.performance.ExperimentalCdpTimingProfile
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -46,7 +47,8 @@ internal object ExperimentalCdpContinuityController {
 
     fun schedule(
         candidate: HighPerformanceContinuityCandidate?,
-        enabled: Boolean
+        enabled: Boolean,
+        timingProfile: ExperimentalCdpTimingProfile = ExperimentalCdpTimingProfile.BALANCED
     ) {
         ensureMainThread()
         cancel(reason = "rescheduled")
@@ -73,17 +75,18 @@ internal object ExperimentalCdpContinuityController {
             if (delayedStart === start) delayedStart = null
             startLeaseAndRun(
                 candidate = candidate,
-                scheduledGeneration = scheduledGeneration
+                scheduledGeneration = scheduledGeneration,
+                timingProfile = timingProfile
             )
         }
         delayedStart = start
-        mainHandler.postDelayed(start, START_DELAY_MS)
+        mainHandler.postDelayed(start, timingProfile.startDelayMs)
         HighPerformanceDiagnostics.record(
             type = "experimental_cdp_edge_scheduled",
             result = "ok",
             originOrUrl = candidate.origin,
             sessionId = candidate.sessionId,
-            reason = "delay_${START_DELAY_MS}ms"
+            reason = "profile_${timingProfile.name.lowercase()}_delay_${timingProfile.startDelayMs}ms"
         )
     }
 
@@ -107,7 +110,8 @@ internal object ExperimentalCdpContinuityController {
 
     private fun startLeaseAndRun(
         candidate: HighPerformanceContinuityCandidate,
-        scheduledGeneration: Long
+        scheduledGeneration: Long,
+        timingProfile: ExperimentalCdpTimingProfile
     ) {
         val leaseId = UUID.randomUUID().toString()
         val lease = WebViewDebuggingGate.acquireTemporary(leaseId).getOrElse { failure ->
@@ -125,7 +129,7 @@ internal object ExperimentalCdpContinuityController {
                 result = "timeout",
                 originOrUrl = candidate.origin,
                 sessionId = candidate.sessionId,
-                reason = "closing_grace_${DEBUGGING_FORCE_CLOSE_GRACE_MS}ms"
+                reason = "closing_grace_${timingProfile.debuggingForceCloseGraceMs}ms"
             )
             lateinit var forcedClose: Runnable
             forcedClose = Runnable forcedClose@{
@@ -146,7 +150,7 @@ internal object ExperimentalCdpContinuityController {
                             reason = if (release.persistentDebuggingEnabled) {
                                 "chrome_inspect_enabled"
                             } else {
-                                "lease_${MAX_DEBUGGING_LEASE_MS + DEBUGGING_FORCE_CLOSE_GRACE_MS}ms"
+                                "lease_${timingProfile.maxDebuggingLeaseMs + timingProfile.debuggingForceCloseGraceMs}ms"
                             }
                         )
                     }
@@ -161,10 +165,10 @@ internal object ExperimentalCdpContinuityController {
                 if (pending?.isDone == true) pending = null
             }
             leaseForcedClose = forcedClose
-            mainHandler.postDelayed(forcedClose, DEBUGGING_FORCE_CLOSE_GRACE_MS)
+            mainHandler.postDelayed(forcedClose, timingProfile.debuggingForceCloseGraceMs)
         }
         leaseTimeout = timeout
-        mainHandler.postDelayed(timeout, MAX_DEBUGGING_LEASE_MS)
+        mainHandler.postDelayed(timeout, timingProfile.maxDebuggingLeaseMs)
         val openedAt = System.currentTimeMillis()
         HighPerformanceDiagnostics.record(
             type = if (lease.temporarilyEnabled) {
@@ -182,7 +186,8 @@ internal object ExperimentalCdpContinuityController {
                 candidate = candidate,
                 lease = lease,
                 openedAt = openedAt,
-                scheduledGeneration = scheduledGeneration
+                scheduledGeneration = scheduledGeneration,
+                timingProfile = timingProfile
             )
         }
     }
@@ -191,7 +196,8 @@ internal object ExperimentalCdpContinuityController {
         candidate: HighPerformanceContinuityCandidate,
         lease: WebViewDebuggingLease,
         openedAt: Long,
-        scheduledGeneration: Long
+        scheduledGeneration: Long,
+        timingProfile: ExperimentalCdpTimingProfile
     ) {
         val client = RestrictedDevToolsClient("webview_devtools_remote_${Process.myPid()}")
         val startedAt = System.currentTimeMillis()
@@ -199,13 +205,22 @@ internal object ExperimentalCdpContinuityController {
             type = "experimental_cdp_edge_started",
             result = "ok",
             originOrUrl = candidate.origin,
-            sessionId = candidate.sessionId
+            sessionId = candidate.sessionId,
+            reason = "profile_${timingProfile.name.lowercase()}"
+        )
+        HighPerformanceDiagnostics.recordVerbose(
+            type = "experimental_cdp_timing",
+            originOrUrl = candidate.origin,
+            sessionId = candidate.sessionId,
+            reason = "discover_${timingProfile.targetDiscoveryTimeoutMs}ms_hidden_" +
+                "${timingProfile.hiddenConfirmationTimeoutMs}ms_edge_${timingProfile.edgeDelayMs}ms_" +
+                "lease_${timingProfile.maxDebuggingLeaseMs}ms"
         )
         try {
             val target = client.discoverSessionTarget(
                 expectedOrigin = candidate.origin,
                 heartbeatToken = candidate.heartbeatToken,
-                timeoutMs = TARGET_DISCOVERY_TIMEOUT_MS,
+                timeoutMs = timingProfile.targetDiscoveryTimeoutMs,
                 shouldContinue = { generation.get() == scheduledGeneration }
             )
             check(generation.get() == scheduledGeneration) { "cancelled_before_edge" }
@@ -214,8 +229,8 @@ internal object ExperimentalCdpContinuityController {
                     target = target,
                     expectedOrigin = candidate.origin,
                     heartbeatToken = candidate.heartbeatToken,
-                    edgeDelayMs = EDGE_DELAY_MS,
-                    hiddenConfirmationTimeoutMs = HIDDEN_CONFIRMATION_TIMEOUT_MS,
+                    edgeDelayMs = timingProfile.edgeDelayMs,
+                    hiddenConfirmationTimeoutMs = timingProfile.hiddenConfirmationTimeoutMs,
                     shouldContinue = { generation.get() == scheduledGeneration }
                 )
             ) {
@@ -224,7 +239,7 @@ internal object ExperimentalCdpContinuityController {
                     result = "low_frequency_continuity",
                     originOrUrl = candidate.origin,
                     sessionId = candidate.sessionId,
-                    reason = "duration_${System.currentTimeMillis() - startedAt}ms"
+                    reason = "profile_${timingProfile.name.lowercase()}_duration_${System.currentTimeMillis() - startedAt}ms"
                 )
                 RestrictedLifecycleEdgeOutcome.PAGE_STILL_VISIBLE -> HighPerformanceDiagnostics.record(
                     type = "experimental_cdp_edge_skipped",
@@ -368,13 +383,7 @@ internal object ExperimentalCdpContinuityController {
         }
     }
 
-    private const val START_DELAY_MS = 600L
     private const val RETRY_ACTIVE_LEASE_DELAY_MS = 250L
-    private const val TARGET_DISCOVERY_TIMEOUT_MS = 2_500L
-    private const val HIDDEN_CONFIRMATION_TIMEOUT_MS = 2_500L
-    private const val EDGE_DELAY_MS = 500L
     private const val MAIN_THREAD_TOGGLE_TIMEOUT_MS = 2_000L
     private const val DEBUG_SOCKET_CLOSE_TIMEOUT_MS = 2_000L
-    private const val MAX_DEBUGGING_LEASE_MS = 8_000L
-    private const val DEBUGGING_FORCE_CLOSE_GRACE_MS = 5_000L
 }

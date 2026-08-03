@@ -1,5 +1,6 @@
 package site.anzz.childkiosk.performance
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -159,6 +160,7 @@ internal class HighPerformanceForegroundService : Service() {
         mainHandler.postDelayed(refreshRunnable, SERVICE_HEALTH_INTERVAL_MS)
     }
 
+    @SuppressLint("ForegroundServiceType")
     private fun establishForeground(notification: Notification): Result<Unit> {
         return runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

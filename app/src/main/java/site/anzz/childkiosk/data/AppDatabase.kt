@@ -21,7 +21,7 @@ import site.anzz.childkiosk.performance.HighPerformanceOriginRuleEntity
         HighPerformanceConfigEntity::class,
         HighPerformanceOriginRuleEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -48,7 +48,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_4_5,
                     MIGRATION_5_6,
                     MIGRATION_6_7,
-                    MIGRATION_7_8
+                    MIGRATION_7_8,
+                    MIGRATION_8_9
                 )
                 .fallbackToDestructiveMigration()
                 .addCallback(DatabaseCallback(context.applicationContext))
@@ -279,6 +280,21 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE high_performance_configs " +
                         "ADD COLUMN experimental_cdp_continuity_enabled " +
+                        "INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
+        internal val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE high_performance_configs " +
+                        "ADD COLUMN experimental_cdp_timing_profile " +
+                        "TEXT NOT NULL DEFAULT 'BALANCED'"
+                )
+                db.execSQL(
+                    "ALTER TABLE high_performance_configs " +
+                        "ADD COLUMN verbose_diagnostics_enabled " +
                         "INTEGER NOT NULL DEFAULT 0"
                 )
             }

@@ -1,6 +1,7 @@
 package site.anzz.childkiosk
 
 import android.app.ActivityManager
+import android.annotation.SuppressLint
 import android.app.KeyguardManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
@@ -610,6 +611,7 @@ class MainActivity : ComponentActivity() {
      * Device Owner 与屏幕固定软锁两种场景统一走此流程；非 Device Owner 时
      * 用户限制相关调用会因无权限被 runCatching 静默忽略。
      */
+    @SuppressLint("WrongConstant")
     private fun stopLockTaskMode() {
         try {
             runCatching { stopLockTask() }
@@ -650,6 +652,8 @@ class MainActivity : ComponentActivity() {
 
 
 
+    @Suppress("RestrictedApi")
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (KioskPrefs.isLimitVolumeKeysEnabled(this)) {
             val keyCode = event.keyCode

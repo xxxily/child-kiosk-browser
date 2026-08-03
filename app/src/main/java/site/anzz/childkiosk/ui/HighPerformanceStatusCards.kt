@@ -80,6 +80,12 @@ internal fun HighPerformanceStatusSummaryCard(
             }
         )
         Text(
+            "续行时序：${experimentalCdpTimingProfileLabel(persistedState.experimentalCdpTimingProfile)} · " +
+                "详细日志：${if (persistedState.verboseDiagnosticsEnabled) "开启" else "关闭"}",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
             "最近启动：${formatTimestamp(activeStatus?.lastSessionStartedAt ?: 0L)}；最近停止：${formatTimestamp(activeStatus?.lastSessionStoppedAt ?: 0L)}",
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -330,6 +336,7 @@ internal fun compositeStateLabel(state: HighPerformanceCompositeState): String =
     HighPerformanceCompositeState.NEEDS_BATTERY_SETUP -> "待完成电池设置"
     HighPerformanceCompositeState.READY -> "已就绪"
     HighPerformanceCompositeState.ACTIVE -> "运行中"
+    HighPerformanceCompositeState.BACKGROUND_THROTTLED -> "后台低频运行"
     HighPerformanceCompositeState.DEGRADED -> "降级运行"
     HighPerformanceCompositeState.INTERRUPTED -> "最近发生中断"
     HighPerformanceCompositeState.ERROR -> "异常"

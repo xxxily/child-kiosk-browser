@@ -46,6 +46,7 @@ import site.anzz.childkiosk.performance.HighPerformanceRuntimeStatusStore
 import site.anzz.childkiosk.performance.HighPerformanceRuntimePublisher
 import site.anzz.childkiosk.performance.HighPerformanceSystemStatus
 import site.anzz.childkiosk.performance.HighPerformanceSystemStatusReader
+import site.anzz.childkiosk.performance.HighPerformanceDiagnosticsExporter
 
 @Composable
 internal fun HighPerformanceDetailScreen(
@@ -197,6 +198,18 @@ internal fun HighPerformanceDetailScreen(
             }
         )
 
+        HighPerformanceDebugOptionsCard(
+            verboseDiagnosticsEnabled = state.verboseDiagnosticsEnabled,
+            timingProfile = state.experimentalCdpTimingProfile,
+            busy = busy,
+            onVerboseDiagnosticsChange = { enabled ->
+                mutate { repository.setVerboseDiagnosticsEnabled(enabled) }
+            },
+            onTimingProfileChange = { profile ->
+                mutate { repository.setExperimentalCdpTimingProfile(profile) }
+            }
+        )
+
         HighPerformanceSetupChecklist(
             status = systemStatus,
             runtimeStatus = runtimeStatus,
@@ -271,7 +284,20 @@ internal fun HighPerformanceDetailScreen(
         HighPerformanceDiagnosticsCard(
             runtimeStatus = runtimeStatus,
             onRefresh = ::refreshRuntimeFacts,
-            onOpenDetails = { showDiagnosticsDialog = true }
+            onOpenDetails = { showDiagnosticsDialog = true },
+            onExport = {
+                scope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            HighPerformanceDiagnosticsExporter.export(context, runtimeStatus)
+                        }
+                    }.onSuccess { result ->
+                        Toast.makeText(context, "已导出脱敏诊断包：${result.displayPath}", Toast.LENGTH_LONG).show()
+                    }.onFailure { error ->
+                        Toast.makeText(context, error.message ?: "导出诊断包失败", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
         )
     }
 
@@ -336,6 +362,19 @@ internal fun HighPerformanceDetailScreen(
         HighPerformanceDiagnosticsDialog(
             runtimeStatus = runtimeStatus,
             onRefresh = ::refreshRuntimeFacts,
+            onExport = {
+                scope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            HighPerformanceDiagnosticsExporter.export(context, runtimeStatus)
+                        }
+                    }.onSuccess { result ->
+                        Toast.makeText(context, "已导出脱敏诊断包：${result.displayPath}", Toast.LENGTH_LONG).show()
+                    }.onFailure { error ->
+                        Toast.makeText(context, error.message ?: "导出诊断包失败", Toast.LENGTH_LONG).show()
+                    }
+                }
+            },
             onClear = {
                 showDiagnosticsDialog = false
                 showClearDiagnosticsDialog = true

@@ -197,10 +197,14 @@ The status model has separate signals:
 - `lastWorkerJsHeartbeatAt`: a Dedicated Worker is still scheduled.
 - `fullSystemProtection`: FGS, WakeLock, renderer priority, notification, and battery setup are ready.
 
-`ACTIVE` requires both complete system protection and a responsive main-thread JS heartbeat. If the
-main heartbeat is older than 20 seconds, the session becomes `STALE` and the composite state becomes
-`DEGRADED`, even when FGS and WakeLock remain healthy. This distinction prevents resource readiness
-from being reported as JavaScript continuity.
+`ACTIVE` requires both complete system protection and a responsive main-thread JS heartbeat. Since
+v0.4.24, a stopped/hidden Activity whose main timer is older than 20 seconds but whose Worker has
+reported within 90 seconds becomes `LOW_FREQUENCY_RESPONSIVE` /
+`HIDDEN_LOW_FREQUENCY_CONTINUITY`; the composite state is `BACKGROUND_THROTTLED`. This avoids the
+Android 16/WebView 150 false `STALE` report observed when the Worker stayed alive while the hidden
+main timer ran at a slower cadence. Only when both main and Worker evidence expire does the session
+become `STALE` / `DEGRADED`. A Worker heartbeat proves only the diagnostic Worker is scheduled; it
+does not prove site timers, fetches, sockets, or business jobs run at foreground cadence.
 
 ### Background freeze after ~60 seconds (Blink Page Lifecycle freeze)
 
@@ -257,8 +261,15 @@ call `WebView.onResume()` as a background unfreeze attempt, or enable CDP. The r
 
 - `SCREEN_OFF_VISIBLE_CONTINUITY`: screen non-interactive, Activity stopped, real document visible,
   and main-thread heartbeat responsive;
-- `HIDDEN_DEGRADED`: real document hidden even if a recent heartbeat still exists;
-- `STALE`: the main-thread heartbeat is no longer responsive.
+- `HIDDEN_LOW_FREQUENCY_CONTINUITY`: real document hidden, main timer delayed, but Worker evidence
+  remains recent enough to prove low-frequency background scheduling;
+- `HIDDEN_DEGRADED`: real document hidden without enough Worker evidence to claim low-frequency continuity;
+- `STALE`: neither main-thread nor bounded background Worker evidence remains responsive.
+
+For OEM comparison, start with the balanced experimental timing profile. Xiaomi/Android 13 and
+OnePlus/Android 16 should use the same Origin, WebView 150, screen-off duration, and business
+timestamps. Enable verbose diagnostics only for the reproduction window, then export the redacted
+bundle from the admin UI before clearing events.
 
 The Android 10 / WebView 150 production app-module self-test used a debuggable diagnostic build
 signed with the release certificate. It kept the same PID and load ID for seven minutes of

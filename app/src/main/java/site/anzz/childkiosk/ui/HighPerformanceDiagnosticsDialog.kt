@@ -4,6 +4,8 @@ import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -57,18 +59,25 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import site.anzz.childkiosk.performance.HighPerformanceDiagnostics
+import site.anzz.childkiosk.performance.HighPerformanceDiagnosticsFormatter
 import site.anzz.childkiosk.performance.HighPerformanceRuntimeStatusReadResult
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 internal fun HighPerformanceDiagnosticsCard(
     runtimeStatus: HighPerformanceRuntimeStatusReadResult,
     onRefresh: () -> Unit,
-    onOpenDetails: () -> Unit
+    onOpenDetails: () -> Unit,
+    onExport: () -> Unit
 ) {
     HighPerformanceCard {
         Text("运行诊断", fontSize = 16.sp, fontWeight = FontWeight.Bold)
         Text(diagnosticSummary(runtimeStatus), fontSize = 11.sp, maxLines = 4)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             OutlinedButton(
                 onClick = onRefresh,
                 shape = RoundedCornerShape(8.dp),
@@ -85,6 +94,13 @@ internal fun HighPerformanceDiagnosticsCard(
                 Spacer(modifier = Modifier.width(4.dp))
                 Text("查看详情")
             }
+            OutlinedButton(
+                onClick = onExport,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.heightIn(min = 36.dp)
+            ) {
+                Text("导出脱敏包")
+            }
         }
     }
 }
@@ -94,6 +110,7 @@ internal fun HighPerformanceDiagnosticsDialog(
     runtimeStatus: HighPerformanceRuntimeStatusReadResult,
     onRefresh: () -> Unit,
     onClear: () -> Unit,
+    onExport: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -316,13 +333,21 @@ internal fun HighPerformanceDiagnosticsDialog(
                     }
                     OutlinedButton(
                         onClick = {
+                            onExport()
+                        },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "导出脱敏诊断", modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("导出脱敏包")
+                    }
+                    OutlinedButton(
+                        onClick = {
                             clipboard.setText(AnnotatedString(rawText))
                             Toast.makeText(context, "诊断已复制", Toast.LENGTH_SHORT).show()
                         },
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "复制诊断", modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
                         Text("复制")
                     }
                     Button(
@@ -461,61 +486,5 @@ private fun diagnosticSummary(result: HighPerformanceRuntimeStatusReadResult): S
 }
 
 private fun diagnosticText(result: HighPerformanceRuntimeStatusReadResult): String {
-    val status = result.status ?: return "runtimeStatus=missing\nstale=true\nreason=${result.reason.orEmpty()}"
-    return buildString {
-        appendLine("appVersion=${status.appVersionName} (${status.appVersionCode})")
-        appendLine("android=${status.androidRelease} sdk=${status.androidSdkInt}")
-        appendLine("device=${status.manufacturer} ${status.model}")
-        appendLine(
-            "webViewProvider=${status.webViewPackageName.orEmpty()} " +
-                "version=${status.webViewVersionName.orEmpty()}"
-        )
-        appendLine("process=${status.processName}")
-        appendLine("pid=${status.pid}")
-        appendLine("processInstance=${status.processInstanceId}")
-        appendLine("updatedAt=${formatTimestamp(status.updatedAt)}")
-        appendLine("nativeHeartbeatAt=${formatTimestamp(status.nativeHeartbeatAt)}")
-        appendLine("stale=${result.stale} reason=${result.reason.orEmpty()}")
-        appendLine(
-            "configVersion=${status.appliedConfigVersion} rules=${status.configuredRuleCount} " +
-                "experimentalCdpContinuity=${status.experimentalCdpContinuityEnabled}"
-        )
-        appendLine("state=${status.compositeState}")
-        appendLine("notification=${status.notificationPermissionGranted}/${status.notificationsVisible}")
-        appendLine("batteryIgnored=${status.ignoringBatteryOptimizations}")
-        appendLine("screenInteractive=${status.screenInteractive}")
-        appendLine(
-            "keyguardShowing=${status.keyguardShowing} keyguardSecure=${status.keyguardSecure} " +
-                "keyguardReadyForScreenOff=${status.keyguardReadyForScreenOff}"
-        )
-        appendLine(
-            "fgsManifest=${status.foregroundServiceDeclared} " +
-                "specialUse=${status.specialUseTypeDeclared}"
-        )
-        appendLine("fgs=${status.foregroundServiceState} error=${status.foregroundServiceError.orEmpty()}")
-        appendLine("wakeLock=${status.wakeLockState} error=${status.wakeLockError.orEmpty()}")
-        appendLine("sessions=${status.sessions.size}")
-        status.sessions.forEach { session ->
-            appendLine(
-                "  ${session.origin} visible=${session.visible} activity=${session.activityState} " +
-                    "renderer=${session.rendererPolicy} full=${session.fullSystemProtection} " +
-                    "lastCallback=${formatTimestamp(session.lastPageCallbackAt)} " +
-                    "js=${session.javascriptState} " +
-                    "documentHidden=${session.documentHidden} " +
-                    "documentVisibility=${session.documentVisibilityState.orEmpty()} " +
-                    "continuity=${session.continuityState} loadId=${session.pageLoadId.orEmpty()} " +
-                    "jsInstalled=${session.jsHeartbeatInstalledAt?.let(::formatTimestamp).orEmpty()} " +
-                    "jsLast=${session.lastJsHeartbeatAt?.let(::formatTimestamp).orEmpty()} " +
-                    "jsMain=${session.lastMainJsHeartbeatAt?.let(::formatTimestamp).orEmpty()} " +
-                    "jsWorker=${session.lastWorkerJsHeartbeatAt?.let(::formatTimestamp).orEmpty()}"
-            )
-        }
-        appendLine("recentEvents=${status.recentEvents.size}")
-        status.recentEvents.map(HighPerformanceDiagnostics::sanitize).forEach { event ->
-            appendLine(
-                "  ${formatTimestamp(event.timestamp)} ${event.type}/${event.result} " +
-                    "origin=${event.origin.orEmpty()} reason=${event.reason.orEmpty()}"
-            )
-        }
-    }
+    return HighPerformanceDiagnosticsFormatter.format(result)
 }
