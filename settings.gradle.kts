@@ -46,3 +46,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "child-kiosk-browser"
 include(":app")
+include(":continuity-poc")

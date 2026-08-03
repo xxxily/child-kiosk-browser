@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WebView Continuity PoC</title>
+  <style>
+    body { margin: 0; padding: 20px; font-family: sans-serif; color: #10202f; background: #f4f7fa; }
+    h1 { margin: 0 0 12px; font-size: 24px; }
+    pre { min-height: 220px; overflow-wrap: anywhere; white-space: pre-wrap; padding: 14px; background: #fff; border-radius: 12px; }
+    input { box-sizing: border-box; width: 100%; min-height: 56px; margin-top: 16px; padding: 12px; font-size: 18px; }
+  </style>
+</head>
+<body>
+  <h1>WebView Continuity PoC</h1>
+  <div>真实 Page Visibility，不做可见性伪造。</div>
+  <pre id="status">starting…</pre>
+  <input id="imeProbe" placeholder="恢复前台后点击，验证输入法与同一 DOM">
+  <script>
+    (() => {
+      const params = new URLSearchParams(location.search);
+      const session = params.get('session') || 'default';
+      const previousLoadCount = Number(localStorage.getItem('continuityLoadCount') || '0');
+      const loadCount = previousLoadCount + 1;
+      localStorage.setItem('continuityLoadCount', String(loadCount));
+      const state = {
+        session,
+        loadId: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        loadCount,
+        bootWallMs: Date.now(),
+        bootMonoMs: performance.now(),
+        mainCount: 0,
+        workerCount: 0,
+        fetchSuccess: 0,
+        fetchFailure: 0,
+        lastMainWallMs: 0,
+        lastWorkerWallMs: 0,
+        lastWorkerSourceWallMs: 0,
+        lifecycleEvents: []
+      };
+
+      const snapshot = () => ({
+        ...state,
+        nowWallMs: Date.now(),
+        nowMonoMs: performance.now(),
+        visibilityState: document.visibilityState,
+        hidden: document.hidden,
+        hasFocus: document.hasFocus()
+      });
+
+      const report = (type, extra = {}) => {
+        const payload = { type, ...snapshot(), ...extra };
+        try { NativeProbe.report(JSON.stringify(payload)); } catch (_) {}
+      };
+
+      const rememberLifecycle = type => {
+        state.lifecycleEvents.push({ type, wallMs: Date.now(), monoMs: performance.now() });
+        state.lifecycleEvents = state.lifecycleEvents.slice(-20);
+        report(type);
+      };
+
+      ['visibilitychange', 'freeze', 'resume', 'pageshow', 'pagehide', 'focus', 'blur'].forEach(type => {
+        const target = type === 'visibilitychange' || type === 'freeze' || type === 'resume'
+          ? document
+          : window;
+        target.addEventListener(type, () => rememberLifecycle(type), true);
+      });
+
+      setInterval(() => {
+        state.mainCount += 1;
+        state.lastMainWallMs = Date.now();
+        if (state.mainCount % 5 === 0) report('main_heartbeat');
+      }, 1000);
+
+      try {
+        const workerSource = `
+          let count = 0;
+          setInterval(() => {
+            count += 1;
+            postMessage({ count, wallMs: Date.now(), monoMs: performance.now() });
+          }, 1000);
+        `;
+        const workerUrl = URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' }));
+        const worker = new Worker(workerUrl);
+        URL.revokeObjectURL(workerUrl);
+        worker.onmessage = event => {
+          state.workerCount = Number(event.data.count || state.workerCount + 1);
+          state.lastWorkerWallMs = Date.now();
+          state.lastWorkerSourceWallMs = Number(event.data.wallMs || 0);
+          if (state.workerCount % 5 === 0) report('worker_heartbeat');
+        };
+        worker.onerror = event => report('worker_error', { message: String(event.message || '') });
+      } catch (error) {
+        report('worker_create_error', { message: String(error) });
+      }
+
+      const runFetch = async () => {
+        try {
+          await fetch(`https://clients3.google.com/generate_204?continuity=${Date.now()}`, {
+            mode: 'no-cors',
+            cache: 'no-store'
+          });
+          state.fetchSuccess += 1;
+          report('fetch_success');
+        } catch (error) {
+          state.fetchFailure += 1;
+          report('fetch_failure', { message: String(error) });
+        }
+      };
+      runFetch();
+      setInterval(runFetch, 15000);
+
+      setInterval(() => {
+        document.getElementById('status').textContent = JSON.stringify(snapshot(), null, 2);
+      }, 1000);
+
+      const imeProbe = document.getElementById('imeProbe');
+      imeProbe.addEventListener('input', () => {
+        report('ime_input', { value: imeProbe.value });
+      });
+
+      window.__continuityProbe = { snapshot, report };
+      report('page_ready');
+    })();
+  </script>
+</body>
+</html>

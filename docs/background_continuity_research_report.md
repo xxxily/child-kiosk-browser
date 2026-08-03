@@ -2,7 +2,9 @@
 
 > 探索周期：v0.4.13 ~ v0.4.21（2026-07-31 ~ 2026-08-01）
 > 测试环境：OnePlus PHB110 · Android 16 (API 36) · Google WebView 150.0.7871.181
-> 状态：**三条技术路线均已实证证伪**，当前基线 v0.4.21；本文档用于防止后续重走弯路。
+> 原始结论：**三条技术路线均已实证证伪**，当时基线为 v0.4.21；2026-08-03 的后续结论见下方“深研更新”。
+
+> **深研更新（2026-08-03）**：本文的“唯一恢复路径”结论是针对公开、受支持的 Android WebView API。隔离 PoC 已在 OnePlus 6 / Android 10 / WebView 150 上验证 DevTools/CDP `frozen → active` 能解除或阻止完全冻结，并可由 APK 同 UID 自己操作；同一页面/renderer 已存活 7.45 小时且通过前台恢复和 IME。但主线程 timer/fetch 在 hidden 约 5 分钟后仍降为约 60 秒一次，2 小时 WakeLock 到期后又出现 CPU suspend 间隙，所以它不是前台级持续运行，也尚未在本文的 Android 16 生产基线设备上验证。详见 [background_continuity_deep_research.md](background_continuity_deep_research.md)。
 
 ---
 
@@ -12,7 +14,7 @@
 
 **技术约束**：真实网页必须运行在 `WebViewActivity -> FrameLayout -> WebView` 原生路径；不能破坏儿童 Kiosk 安全沙箱；不能破坏网页输入法（IME）；不能移动 WebView 导致页面丢失。
 
-**结论先行**：在 Android 16 + WebView 150 上，**"页面在后台/息屏保持前台级运行"无法通过应用层实现**。已实证证伪三条路线（可见性伪造、冻结解冻、物理悬浮窗）；当前能力边界为"进程与资源存活 + 回前台自动恢复"。
+**结论先行**：在 Android 16 + WebView 150 上，**"页面在后台/息屏保持前台级运行"无法通过公开、受支持的应用层 API 实现**。已实证证伪三条生产路线（可见性伪造、`WebView.onResume()` 解冻、物理悬浮窗）；当前稳定能力边界为"进程与资源存活 + 回前台自动恢复"。Android 10 的 CDP PoC 把 hidden 页能力推进到“避免完全 freeze、Worker 继续运行”，但没有消除主线程节流，且安全/兼容性没有公开 API 保证。另有一条受管设备条件化结果：移除安全 Keyguard 后，纯电源键息屏没有让页面 hidden，实机约 19 分钟保持前台 cadence，且关闭 debugging/CDP 后复核仍通过；它仍需在 Android 16/OEM 目标设备逐机验证，不能当作通用 Android 契约。
 
 ---
 
@@ -26,7 +28,7 @@
 | | `HighPerformanceWakeLockController`（`PARTIAL_WAKE_LOCK`，10min 租约，Handler + `AlarmManager.setAndAllowWhileIdle` 双通道续期） | 息屏/Doze 下 CPU 保持清醒（v0.4.3 修复续期死循环） |
 | | 渲染器优先级 `RENDERER_PRIORITY_IMPORTANT`（不 waive） | 降低渲染器被 OOM 回收概率 |
 | | 电池优化豁免 + 通知权限（Android 13+）检查 | 前置条件校验 |
-| 页面监控层 | `HighPerformancePageRuntime`：`addDocumentStartJavaScript` 注入运行时脚本 + Origin 限定 WebMessage 桥 | 心跳探针（5s 主线程 + Worker）、`document.visibilityState` 兼容层、freeze/resume/visibilitychange 事件上报 |
+| 页面监控层 | `HighPerformancePageRuntime`：`addDocumentStartJavaScript` 注入运行时脚本 + Origin 限定 WebMessage 桥 | 心跳探针（5s 主线程 + Worker）、真实 Page Visibility / load ID 采样、freeze/resume/visibilitychange 事件上报；v0.4.22 起不再伪造可见性或拦截生命周期事件 |
 | 会话状态机 | `HighPerformanceSessionController`：Origin 匹配 → 会话建立 → 心跳 20s 无响应判定 STALE/DEGRADED | 资源启停、渲染器崩溃恢复、状态发布 |
 | 诊断体系 | `HighPerformanceDiagnostics` 事件流 + 三路心跳（native/main/worker）+ 复合状态机 | 观测与排障 |
 
@@ -109,7 +111,7 @@
 
 ## 5. 关键机制知识（防止重走弯路）
 
-1. **Blink 隐藏页面冻结（Page Lifecycle freeze）**：窗口不可见 → 页面 hidden → 约 60 秒后冻结（Android WebView 比 Chrome 桌面激进，桌面仅内存压力才冻结）。冻结 = 定时器/Worker/网络/渲染全部挂起。**唯一恢复路径 = 窗口真实可见（前台过渡）**。
+1. **Blink 隐藏页面冻结（Page Lifecycle freeze）**：窗口不可见 → 页面 hidden → 约 60 秒后冻结（Android WebView 比 Chrome 桌面激进，桌面仅内存压力才冻结）。冻结 = 定时器/Worker/网络/渲染全部挂起。**对公开 WebView API，唯一可靠恢复路径 = 窗口真实可见（前台过渡）**；实验性 CDP/音频/虚拟时间路径见[深研文档](background_continuity_deep_research.md)。
 2. **`WebView.onResume()` ≠ 解冻**：它只解除 `onPause()` 的显式暂停；对"隐藏触发"的 Blink 冻结无效（v0.4.17/18 实证）。
 3. **Chromium 输入连接是窗口级状态**：任何 View 可见性/窗口可见性/屏幕状态伪造（无论时机与范围）都会破坏 IME，影响窗口内所有 WebView。**可见性层永远不能碰**。
 4. **WebView 跨窗口移动 = 渲染损坏**：Surface 绑定窗口，detach/attach 损坏 Chromium 合成状态；白屏/重载/页面丢失，`invalidate` 无法补救。**WebView 必须终身驻留同一窗口**。
@@ -125,7 +127,9 @@
 | 进程/渲染器/CPU 存活（FGS+WakeLock+渲染器优先级） | ✅ 稳定（基线） |
 | 回前台自动恢复（页面续行、心跳恢复） | ✅ 稳定（基线） |
 | 页面冻结状态可观测（freeze 信号、STALE、unfreeze_ineffective） | ✅ 稳定（诊断） |
-| **后台/息屏页面前台级持续运行** | ❌ **平台限制，应用层无解** |
+| **后台/息屏页面前台级持续运行（公开 API）** | ❌ **平台限制，公开应用层无解** |
+| 无安全 Keyguard 的纯息屏（Android 10 / OnePlus 6） | ⚠️ 约 19 分钟页面保持 visible 且 main/Worker/fetch 保持前台 cadence；关闭 debugging/CDP 复核通过；强依赖设备策略，Android 16 未验证 |
+| CDP 避免完全 freeze（Android 10 + M150 隔离 PoC） | ⚠️ 可行；同 UID 可自控，页面/renderer 7.45 小时存活且 IME 通过，但 hidden main/fetch 约 5 分钟后约 60 秒节流，Android 16 未验证 |
 | PiP（切后台场景） | ⚠️ 理论可行，未实施（息屏无效） |
 | 页面侧 freeze/resume 适配（站点配合） | ✅ 可行，业务连续性最优（**不等于完全正常运行**，冻结期间站点仍暂停） |
 
@@ -135,11 +139,12 @@
 
 ## 7. 后续方向候选（待规划，勿直接实施）
 
-1. **PiP 专项试验**：仅切后台场景；需先验证 Lock Task 兼容性；接受"息屏仍冻结"。
-2. **站点侧 Page Lifecycle 适配**（推荐底线能力）：站点监听 `freeze`/`resume`，冻结时保存状态、恢复后续传重连——把"感知中断"降到最低。
-3. **业务迁移**：关键定时/上报逻辑从网页迁到服务端或 Android 原生层（WorkManager 等）——架构级改动。
-4. **追踪平台演进**：Android 16+ 后续 WebView 版本若有后台调度策略 API，重新评估。
-5. **保持现状**：v0.4.21 为最稳基线，产品侧明确"冻结+前台自动恢复"预期。
+1. **CDP 跨版本/完整性补测**：先在 Android 16 复现 Android 10 结果，再覆盖可续期 WakeLock 下的长时业务延迟、导航、renderer crash、Doze/热控和安全边界；在完成前保持隔离 PoC，不接生产开关。
+2. **PiP 专项试验**：仅切后台场景；需先验证 Lock Task 兼容性；接受"息屏仍冻结"。
+3. **站点侧 Page Lifecycle 适配**（推荐底线能力）：站点监听 `freeze`/`resume`，冻结时保存状态、恢复后续传重连——把"感知中断"降到最低。
+4. **业务迁移**：关键定时/上报逻辑从网页迁到服务端或 Android 原生层（FGS/native network/outbox；不要把 WorkManager 当持续亚秒调度器）——架构级改动。
+5. **追踪平台演进**：Android 16+ 后续 WebView 版本若有后台调度策略 API，重新评估。
+6. **生产条件化路径**：v0.4.22 采用 observation-only 探针；无安全 Keyguard 的目标设备若实测保持 visible，则报告息屏连续运行，否则明确降级并保留前台恢复预期。
 
 ---
 
@@ -159,6 +164,7 @@
 | v0.4.18 | 组合拳解冻 + 有效性验证 + 降频 | ❌ 无效（实证） |
 | v0.4.19–20 | Overlay v2（SHOW_WHEN_LOCKED + forceRedraw + 权限） | ❌ 页面丢失 |
 | **v0.4.21** | **回退 Overlay v2，最终基线** | ✅ 页面不丢、冻结+前台恢复 |
+| **v0.4.22** | **真实 Page Visibility 观测 + 无安全 Keyguard 条件化路径** | ✅ Android 10 已验证；Android 16/OEM 需逐机复测 |
 
 ---
 
@@ -178,7 +184,7 @@
 
 **判定树**（后台 2–5 分钟后）：
 1. `nativeHeartbeat` 停止 → 进程/资源层问题（FGS 被杀、通知权限、OEM 后台限制）
-2. native 心跳正常 + `freeze` + main/worker 心跳停 → **页面冻结（平台行为，应用层无解）**
+2. native 心跳正常 + `freeze` + main/worker 心跳停 → **页面冻结（平台行为，公开 API 无解；实验性路径见深研文档）**
 3. native 正常 + main 心跳在但业务定时器停 → 站点自身逻辑问题（站点监听 visibilitychange 主动停止）
 
 **ADB 命令**：

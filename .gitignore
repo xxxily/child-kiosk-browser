@@ -8,6 +8,7 @@
 /.idea/caches
 /build
 /app/build
+/continuity-poc/build
 .DS_Store
 *.apk
 *.apks
