@@ -6,6 +6,26 @@
 
 ## [Unreleased]
 
+暂无未发布变更。
+
+## [0.4.24] - 2026-08-03
+
+### Added - 新增
+
+- **后台低频运行诊断**：后台/息屏时同时参考主线程和 Worker 心跳。页面至少产生过主线程心跳、主线程超过 20 秒但 Worker 在 90 秒内仍有响应时，显示 `LOW_FREQUENCY_RESPONSIVE` / `BACKGROUND_THROTTLED`，不再误报为完全 `STALE`。
+- **实验兼容控制**：新增保守、均衡、激进三档受限 CDP 时序策略，以及默认关闭的脱敏详细日志开关；配置通过 Room 与跨进程运行时快照立即同步。
+- **正式包诊断导出**：高性能诊断页可将脱敏报告导出到 `Downloads/ChildKiosk/`，无需 `run-as`，包含设备、WebView、PID、load ID、两路心跳年龄和安全审计事件。
+
+### Fixed - 修复
+
+- **Android 16 / WebView 150 状态误报**：根据 PHB110 长时采样修正主线程低频、Worker 仍存活场景，只有两路心跳都超过阈值才判定真正中断。
+- **OEM 时序隔离**：每次实验租约固定使用调度时的白名单参数，避免设置更新影响已打开的短租约；继续保留精确 Origin、短租约、偏好恢复和 socket 关闭验证。
+
+### Tests - 测试与研究
+
+- Room 数据库升级至 v9，运行时快照 schema 2、状态 schema 6，并保留旧 schema 缺字段默认安全值的兼容解析。
+- 补充低频状态、复合状态、配置 round-trip、脱敏格式化单测，并更新 Xiaomi Android 13 / OnePlus Android 16 对比验证 runbook。
+
 ## [0.4.23] - 2026-08-03
 
 ### Added - 新增
@@ -1499,7 +1519,8 @@
 - 调研报告 `docs/android_kiosk_research_report.md`
 - 需求规格 `docs/child_kiosk_browser_requirements.md`
 
-[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.28...HEAD
+[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.4.24...HEAD
+[0.4.24]: https://github.com/xxxily/child-kiosk-browser/compare/v0.4.23...v0.4.24
 [0.0.28]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.27...v0.0.28
 [0.0.27]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.26...v0.0.27
 [0.0.26]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.25...v0.0.26

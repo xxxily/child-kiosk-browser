@@ -1,3 +1,21 @@
+## Child Kiosk Browser v0.4.24
+
+### 本轮核心变化
+
+* **不再把后台低频运行误报为完全中断**：页面至少成功产生过一次主线程心跳后，后台/息屏时若主线程心跳超过 20 秒但 Worker 在 90 秒内仍有响应，会显示“后台低频运行”而不是 `STALE`。这对应 Android 16 / WebView 150 真机日志中“主线程降频、Worker 仍持续”的实际状态；Worker 单独启动不会造成假阳性。
+* **实验时序预设**：新增“保守 / 均衡 / 激进”三档受限策略。默认仍为均衡，管理员不能配置无限租约或任意重试；精确可信 Origin、临时 debugging、偏好恢复和 socket 关闭验证保持不变。
+* **详细诊断开关**：默认关闭。开启后通过 `ChildKioskContinuity` logcat 输出脱敏的心跳间隔、候选筛选和 CDP 阶段耗时，不记录页面正文、Cookie、请求头、URL 查询参数或定位坐标。
+* **脱敏诊断包导出**：正式非 debuggable APK 可直接导出到 `Downloads/ChildKiosk/`，包含 App/Android/OEM/WebView、PID/process instance、配置、会话、load ID、两路心跳年龄和安全审计事件，不再依赖 `run-as`。
+* **兼容升级**：Room 8→9、运行时快照 schema 2、状态 schema 6；旧快照/状态缺少新字段时使用均衡策略并关闭详细日志。
+
+### 验证建议
+
+1. Android 16 / OnePlus：复测 hidden 页面，当主线程低频但 Worker 仍更新时，应显示 `BACKGROUND_THROTTLED` / `HIDDEN_LOW_FREQUENCY_CONTINUITY`，而非 `STALE`。
+2. Android 13 / Xiaomi：从旧版增量安装后确认配置和应用数据保留，开启详细日志和均衡策略，检查 `experimental_cdp_*`、同 PID/load ID 以及前台恢复/IME。
+3. 导出脱敏诊断包，确认文件出现在 `Downloads/ChildKiosk/` 且不包含页面正文、Cookie、请求头或完整 URL 参数。
+
+---
+
 ## Child Kiosk Browser v0.4.23
 
 ### 本轮核心变化
