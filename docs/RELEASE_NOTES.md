@@ -1,3 +1,20 @@
+## Child Kiosk Browser v0.4.23
+
+### 本轮核心变化
+
+* **实验性低频续行（默认关闭）**：高性能详情页新增独立开关。仅对已授权的可信 Origin 生效，Activity 后台化后短暂开启同 UID WebView DevTools，验证真实 `document.hidden` 和随机心跳 token 后发送一次 `frozen → active` edge。
+* **安全边界明确**：DevTools 临时租约最长 8 秒，另有 5 秒强制关闭兜底；租约释放后恢复管理员原有 Chrome Inspect 设置并验证调试 socket 关闭。开启期间授权 ADB shell 仍可能检查或修改页面。
+* **能力边界明确**：该实验可降低“约 60 秒后的完全冻结”概率，但不能保证后台主线程 timer、Worker、fetch 或业务网络达到前台 cadence；Doze、热控、OEM 和 WebView 更新仍可能节流或中断。
+* **跨进程即时同步**：Chrome Inspect 设置通过包内广播同步到存活的 `:webview` 进程，不依赖长期进程读取新鲜 SharedPreferences。
+* **数据库/诊断兼容**：Room 7→8 迁移新增实验字段；运行时状态 schema 5 和旧快照缺字段均默认关闭；关闭高性能模式自动关闭实验开关。
+
+### 验证与使用
+
+* 已完成 Standard/Enhanced 单元测试、Debug/Release 构建、Release lint/R8、WebView task manifest 校验和隔离 PoC Release 构建。
+* 隔离 Release PoC 已在 PHB110 / Android 16 / WebView 150 验证同 UID 临时 debugging、`frozen → active` edge 与 socket 关闭；生产 APK 仍需开启实验开关后复核 `experimental_cdp_*` 事件、同 PID/loadId、7 分钟息屏 cadence 和前台 IME。
+
+---
+
 ## Child Kiosk Browser v0.4.22
 
 ### 本轮核心变化

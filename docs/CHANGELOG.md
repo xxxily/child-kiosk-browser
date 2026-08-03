@@ -6,6 +6,23 @@
 
 ## [Unreleased]
 
+## [0.4.23] - 2026-08-03
+
+### Added - 新增
+
+- **实验性低频续行**：为明确启用高性能模式、完成二次风险确认且匹配可信 Origin 的页面，后台化后可短暂使用同 UID DevTools 发送一次受控 `frozen → active` 生命周期 edge，降低 Android WebView 完全冻结概率。
+- **短租约与安全 gate**：临时 debugging 默认关闭，最长 8 秒并带 5 秒强制关闭兜底；恢复管理员最新 Chrome Inspect 偏好，记录 socket 是否关闭、目标匹配和失败原因。
+
+### Fixed - 修复
+
+- **跨进程调试偏好同步**：主进程更改 Chrome Inspect 后立即同步存活的 `:webview` Activity，避免使用过期的 SharedPreferences 快照。
+- **配置与诊断兼容**：Room 迁移至 v8，运行时快照/状态 schema 增加实验开关并保持旧 JSON 缺字段默认关闭；关闭高性能模式会自动清除实验开关。
+
+### Tests - 测试与研究
+
+- 补充实验开关 round-trip、Repository 约束、运行时状态兼容、调试 gate 租约和跨进程策略广播单测。
+- 更新 Android 16 / WebView 150 CDP 研究边界、生产实验 runbook 与隔离 PoC 操作说明。
+
 ## [0.4.22] - 2026-08-03
 
 ### Fixed - 修复
