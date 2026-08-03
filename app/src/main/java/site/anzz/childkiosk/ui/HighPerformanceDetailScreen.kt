@@ -63,6 +63,7 @@ internal fun HighPerformanceDetailScreen(
     }
     var busy by remember { mutableStateOf(false) }
     var showRiskDialog by remember { mutableStateOf(false) }
+    var showExperimentalCdpWarning by remember { mutableStateOf(false) }
     var showHttpWarning by remember { mutableStateOf<PendingRule?>(null) }
     var showClearRulesDialog by remember { mutableStateOf(false) }
     var showDiagnosticsDialog by remember { mutableStateOf(false) }
@@ -183,6 +184,19 @@ internal fun HighPerformanceDetailScreen(
             onClearRules = { showClearRulesDialog = true }
         )
 
+        ExperimentalCdpContinuityCard(
+            enabled = state.experimentalCdpContinuityEnabled,
+            busy = busy,
+            highPerformanceEnabled = state.enabled,
+            onEnabledChange = { enabled ->
+                if (enabled) {
+                    showExperimentalCdpWarning = true
+                } else {
+                    mutate { repository.setExperimentalCdpContinuityEnabled(false) }
+                }
+            }
+        )
+
         HighPerformanceSetupChecklist(
             status = systemStatus,
             runtimeStatus = runtimeStatus,
@@ -267,6 +281,16 @@ internal fun HighPerformanceDetailScreen(
             onConfirm = {
                 showRiskDialog = false
                 mutate { repository.acknowledgeRiskAndEnable() }
+            }
+        )
+    }
+
+    if (showExperimentalCdpWarning) {
+        ExperimentalCdpContinuityWarningDialog(
+            onDismiss = { showExperimentalCdpWarning = false },
+            onConfirm = {
+                showExperimentalCdpWarning = false
+                mutate { repository.setExperimentalCdpContinuityEnabled(true) }
             }
         )
     }

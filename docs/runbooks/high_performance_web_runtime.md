@@ -4,7 +4,31 @@
 
 High-performance runtime protects only parent-approved top-level HTTP/HTTPS Origins. It combines a foreground service in `:webview`, a bounded partial CPU WakeLock, and a non-waived renderer-priority request. It improves survival probability; it does not guarantee uninterrupted JavaScript, timers, network sockets, renderer memory, or foreground-equivalent Chromium scheduling.
 
-For the post-v0.4.21 source-level investigation of experimental CDP, virtual-time, audio, custom-Provider, and visual-screen-off options, see [background_continuity_deep_research.md](../background_continuity_deep_research.md). Those options are not enabled by this runbook's production baseline.
+For the source-level investigation of experimental CDP, virtual-time, audio, custom-Provider, and visual-screen-off options, see [background_continuity_deep_research.md](../background_continuity_deep_research.md). Since v0.4.23, an explicitly opt-in CDP continuity edge exists in the production module, but it remains disabled by default and is not part of the baseline guarantee.
+
+### Experimental CDP continuity (v0.4.23)
+
+The admin high-performance page exposes a second switch named “实验性低频续行”. It is available
+only after high-performance mode is enabled and requires a separate risk acknowledgement. The
+controller is deliberately narrow:
+
+- only a currently protected, visible, top-level trusted Origin with a live per-document heartbeat
+  token is eligible;
+- `Activity.onStop()` schedules one delayed check, then a same-UID DevTools client verifies the
+  exact Origin, token, and `document.hidden === true` before sending one `frozen → active` edge;
+- WebView debugging is managed through `WebViewDebuggingGate`. A temporary lease is at most eight
+  seconds plus a five-second forced-close grace period, and the gate restores the latest persistent
+  Chrome Inspect preference rather than blindly disabling it;
+- the controller never changes Page Visibility values, moves/detaches a WebView, or calls
+  `WebView.onResume()` as a fake background unfreeze;
+- diagnostics must show the debugging lease, target match, lifecycle edge, restoration, and socket
+  closure events. A failure is reported as degraded and the ordinary foreground-restore path stays
+  authoritative.
+
+This is a non-public Chromium capability with an explicit ADB inspection/mutation exposure window.
+It can prevent the automatic full freeze on tested WebView builds, but hidden-page main timers,
+Workers, fetches, Doze, thermal policy, and OEM scheduling may still be throttled. Do not use it for
+arbitrary untrusted Origins or describe it as foreground-level continuous JavaScript.
 
 The runtime must preserve Android's real WebView lifecycle contract. It does not falsify a
 WebView's visibility, window visibility, `isShown()`, screen state, or `onPause()` callbacks. Those

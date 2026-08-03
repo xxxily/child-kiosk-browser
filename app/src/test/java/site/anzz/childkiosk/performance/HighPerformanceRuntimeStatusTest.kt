@@ -88,6 +88,31 @@ class HighPerformanceRuntimeStatusTest {
     }
 
     @Test
+    fun experimentalContinuityStatusRoundTripsAndOlderSchemaDefaultsOff() {
+        val current = runtimeStatus(
+            compositeState = HighPerformanceCompositeState.ACTIVE,
+            sessionState = HighPerformanceJavascriptState.RESPONSIVE,
+            installedAt = 1_000L,
+            lastMainAt = 2_000L
+        ).copy(experimentalCdpContinuityEnabled = true)
+
+        assertEquals(
+            true,
+            HighPerformanceRuntimeStatus.fromJson(current.toJson())
+                ?.experimentalCdpContinuityEnabled
+        )
+
+        val previous = current.toJson()
+            .put("schemaVersion", 4)
+            .apply { remove("experimentalCdpContinuityEnabled") }
+        assertEquals(
+            false,
+            HighPerformanceRuntimeStatus.fromJson(previous)
+                ?.experimentalCdpContinuityEnabled
+        )
+    }
+
+    @Test
     fun previousRuntimeSchemaRemainsReadableWithUnknownContinuity() {
         val json = runtimeStatus(
             compositeState = HighPerformanceCompositeState.ACTIVE,

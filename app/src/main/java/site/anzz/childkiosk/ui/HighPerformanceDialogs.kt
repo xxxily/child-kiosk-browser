@@ -50,6 +50,44 @@ internal fun HighPerformanceRiskConfirmationDialog(onDismiss: () -> Unit, onConf
 }
 
 @Composable
+internal fun ExperimentalCdpContinuityWarningDialog(
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    var acknowledged by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("启用实验性低频续行？") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 380.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("• 仅对已加入高性能规则的可信 Origin 生效。")
+                Text("• 页面后台化后会短暂启用 WebView DevTools，通常约 1–2 秒，随后立即关闭并记录诊断。")
+                Text("• 在端口开放窗口内，已授权 ADB shell 可能检查或修改页面内容。")
+                Text("• 该机制使用非公开产品能力，WebView/Android 更新后可能失效或改变行为。")
+                Text("• 实测只能避免完全冻结；定时器、Worker、网络仍受后台/Doze 节流。")
+                Row {
+                    Checkbox(checked = acknowledged, onCheckedChange = { acknowledged = it })
+                    Text(
+                        "我理解安全风险和低频能力边界，并确认仅用于可信网站",
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = acknowledged, onClick = onConfirm) { Text("确认启用") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
+}
+
+@Composable
 internal fun HighPerformanceHttpWarningDialog(
     originOrUrl: String,
     onDismiss: () -> Unit,

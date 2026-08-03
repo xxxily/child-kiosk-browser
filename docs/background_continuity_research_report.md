@@ -4,7 +4,7 @@
 > 测试环境：OnePlus PHB110 · Android 16 (API 36) · Google WebView 150.0.7871.181
 > 原始结论：**三条技术路线均已实证证伪**，当时基线为 v0.4.21；2026-08-03 的后续结论见下方“深研更新”。
 
-> **深研更新（2026-08-03）**：本文的“唯一恢复路径”结论是针对公开、受支持的 Android WebView API。隔离 PoC 已在 OnePlus 6 / Android 10 / WebView 150 上验证 DevTools/CDP `frozen → active` 能解除或阻止完全冻结，并可由 APK 同 UID 自己操作；同一页面/renderer 已存活 7.45 小时且通过前台恢复和 IME。但主线程 timer/fetch 在 hidden 约 5 分钟后仍降为约 60 秒一次，2 小时 WakeLock 到期后又出现 CPU suspend 间隙，所以它不是前台级持续运行，也尚未在本文的 Android 16 生产基线设备上验证。详见 [background_continuity_deep_research.md](background_continuity_deep_research.md)。
+> **深研更新（2026-08-03）**：本文的“唯一恢复路径”结论是针对公开、受支持的 Android WebView API。隔离 PoC 已在 OnePlus 6 / Android 10 / WebView 150 上验证 DevTools/CDP `frozen → active` 能解除或阻止完全冻结，并可由 APK 同 UID 自己操作；同一页面/renderer 已存活 7.45 小时且通过前台恢复和 IME。但主线程 timer/fetch 在 hidden 约 5 分钟后仍降为约 60 秒一次，2 小时 WakeLock 到期后又出现 CPU suspend 间隙，所以它不是前台级持续运行。生产实现已在 v0.4.23 候选中加入默认关闭、可信 Origin 限定、短租约和风险确认的实验性低频续行；Android 16 设备闭环仍需现场验证，不能把它表述成前台级保证。详见 [background_continuity_deep_research.md](background_continuity_deep_research.md)。
 
 ---
 
@@ -165,6 +165,7 @@
 | v0.4.19–20 | Overlay v2（SHOW_WHEN_LOCKED + forceRedraw + 权限） | ❌ 页面丢失 |
 | **v0.4.21** | **回退 Overlay v2，最终基线** | ✅ 页面不丢、冻结+前台恢复 |
 | **v0.4.22** | **真实 Page Visibility 观测 + 无安全 Keyguard 条件化路径** | ✅ Android 10 已验证；Android 16/OEM 需逐机复测 |
+| **v0.4.23** | **默认关闭的实验性 CDP 低频续行** | ⚠️ 仅可信 Origin、短租约、明确风险确认；避免完全 freeze 但不保证前台级调度 |
 
 ---
 

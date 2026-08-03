@@ -71,6 +71,15 @@ internal fun HighPerformanceStatusSummaryCard(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
+            "实验性低频续行：${if (persistedState.experimentalCdpContinuityEnabled) "已开启（高风险）" else "关闭"}",
+            fontSize = 11.sp,
+            color = if (persistedState.experimentalCdpContinuityEnabled) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
+        )
+        Text(
             "最近启动：${formatTimestamp(activeStatus?.lastSessionStartedAt ?: 0L)}；最近停止：${formatTimestamp(activeStatus?.lastSessionStoppedAt ?: 0L)}",
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -134,6 +143,65 @@ internal fun HighPerformanceEnableCard(
         ) {
             Text("清空全部规则")
         }
+    }
+}
+
+@Composable
+internal fun ExperimentalCdpContinuityCard(
+    enabled: Boolean,
+    busy: Boolean,
+    highPerformanceEnabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    HighPerformanceCard {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val compact = maxWidth < 360.dp
+            val description = if (!highPerformanceEnabled) {
+                "需先启用高性能持续运行；打开后仅作用于可信 Origin。"
+            } else {
+                "页面进入后台后短暂开放本进程 DevTools，发送一次生命周期 edge 后立即关闭。"
+            }
+            if (compact) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("实验性低频续行", fontWeight = FontWeight.Bold)
+                    Text(description, fontSize = 11.sp, lineHeight = 17.sp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(if (enabled) "已开启（高风险）" else "默认关闭", fontSize = 12.sp)
+                        Switch(
+                            checked = enabled,
+                            enabled = !busy && highPerformanceEnabled,
+                            onCheckedChange = onEnabledChange
+                        )
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("实验性低频续行", fontWeight = FontWeight.Bold)
+                        Text(description, fontSize = 11.sp, lineHeight = 17.sp)
+                    }
+                    Switch(
+                        checked = enabled,
+                        enabled = !busy && highPerformanceEnabled,
+                        onCheckedChange = onEnabledChange
+                    )
+                }
+            }
+        }
+        Text(
+            "Android 16 / WebView 150 实测可避免约 60 秒后的完全冻结，但后台定时器、Worker 与网络仍可能被节流到低频；不保证前台级持续运行。",
+            fontSize = 11.sp,
+            lineHeight = 17.sp,
+            color = MaterialTheme.colorScheme.error
+        )
     }
 }
 

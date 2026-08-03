@@ -1,7 +1,8 @@
 # WebView background-continuity CDP PoC runbook
 
 This runbook reproduces the isolated `continuity-poc` experiments. It does not enable the mechanism
-in the production `app` module.
+in the production `app` module; v0.4.23 production integration is documented separately in
+[`experimental_cdp_continuity.md`](experimental_cdp_continuity.md).
 
 ## What the PoC measures
 
@@ -87,7 +88,6 @@ in_app_cdp_edge_succeeded
 If the page is still naturally visible, the required result is instead:
 
 ```text
-in_app_cdp_edge_scheduled
 in_app_cdp_edge_started
 in_app_cdp_edge_skipped reason=page_still_visible
 ```
@@ -102,6 +102,42 @@ No ADB forward should be required:
 ```bash
 adb -s "$ADB_SERIAL" forward --list
 ```
+
+## Temporary debugging exposure
+
+This variant keeps WebView debugging disabled while the page is foregrounded. After `onStop()`, it
+briefly enables the same-UID DevTools endpoint, sends the lifecycle edge, then disables debugging on
+the main thread and verifies that the local endpoint no longer accepts connections:
+
+```bash
+adb -s "$ADB_SERIAL" shell am force-stop site.anzz.childkiosk.continuitypoc
+adb -s "$ADB_SERIAL" shell am start \
+  -n site.anzz.childkiosk.continuitypoc/.ContinuityProbeActivity \
+  --es session I-temporary-in-app-cdp \
+  --ez debugging false \
+  --ez automatic_cdp_edge true \
+  --ez temporary_cdp_debugging true
+```
+
+The required log sequence is:
+
+```text
+temporary_webview_debugging_enabled
+in_app_cdp_edge_scheduled
+in_app_cdp_edge_started
+freeze
+resume
+in_app_cdp_edge_succeeded
+temporary_webview_debugging_disabled
+temporary_webview_debug_socket_closed
+```
+
+Also confirm through `/proc/net/unix` that `webview_devtools_remote_<pid>` is absent before
+backgrounding, appears only during the edge, and disappears after the close event. Continue the
+screen-off observation for at least seven minutes to cover both the automatic-freeze window and the
+later hidden-page throttling window. A closed endpoint limits exposure but does not make this a
+general security boundary: while the endpoint is briefly open, an authorized ADB shell can still
+inspect or mutate the page.
 
 ## Export and analyze
 
@@ -178,5 +214,9 @@ On OnePlus 6 / Android 10 / Google WebView `150.0.7871.181`:
   six minutes, and reproduced the same visible/one-second/15-second behavior. The no-Keyguard
   screen-off result therefore does not depend on DevTools.
 
-Android 16, navigation, renderer-rebuild, renewable-WakeLock long-duration execution, power/thermal,
-and broader OEM closure are still required.
+Android 16 / WebView 150 production integration is now represented by the opt-in v0.4.23 path in
+the main app. The isolated PoC remains the preferred first-line diagnostic when validating a new
+WebView/OEM because it makes socket lifetime and the lifecycle edge independently observable.
+A successful PoC run does not certify the production path: repeat target matching, navigation,
+renderer-rebuild, renewable-WakeLock long-duration execution, power/thermal, and broader OEM
+security closure on the actual release APK.

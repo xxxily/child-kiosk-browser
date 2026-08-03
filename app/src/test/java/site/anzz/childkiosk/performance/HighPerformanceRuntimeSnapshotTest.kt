@@ -12,6 +12,7 @@ class HighPerformanceRuntimeSnapshotTest {
         val snapshot = HighPerformanceRuntimeSnapshot(
             configVersion = 42L,
             enabled = true,
+            experimentalCdpContinuityEnabled = true,
             generatedAt = 100L,
             rules = listOf(
                 rule(id = "b", origin = "https://b.example", updatedAt = 3L),
@@ -22,8 +23,21 @@ class HighPerformanceRuntimeSnapshotTest {
         val parsed = HighPerformanceRuntimeSnapshot.parseOrDisabled(snapshot.toJsonString())
 
         assertTrue(parsed.enabled)
+        assertTrue(parsed.experimentalCdpContinuityEnabled)
         assertEquals(42L, parsed.configVersion)
         assertEquals(listOf("https://b.example", "https://example.com"), parsed.rules.map { it.origin })
+    }
+
+    @Test
+    fun snapshotWithoutExperimentalFieldDefaultsToDisabled() {
+        val json = validJson().apply {
+            remove("experimentalCdpContinuityEnabled")
+        }
+
+        val parsed = HighPerformanceRuntimeSnapshot.parseOrDisabled(json.toString())
+
+        assertTrue(parsed.enabled)
+        assertFalse(parsed.experimentalCdpContinuityEnabled)
     }
 
     @Test

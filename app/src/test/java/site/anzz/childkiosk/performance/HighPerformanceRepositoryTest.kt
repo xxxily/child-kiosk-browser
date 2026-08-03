@@ -73,6 +73,9 @@ class HighPerformanceRepositoryTest {
     fun enableNeedsRiskAcknowledgementAndHttpNeedsExplicitConfirmation() = runBlocking {
         assertFails<IllegalArgumentException> { repository.setEnabled(true) }
         assertFails<IllegalArgumentException> {
+            repository.setExperimentalCdpContinuityEnabled(true)
+        }
+        assertFails<IllegalArgumentException> {
             repository.addOrUpdateManualRule("http://192.168.1.10")
         }
 
@@ -83,6 +86,26 @@ class HighPerformanceRepositoryTest {
         assertEquals("http://192.168.1.10", confirmed.state.rules.single().origin)
         assertFails<IllegalArgumentException> {
             repository.setRuleIncludeSubdomains(confirmed.state.rules.single().id, true)
+        }
+        Unit
+    }
+
+    @Test
+    fun experimentalContinuityRequiresHighPerformanceAndIsClearedWhenDisabled(): Unit = runBlocking {
+        val enabled = repository.acknowledgeRiskAndEnable()
+        assertTrue(enabled.state.enabled)
+
+        val experimental = repository.setExperimentalCdpContinuityEnabled(true)
+        assertTrue(experimental.state.experimentalCdpContinuityEnabled)
+        assertTrue(experimental.snapshot.experimentalCdpContinuityEnabled)
+
+        val disabled = repository.setEnabled(false)
+        assertFalse(disabled.state.enabled)
+        assertFalse(disabled.state.experimentalCdpContinuityEnabled)
+        assertFalse(disabled.snapshot.experimentalCdpContinuityEnabled)
+
+        assertFails<IllegalArgumentException> {
+            repository.setExperimentalCdpContinuityEnabled(true)
         }
         Unit
     }

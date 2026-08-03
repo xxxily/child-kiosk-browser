@@ -1,10 +1,11 @@
-package site.anzz.childkiosk.continuitypoc
+package site.anzz.childkiosk.performance.cdp
 
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
 import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
+import site.anzz.childkiosk.performance.HighPerformanceOriginParser
 import java.io.ByteArrayOutputStream
 import java.io.EOFException
 import java.io.InputStream
@@ -14,78 +15,90 @@ import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.security.SecureRandom
 
-internal data class DevToolsTarget(
+internal data class RestrictedDevToolsTarget(
     val id: String,
-    val url: String,
     val webSocketDebuggerUrl: String
 )
 
-internal enum class LifecycleEdgeOutcome {
+internal enum class RestrictedLifecycleEdgeOutcome {
     SENT,
-    PAGE_STILL_VISIBLE
+    PAGE_STILL_VISIBLE,
+    SESSION_CHANGED
 }
 
-internal class LocalDevToolsClient(
-    private val socketName: String,
-    private val targetUrlHint: String
+/** Minimal same-UID CDP client. It exposes only target matching and Page lifecycle commands. */
+internal class RestrictedDevToolsClient(
+    private val socketName: String
 ) {
     private val random = SecureRandom()
 
-    fun discoverTarget(timeoutMs: Long, shouldContinue: () -> Boolean): DevToolsTarget {
+    fun discoverSessionTarget(
+        expectedOrigin: String,
+        heartbeatToken: String,
+        timeoutMs: Long,
+        shouldContinue: () -> Boolean
+    ): RestrictedDevToolsTarget {
         val deadline = System.currentTimeMillis() + timeoutMs
-        var lastTargets = emptyList<String>()
-        var lastFailure: Throwable? = null
         while (System.currentTimeMillis() < deadline && shouldContinue()) {
             runCatching { fetchTargets() }
-                .onSuccess { targets ->
-                    lastTargets = targets.map(DevToolsTarget::url)
-                    targets.firstOrNull { target -> target.url.contains(targetUrlHint) }?.let {
-                        return it
-                    }
+                .getOrDefault(emptyList())
+                .asSequence()
+                .filter { target -> targetOrigin(target.url) == expectedOrigin }
+                .firstOrNull { target ->
+                    runCatching {
+                        targetMatchesSession(target, expectedOrigin, heartbeatToken)
+                    }.getOrDefault(false)
                 }
-                .onFailure { lastFailure = it }
+                ?.let { target ->
+                    return RestrictedDevToolsTarget(target.id, target.webSocketDebuggerUrl)
+                }
             Thread.sleep(TARGET_RETRY_DELAY_MS)
         }
-        error(
-            "target_not_found urls=$lastTargets last=${lastFailure?.javaClass?.simpleName}:" +
-                lastFailure?.message.orEmpty().take(160)
-        )
+        error("session_target_not_found")
     }
 
     fun sendLifecycleEdgeWhenHidden(
-        target: DevToolsTarget,
+        target: RestrictedDevToolsTarget,
+        expectedOrigin: String,
+        heartbeatToken: String,
         edgeDelayMs: Long,
         hiddenConfirmationTimeoutMs: Long,
         shouldContinue: () -> Boolean
-    ): LifecycleEdgeOutcome {
-        val path = URI(target.webSocketDebuggerUrl).rawPath
-            ?.takeIf(String::isNotBlank)
-            ?: error("missing_websocket_path")
-        LocalSocket().use { socket ->
-            socket.connect(address())
-            socket.soTimeout = SOCKET_TIMEOUT_MS
-            val input = socket.inputStream
-            val output = socket.outputStream
-            performWebSocketHandshake(input, output, path)
+    ): RestrictedLifecycleEdgeOutcome {
+        connectWebSocket(target.webSocketDebuggerUrl).use { connection ->
             var commandId = 1
+            if (!evaluateSessionMatch(
+                    connection.input,
+                    connection.output,
+                    commandId++,
+                    expectedOrigin,
+                    heartbeatToken
+                )
+            ) {
+                return RestrictedLifecycleEdgeOutcome.SESSION_CHANGED
+            }
             val hiddenDeadline = System.currentTimeMillis() + hiddenConfirmationTimeoutMs
             var pageHidden = false
             while (System.currentTimeMillis() < hiddenDeadline && shouldContinue()) {
-                pageHidden = evaluateDocumentHidden(input, output, commandId++)
+                pageHidden = evaluateDocumentHidden(connection.input, connection.output, commandId++)
                 if (pageHidden) break
                 Thread.sleep(HIDDEN_RETRY_DELAY_MS)
             }
-            if (!pageHidden) {
-                runCatching { writeFrame(output, ByteArray(0), OPCODE_CLOSE) }
-                return LifecycleEdgeOutcome.PAGE_STILL_VISIBLE
-            }
+            if (!pageHidden) return RestrictedLifecycleEdgeOutcome.PAGE_STILL_VISIBLE
             check(shouldContinue()) { "cancelled_before_frozen" }
-            sendLifecycleState(input, output, commandId++, "frozen")
-            Thread.sleep(edgeDelayMs)
-            check(shouldContinue()) { "cancelled_before_active" }
-            sendLifecycleState(input, output, commandId, "active")
-            runCatching { writeFrame(output, ByteArray(0), OPCODE_CLOSE) }
-            return LifecycleEdgeOutcome.SENT
+            var frozenSent = false
+            try {
+                sendLifecycleState(connection.input, connection.output, commandId++, "frozen")
+                frozenSent = true
+                Thread.sleep(edgeDelayMs)
+            } finally {
+                if (frozenSent) {
+                    runCatching {
+                        sendLifecycleState(connection.input, connection.output, commandId, "active")
+                    }
+                }
+            }
+            return RestrictedLifecycleEdgeOutcome.SENT
         }
     }
 
@@ -98,13 +111,79 @@ internal class LocalDevToolsClient(
         return !isEndpointReachable()
     }
 
-    private fun isEndpointReachable(): Boolean {
-        return runCatching {
-            LocalSocket().use { socket -> socket.connect(address()) }
-        }.isSuccess
+    private fun targetMatchesSession(
+        target: ListedTarget,
+        expectedOrigin: String,
+        heartbeatToken: String
+    ): Boolean {
+        connectWebSocket(target.webSocketDebuggerUrl).use { connection ->
+            return evaluateSessionMatch(
+                connection.input,
+                connection.output,
+                id = 1,
+                expectedOrigin = expectedOrigin,
+                heartbeatToken = heartbeatToken
+            )
+        }
     }
 
-    private fun fetchTargets(): List<DevToolsTarget> {
+    private fun evaluateSessionMatch(
+        input: InputStream,
+        output: OutputStream,
+        id: Int,
+        expectedOrigin: String,
+        heartbeatToken: String
+    ): Boolean {
+        val expression = """
+            (function() {
+              var runtime = window.__childKioskHighPerformanceRuntime;
+              return window.top === window &&
+                location.origin === ${JSONObject.quote(expectedOrigin)} &&
+                !!runtime && runtime.active === true &&
+                runtime.token === ${JSONObject.quote(heartbeatToken)};
+            })()
+        """.trimIndent()
+        return evaluateBoolean(input, output, id, expression)
+    }
+
+    private fun evaluateDocumentHidden(input: InputStream, output: OutputStream, id: Int): Boolean {
+        return evaluateBoolean(input, output, id, "document.hidden === true")
+    }
+
+    private fun evaluateBoolean(
+        input: InputStream,
+        output: OutputStream,
+        id: Int,
+        expression: String
+    ): Boolean {
+        val result = sendCommand(
+            input = input,
+            output = output,
+            id = id,
+            method = "Runtime.evaluate",
+            params = JSONObject()
+                .put("expression", expression)
+                .put("returnByValue", true)
+        )
+        return result.optJSONObject("result")?.optBoolean("value", false) == true
+    }
+
+    private fun sendLifecycleState(
+        input: InputStream,
+        output: OutputStream,
+        id: Int,
+        state: String
+    ) {
+        sendCommand(
+            input = input,
+            output = output,
+            id = id,
+            method = "Page.setWebLifecycleState",
+            params = JSONObject().put("state", state)
+        )
+    }
+
+    private fun fetchTargets(): List<ListedTarget> {
         LocalSocket().use { socket ->
             socket.connect(address())
             socket.soTimeout = SOCKET_TIMEOUT_MS
@@ -126,10 +205,26 @@ internal class LocalDevToolsClient(
                     val url = json.optString("url")
                     val websocketUrl = json.optString("webSocketDebuggerUrl")
                     if (id.isNotBlank() && url.isNotBlank() && websocketUrl.isNotBlank()) {
-                        add(DevToolsTarget(id, url, websocketUrl))
+                        add(ListedTarget(id, url, websocketUrl))
                     }
                 }
             }
+        }
+    }
+
+    private fun connectWebSocket(webSocketDebuggerUrl: String): WebSocketConnection {
+        val path = URI(webSocketDebuggerUrl).rawPath
+            ?.takeIf(String::isNotBlank)
+            ?: error("missing_websocket_path")
+        val socket = LocalSocket()
+        return runCatching {
+            socket.connect(address())
+            socket.soTimeout = SOCKET_TIMEOUT_MS
+            performWebSocketHandshake(socket.inputStream, socket.outputStream, path)
+            WebSocketConnection(socket, socket.inputStream, socket.outputStream)
+        }.getOrElse { failure ->
+            runCatching { socket.close() }
+            throw failure
         }
     }
 
@@ -158,38 +253,6 @@ internal class LocalDevToolsClient(
         }
     }
 
-    private fun evaluateDocumentHidden(
-        input: InputStream,
-        output: OutputStream,
-        id: Int
-    ): Boolean {
-        val result = sendCommand(
-            input = input,
-            output = output,
-            id = id,
-            method = "Runtime.evaluate",
-            params = JSONObject()
-                .put("expression", "document.hidden === true")
-                .put("returnByValue", true)
-        )
-        return result.optJSONObject("result")?.optBoolean("value", false) == true
-    }
-
-    private fun sendLifecycleState(
-        input: InputStream,
-        output: OutputStream,
-        id: Int,
-        state: String
-    ) {
-        sendCommand(
-            input = input,
-            output = output,
-            id = id,
-            method = "Page.setWebLifecycleState",
-            params = JSONObject().put("state", state)
-        )
-    }
-
     private fun sendCommand(
         input: InputStream,
         output: OutputStream,
@@ -205,10 +268,9 @@ internal class LocalDevToolsClient(
             .toByteArray(Charsets.UTF_8)
         writeFrame(output, payload, OPCODE_TEXT)
         while (true) {
-            val message = readMessage(input, output)
-            val response = JSONObject(message.toString(Charsets.UTF_8))
+            val response = JSONObject(readMessage(input, output).toString(Charsets.UTF_8))
             if (response.optInt("id", -1) != id) continue
-            check(!response.has("error")) { "cdp_${method}_${response.optJSONObject("error")}" }
+            check(!response.has("error")) { "cdp_command_failed" }
             return response.optJSONObject("result") ?: JSONObject()
         }
     }
@@ -253,7 +315,7 @@ internal class LocalDevToolsClient(
             } else if (length == 127L) {
                 length = ByteBuffer.wrap(readExactly(input, 8)).long
             }
-            check(length in 0..MAX_FRAME_BYTES) { "websocket_frame_too_large=$length" }
+            check(length in 0..MAX_FRAME_BYTES) { "websocket_frame_too_large" }
             val mask = if (masked) readExactly(input, 4) else null
             var payload = readExactly(input, length.toInt())
             if (mask != null) {
@@ -275,8 +337,7 @@ internal class LocalDevToolsClient(
 
     private fun readHttpResponse(input: InputStream, readBody: Boolean = true): HttpResponse {
         val headerBytes = readUntil(input, HTTP_HEADER_END, MAX_HTTP_HEADER_BYTES)
-        val headerText = headerBytes.toString(Charsets.US_ASCII)
-        val lines = headerText.split("\r\n")
+        val lines = headerBytes.toString(Charsets.US_ASCII).split("\r\n")
         val statusCode = lines.firstOrNull()?.split(' ')?.getOrNull(1)?.toIntOrNull()
             ?: error("invalid_http_status")
         val headers = buildMap {
@@ -329,7 +390,21 @@ internal class LocalDevToolsClient(
         return value
     }
 
+    private fun isEndpointReachable(): Boolean = runCatching {
+        LocalSocket().use { socket -> socket.connect(address()) }
+    }.isSuccess
+
+    private fun targetOrigin(url: String): String? = runCatching {
+        HighPerformanceOriginParser.extractFromUrl(url).value
+    }.getOrNull()
+
     private fun address() = LocalSocketAddress(socketName, LocalSocketAddress.Namespace.ABSTRACT)
+
+    private data class ListedTarget(
+        val id: String,
+        val url: String,
+        val webSocketDebuggerUrl: String
+    )
 
     private data class HttpResponse(
         val statusCode: Int,
@@ -337,12 +412,22 @@ internal class LocalDevToolsClient(
         val body: ByteArray
     )
 
+    private class WebSocketConnection(
+        private val socket: LocalSocket,
+        val input: InputStream,
+        val output: OutputStream
+    ) : AutoCloseable {
+        override fun close() {
+            runCatching { socket.close() }
+        }
+    }
+
     companion object {
         private val HTTP_HEADER_END = "\r\n\r\n".toByteArray(Charsets.US_ASCII)
         private const val WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-        private const val SOCKET_TIMEOUT_MS = 5_000
-        private const val TARGET_RETRY_DELAY_MS = 250L
-        private const val HIDDEN_RETRY_DELAY_MS = 200L
+        private const val SOCKET_TIMEOUT_MS = 2_000
+        private const val TARGET_RETRY_DELAY_MS = 100L
+        private const val HIDDEN_RETRY_DELAY_MS = 100L
         private const val ENDPOINT_RETRY_DELAY_MS = 100L
         private const val MAX_HTTP_HEADER_BYTES = 64 * 1024
         private const val MAX_FRAME_BYTES = 4L * 1024L * 1024L

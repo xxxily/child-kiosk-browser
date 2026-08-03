@@ -7,6 +7,8 @@ import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotNull
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -227,10 +229,37 @@ class HighPerformanceSessionControllerTest {
         )
     }
 
-    private fun trustedSnapshot(): HighPerformanceRuntimeSnapshot {
+    @Test
+    fun continuityCandidateRequiresExperimentalModeAndCurrentTrustedToken() {
+        val token = HighPerformanceSessionController.prepareJavascriptHeartbeat(webView)
+        requireNotNull(token)
+
+        assertNull(HighPerformanceSessionController.continuityCandidate(OWNER_ID))
+
+        HighPerformanceSessionController.applySnapshot(
+            trustedSnapshot(experimentalCdpContinuityEnabled = true, configVersion = 2),
+            source = "test_experimental_enabled"
+        )
+        val candidate = HighPerformanceSessionController.continuityCandidate(OWNER_ID)
+        assertNotNull(candidate)
+        assertEquals(token, candidate?.heartbeatToken)
+        assertEquals("https://trusted.example", candidate?.origin)
+
+        HighPerformanceSessionController.onNavigationStarted(
+            webView,
+            "https://other.example/app"
+        )
+        assertNull(HighPerformanceSessionController.continuityCandidate(OWNER_ID))
+    }
+
+    private fun trustedSnapshot(
+        experimentalCdpContinuityEnabled: Boolean = false,
+        configVersion: Long = 1
+    ): HighPerformanceRuntimeSnapshot {
         return HighPerformanceRuntimeSnapshot(
-            configVersion = 1,
+            configVersion = configVersion,
             enabled = true,
+            experimentalCdpContinuityEnabled = experimentalCdpContinuityEnabled,
             generatedAt = 1,
             rules = listOf(
                 HighPerformanceRuntimeRule(

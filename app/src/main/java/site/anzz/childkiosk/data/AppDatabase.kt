@@ -21,7 +21,7 @@ import site.anzz.childkiosk.performance.HighPerformanceOriginRuleEntity
         HighPerformanceConfigEntity::class,
         HighPerformanceOriginRuleEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -43,7 +43,13 @@ abstract class AppDatabase : RoomDatabase() {
                     "child_kiosk_database"
                 )
                 .enableMultiInstanceInvalidation()
-                .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                .addMigrations(
+                    MIGRATION_3_4,
+                    MIGRATION_4_5,
+                    MIGRATION_5_6,
+                    MIGRATION_6_7,
+                    MIGRATION_7_8
+                )
                 .fallbackToDestructiveMigration()
                 .addCallback(DatabaseCallback(context.applicationContext))
                 .build()
@@ -264,6 +270,16 @@ abstract class AppDatabase : RoomDatabase() {
                         id, enabled, risk_acknowledged_at, config_version, updated_at
                     ) VALUES (1, 0, NULL, 0, 0)
                     """.trimIndent()
+                )
+            }
+        }
+
+        internal val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE high_performance_configs " +
+                        "ADD COLUMN experimental_cdp_continuity_enabled " +
+                        "INTEGER NOT NULL DEFAULT 0"
                 )
             }
         }

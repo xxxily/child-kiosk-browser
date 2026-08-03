@@ -4,7 +4,7 @@
 > Chromium 证据版本：`150.0.7871.181`  
 > 历史生产基线：OnePlus PHB110 · Android 16 (API 36) · Google WebView 150  
 > CDP 隔离 PoC：OnePlus 6 (ONEPLUS A6000) · Android 10 (API 29, user/release-keys) · Google WebView 150  
-> 研究状态：源码结论及 Android 10 / M150 的 CDP A–H4、7.45 小时页面/renderer 存活、前台恢复和 IME 已完成；Android 16 上的 CDP、长时不间断业务调度、导航/renderer 重建、音频和自定义 Provider 仍待补齐  
+> 研究状态：源码结论及 Android 10 / M150 的 CDP A–H4、7.45 小时页面/renderer 存活、前台恢复和 IME 已完成；Android 16 已完成正式 Release 隔离 PoC 的临时 debugging 暴露、`frozen → active` 和 socket 关闭短时验证，生产 v0.4.23 路径、长时不间断业务调度、导航/renderer 重建、音频和自定义 Provider 仍待补齐
 > 关联基线：[background_continuity_research_report.md](background_continuity_research_report.md)、[high_performance_web_runtime.md](runbooks/high_performance_web_runtime.md)
 
 ## 结论摘要
@@ -373,10 +373,11 @@ AOSP/OEM 可以配置 provider 列表；含 GMS/Play Store 的生产镜像通常
 Android 10 + M150 已完成 A–H4：`active` 单独无效、`frozen → active` 有效、同 UID 本地控制有效、自然 hidden 门禁有效，且已经确认约 5 分钟后主线程/fetch 进入约 60 秒节流；同一页面/renderer 7.45 小时存活和 IME 也已通过，无安全 Keyguard 的纯息屏路径还完成了 debugging/CDP 全关闭复核。下一步不再重复这些短时对照，而是补齐：
 
 1. Android 16 + M150 同样矩阵，确认历史生产设备是否一致；
-2. 可续期 WakeLock 下的 1 小时/过夜业务延迟、Doze、断网/恢复和热控场景；
-3. 导航和 renderer 重建无副作用；
-4. WebView provider 升级后的回归测试；
-5. debugging 开启后的威胁模型和可接受部署范围。
+2. Android 16 正式生产 v0.4.23 的可信 Origin/token 匹配、临时 socket 关闭和七分钟以上真机闭环；
+3. 可续期 WakeLock 下的 1 小时/过夜业务延迟、Doze、断网/恢复和热控场景；
+4. 导航和 renderer 重建无副作用；
+5. WebView provider 升级后的回归测试；
+6. debugging 开启后的威胁模型和可接受部署范围。
 
 ### P1：同时建立内核上限
 
@@ -484,7 +485,7 @@ screen off / Activity stopped
 
 ### 12.1 v0.4.22 生产接入与 Android 10 自测结果
 
-生产接入最终采用上述“自然 visible + 明确降级”路径，没有把 CDP 带入正式模块：
+v0.4.22 生产接入采用上述“自然 visible + 明确降级”路径，没有把 CDP 带入正式模块：
 
 - `HighPerformancePageRuntime` 不再覆盖 `document.hidden` / `visibilityState`，也不再阻止
   `visibilitychange` / `freeze`；探针通过 `Document.prototype` 原生 getter 上报真实状态。
@@ -505,3 +506,18 @@ PoC 的 H4：该轮同时关闭 WebView debugging 和自动 CDP，仍复现自�
 
 该结果验证了生产状态机能识别 Android 10 设备上的自然息屏连续运行能力；Android 16 仍须
 按相同流程复测，若真实页面变 hidden，正式版本会显示 `HIDDEN_DEGRADED` 而不会伪造可见性。
+
+### 12.2 Android 16 临时暴露 PoC 与 v0.4.23 实验接入
+
+2026-08-03 在 OnePlus PHB110 / Android 16 / WebView 150 上，使用非 debuggable Release PoC
+验证了“前台 debugging 关闭，后台短暂开启”的同 UID 路径：事件出现
+`temporary_webview_debugging_enabled → freeze → resume → in_app_cdp_edge_succeeded`，随后
+`temporary_webview_debugging_disabled` 和 `temporary_webview_debug_socket_closed`；同一 PID、
+同一 load ID，临时暴露约 1.5 秒。关闭 socket 后的短时观察未出现第二次 freeze，但无线
+ADB 在 Doze 中离线，因此该次只能证明 Android 16 上短时 edge 与关闭机制成立，不能证明
+长时前台级调度。
+
+v0.4.23 因此加入默认关闭的生产实验开关，并额外收紧为：仅当前可信 Origin、随机心跳
+token 精确 target 匹配、真实 `document.hidden` 门禁、单次 edge、8 秒租约、5 秒强制关闭、
+恢复最新 Chrome Inspect 偏好和 socket 关闭诊断。该接入仍属于高风险实验能力，生产 Release
+真机七分钟以上、导航/renderer/IME 和 OEM 回归未完成前不得升级为通用承诺。

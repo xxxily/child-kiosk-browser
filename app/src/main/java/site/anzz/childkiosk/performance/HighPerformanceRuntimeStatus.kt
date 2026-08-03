@@ -247,6 +247,7 @@ data class HighPerformanceRuntimeStatus(
     val nativeHeartbeatAt: Long,
     val appliedConfigVersion: Long,
     val configuredRuleCount: Int,
+    val experimentalCdpContinuityEnabled: Boolean = false,
     val compositeState: HighPerformanceCompositeState,
     val notificationPermissionGranted: Boolean,
     val notificationsVisible: Boolean,
@@ -288,6 +289,7 @@ data class HighPerformanceRuntimeStatus(
         .put("nativeHeartbeatAt", nativeHeartbeatAt)
         .put("appliedConfigVersion", appliedConfigVersion)
         .put("configuredRuleCount", configuredRuleCount)
+        .put("experimentalCdpContinuityEnabled", experimentalCdpContinuityEnabled)
         .put("compositeState", compositeState.name)
         .put("notificationPermissionGranted", notificationPermissionGranted)
         .put("notificationsVisible", notificationsVisible)
@@ -316,7 +318,7 @@ data class HighPerformanceRuntimeStatus(
         })
 
     companion object {
-        const val STATUS_SCHEMA_VERSION = 4
+        const val STATUS_SCHEMA_VERSION = 5
         private const val MIN_SUPPORTED_STATUS_SCHEMA_VERSION = 3
         private const val MAX_PERSISTED_SESSIONS = 32
         private const val MAX_PERSISTED_EVENTS = 80
@@ -358,6 +360,10 @@ data class HighPerformanceRuntimeStatus(
                 nativeHeartbeatAt = json.optLong("nativeHeartbeatAt", 0L),
                 appliedConfigVersion = json.optLong("appliedConfigVersion", 0L),
                 configuredRuleCount = json.optInt("configuredRuleCount", 0),
+                experimentalCdpContinuityEnabled = json.optBoolean(
+                    "experimentalCdpContinuityEnabled",
+                    false
+                ),
                 compositeState = enumValueOrDefault(
                     json.optString("compositeState"),
                     HighPerformanceCompositeState.ERROR

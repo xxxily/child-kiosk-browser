@@ -49,6 +49,7 @@ data class HighPerformanceRuntimeSnapshot(
     val schemaVersion: Int = HIGH_PERFORMANCE_RUNTIME_SCHEMA_VERSION,
     val configVersion: Long,
     val enabled: Boolean,
+    val experimentalCdpContinuityEnabled: Boolean = false,
     val generatedAt: Long,
     val rules: List<HighPerformanceRuntimeRule>,
     val wakeLockLeaseMs: Long = DEFAULT_HIGH_PERFORMANCE_WAKE_LOCK_LEASE_MS,
@@ -78,6 +79,7 @@ data class HighPerformanceRuntimeSnapshot(
             .put(KEY_SCHEMA_VERSION, schemaVersion)
             .put(KEY_CONFIG_VERSION, configVersion)
             .put(KEY_ENABLED, enabled)
+            .put(KEY_EXPERIMENTAL_CDP_CONTINUITY_ENABLED, experimentalCdpContinuityEnabled)
             .put(KEY_GENERATED_AT, generatedAt)
             .put(KEY_WAKE_LOCK_LEASE_MS, wakeLockLeaseMs)
             .put(KEY_STOP_GRACE_PERIOD_MS, stopGracePeriodMs)
@@ -116,6 +118,7 @@ data class HighPerformanceRuntimeSnapshot(
             return HighPerformanceRuntimeSnapshot(
                 configVersion = configVersion.coerceAtLeast(0L),
                 enabled = false,
+                experimentalCdpContinuityEnabled = false,
                 generatedAt = generatedAt.coerceAtLeast(0L),
                 rules = emptyList()
             )
@@ -171,6 +174,13 @@ data class HighPerformanceRuntimeSnapshot(
                 HighPerformanceRuntimeSnapshot(
                     configVersion = observedVersion,
                     enabled = json.strictBoolean(KEY_ENABLED),
+                    experimentalCdpContinuityEnabled = if (
+                        json.has(KEY_EXPERIMENTAL_CDP_CONTINUITY_ENABLED)
+                    ) {
+                        json.strictBoolean(KEY_EXPERIMENTAL_CDP_CONTINUITY_ENABLED)
+                    } else {
+                        false
+                    },
                     generatedAt = json.strictLong(KEY_GENERATED_AT),
                     rules = parsedRules.sortedWith(
                         compareBy(HighPerformanceRuntimeRule::origin, HighPerformanceRuntimeRule::id)
@@ -188,6 +198,8 @@ data class HighPerformanceRuntimeSnapshot(
 private const val KEY_SCHEMA_VERSION = "schemaVersion"
 private const val KEY_CONFIG_VERSION = "configVersion"
 private const val KEY_ENABLED = "enabled"
+private const val KEY_EXPERIMENTAL_CDP_CONTINUITY_ENABLED =
+    "experimentalCdpContinuityEnabled"
 private const val KEY_GENERATED_AT = "generatedAt"
 private const val KEY_WAKE_LOCK_LEASE_MS = "wakeLockLeaseMs"
 private const val KEY_STOP_GRACE_PERIOD_MS = "stopGracePeriodMs"

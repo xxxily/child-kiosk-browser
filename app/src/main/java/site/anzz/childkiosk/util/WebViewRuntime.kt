@@ -10,6 +10,7 @@ import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
 import java.net.URL
+import site.anzz.childkiosk.performance.cdp.WebViewDebuggingGate
 
 object WebViewRuntime {
 
@@ -20,7 +21,10 @@ object WebViewRuntime {
         targetUrl: String,
         config: WebViewRuntimeConfig = KioskPrefs.getWebViewRuntimeConfig(context)
     ) {
-        WebView.setWebContentsDebuggingEnabled(config.chromeInspectEnabled)
+        WebViewDebuggingGate.applyPersistentPreference(config.chromeInspectEnabled)
+            .onFailure { failure ->
+                Log.w("ChildKioskWebView", "Failed to apply WebView debugging preference", failure)
+            }
         applyRenderMode(webView, context, config)
 
         CookieManager.getInstance().apply {

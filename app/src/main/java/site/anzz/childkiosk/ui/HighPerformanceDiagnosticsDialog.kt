@@ -476,7 +476,10 @@ private fun diagnosticText(result: HighPerformanceRuntimeStatusReadResult): Stri
         appendLine("updatedAt=${formatTimestamp(status.updatedAt)}")
         appendLine("nativeHeartbeatAt=${formatTimestamp(status.nativeHeartbeatAt)}")
         appendLine("stale=${result.stale} reason=${result.reason.orEmpty()}")
-        appendLine("configVersion=${status.appliedConfigVersion} rules=${status.configuredRuleCount}")
+        appendLine(
+            "configVersion=${status.appliedConfigVersion} rules=${status.configuredRuleCount} " +
+                "experimentalCdpContinuity=${status.experimentalCdpContinuityEnabled}"
+        )
         appendLine("state=${status.compositeState}")
         appendLine("notification=${status.notificationPermissionGranted}/${status.notificationsVisible}")
         appendLine("batteryIgnored=${status.ignoringBatteryOptimizations}")

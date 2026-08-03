@@ -25,6 +25,12 @@ internal data class HighPerformanceRendererGoneResult(
     val hadActiveSession: Boolean
 )
 
+internal data class HighPerformanceContinuityCandidate(
+    val sessionId: String,
+    val heartbeatToken: String,
+    val origin: String
+)
+
 internal fun shouldDeferForegroundServiceStart(
     serviceAlreadyActive: Boolean,
     ownerInForeground: Boolean
@@ -314,6 +320,30 @@ internal object HighPerformanceSessionController {
         } else {
             publishStatus()
         }
+    }
+
+    fun continuityCandidate(ownerId: String): HighPerformanceContinuityCandidate? {
+        ensureMainThread()
+        if (!runtimeSnapshot.enabled || !runtimeSnapshot.experimentalCdpContinuityEnabled) {
+            return null
+        }
+        val safeOwnerId = safeRuntimeId(ownerId)
+        return registrations.asSequence()
+            .filter { managed -> managed.ownerId == safeOwnerId && managed.visible }
+            .mapNotNull { managed ->
+                val session = managed.session ?: return@mapNotNull null
+                val heartbeatToken = session.jsHeartbeatToken ?: return@mapNotNull null
+                val currentUrl = managed.webView.get()?.url
+                    ?: managed.lastCommittedUrl
+                    ?: return@mapNotNull null
+                if (strictOriginOrNull(currentUrl) != session.origin) return@mapNotNull null
+                HighPerformanceContinuityCandidate(
+                    sessionId = session.tokenId,
+                    heartbeatToken = heartbeatToken,
+                    origin = session.origin
+                )
+            }
+            .firstOrNull()
     }
 
     /** Applies only monotonically newer/equal snapshots; a lower version can never revive old rules. */
@@ -1209,6 +1239,8 @@ internal object HighPerformanceSessionController {
             nativeHeartbeatAt = nativeHeartbeatAt,
             appliedConfigVersion = runtimeSnapshot.configVersion,
             configuredRuleCount = runtimeSnapshot.enabledRules.size,
+            experimentalCdpContinuityEnabled =
+                runtimeSnapshot.enabled && runtimeSnapshot.experimentalCdpContinuityEnabled,
             compositeState = compositeState(system, sessions),
             notificationPermissionGranted = system.notificationPermissionGranted,
             notificationsVisible = system.notificationsVisible,

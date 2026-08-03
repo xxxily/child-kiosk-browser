@@ -110,6 +110,7 @@ import site.anzz.childkiosk.performance.HighPerformanceRuntimePublisher
 import site.anzz.childkiosk.performance.HighPerformanceSessionController
 import site.anzz.childkiosk.performance.HighPerformanceTabMemoryCandidate
 import site.anzz.childkiosk.performance.HighPerformanceTabMemoryPolicy
+import site.anzz.childkiosk.performance.cdp.ExperimentalCdpContinuityController
 import site.anzz.childkiosk.ui.theme.ChildKioskTheme
 import site.anzz.childkiosk.util.filter.CosmeticFilterMatch
 import site.anzz.childkiosk.util.filter.FilterAction
@@ -412,6 +413,7 @@ open class WebViewActivity : ComponentActivity() {
     private var sessionStartTimeMs: Long = 0L
     private var currentPageLoading = false
     private var currentPageProgress = 0
+    private var activityStopped = false
     private var navigationRootHost = ""
     private var launchedWebAppId: Int? = null
     private var lastRecordedHistoryUrl: String = ""
@@ -452,6 +454,17 @@ open class WebViewActivity : ComponentActivity() {
             val policy = WebViewSystemUiPolicyBridge.read(intent) ?: return
             runtimeConfig = runtimeConfig.copy(normalSystemBars = policy.normalSystemBars)
             applySystemUiMode()
+        }
+    }
+    private val webViewDebuggingPolicyReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val policy = WebViewDebuggingPolicyBridge.read(intent) ?: return
+            runtimeConfig = runtimeConfig.copy(
+                chromeInspectEnabled = policy.chromeInspectEnabled
+            )
+            ExperimentalCdpContinuityController.updatePersistentDebuggingPreference(
+                policy.chromeInspectEnabled
+            )
         }
     }
     private val pullToRefreshPageOptOut = ConcurrentHashMap<WebView, Boolean>()
@@ -597,11 +610,22 @@ open class WebViewActivity : ComponentActivity() {
             WebViewSystemUiPolicyBridge.intentFilter(),
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
+        ContextCompat.registerReceiver(
+            this,
+            webViewDebuggingPolicyReceiver,
+            WebViewDebuggingPolicyBridge.intentFilter(),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         WebViewHostRuntime.register(this)?.finishForHostReplacement()
         recordTaskLifecycle("activity_created", intent)
         HighPerformanceSessionController.initialize(this, runtimeConfig.highPerformanceSnapshot)
         HighPerformanceRuntimeBridge.setSnapshotAppliedListener(this) { snapshot ->
             runtimeConfig = runtimeConfig.copy(highPerformanceSnapshot = snapshot)
+            if (!snapshot.enabled || !snapshot.experimentalCdpContinuityEnabled) {
+                cancelExperimentalCdpContinuity("config_disabled")
+            } else if (activityStopped) {
+                scheduleExperimentalCdpContinuity()
+            }
         }
         HighPerformanceSessionController.onActivityStateChanged(
             highPerformanceOwnerId,
@@ -646,6 +670,8 @@ open class WebViewActivity : ComponentActivity() {
     }
 
     override fun onStart() {
+        activityStopped = false
+        cancelExperimentalCdpContinuity("activity_start")
         super.onStart()
         WebViewHostRuntime.register(this)
         HighPerformanceDiagnostics.record(type = "activity_started", reason = "lifecycle")
@@ -694,6 +720,7 @@ open class WebViewActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        activityStopped = true
         HighPerformanceDiagnostics.record(type = "activity_stopped", reason = "lifecycle")
         HighPerformanceSessionController.onActivityStateChanged(
             highPerformanceOwnerId,
@@ -731,11 +758,17 @@ open class WebViewActivity : ComponentActivity() {
             stopAllNativeLocationRequests("activity_stop")
         }
         super.onStop()
+        if (!isFinishing && !isChangingConfigurations) {
+            scheduleExperimentalCdpContinuity()
+        }
     }
 
     override fun onDestroy() {
+        activityStopped = true
+        cancelExperimentalCdpContinuity("activity_destroy")
         cancelSystemUiRecovery()
         unregisterReceiver(systemUiPolicyReceiver)
+        unregisterReceiver(webViewDebuggingPolicyReceiver)
         HighPerformanceRuntimeBridge.clearSnapshotAppliedListener(this)
         WebViewHostRuntime.unregister(this)
         recordTaskLifecycle("activity_destroyed", intent)
@@ -796,6 +829,22 @@ open class WebViewActivity : ComponentActivity() {
             webViewFilterRuntime.close()
         }
         super.onDestroy()
+    }
+
+    private fun scheduleExperimentalCdpContinuity() {
+        val snapshot = runtimeConfig.highPerformanceSnapshot
+        ExperimentalCdpContinuityController.schedule(
+            candidate = HighPerformanceSessionController.continuityCandidate(
+                highPerformanceOwnerId
+            ),
+            enabled = snapshot.enabled && snapshot.experimentalCdpContinuityEnabled
+        )
+    }
+
+    private fun cancelExperimentalCdpContinuity(reason: String) {
+        ExperimentalCdpContinuityController.cancel(
+            reason = reason
+        )
     }
 
     fun openFileChooser(
@@ -1966,6 +2015,9 @@ open class WebViewActivity : ComponentActivity() {
             launchedConfig.highPerformanceSnapshot.configVersion
         )
         runtimeConfig = launchedConfig.copy(highPerformanceSnapshot = publishedSnapshot)
+        if (!publishedSnapshot.enabled || !publishedSnapshot.experimentalCdpContinuityEnabled) {
+            cancelExperimentalCdpContinuity("new_intent_config_disabled")
+        }
         HighPerformanceSessionController.applySnapshot(
             publishedSnapshot,
             source = "activity_new_intent"
@@ -2572,6 +2624,7 @@ open class WebViewActivity : ComponentActivity() {
                 recordBrowserHistory(pageUrl, pageTitle)
             },
             onPageStartedInActivity = { webView, pageUrl ->
+                cancelExperimentalCdpContinuity("navigation_started")
                 pullToRefreshPageOptOut[webView] = false
                 maybeWarmupNativeLocation(pageUrl)
                 HighPerformanceSessionController.onNavigationStarted(webView, pageUrl)
@@ -2584,6 +2637,7 @@ open class WebViewActivity : ComponentActivity() {
                 HighPerformanceSessionController.prepareJavascriptHeartbeat(webView)?.let { token ->
                     HighPerformancePageRuntime.activate(webView, token)
                 }
+                if (activityStopped) scheduleExperimentalCdpContinuity()
             },
             onPageFinishedInActivity = { webView, pageUrl ->
                 updatePullToRefreshPagePolicy(webView, pageUrl)
@@ -2591,11 +2645,13 @@ open class WebViewActivity : ComponentActivity() {
                 HighPerformanceSessionController.prepareJavascriptHeartbeat(webView)?.let { token ->
                     HighPerformancePageRuntime.activate(webView, token)
                 }
+                if (activityStopped) scheduleExperimentalCdpContinuity()
                 tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
                     recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
                 }
             },
             onRendererProcessGoneInActivity = { webView, detail ->
+                cancelExperimentalCdpContinuity("renderer_gone")
                 handleHighPerformanceRendererGone(webView, detail)
             },
             onError = { error ->
@@ -2856,6 +2912,7 @@ open class WebViewActivity : ComponentActivity() {
                 recordBrowserHistory(pageUrl, pageTitle)
             },
             onPageStartedInActivity = { webView, pageUrl ->
+                cancelExperimentalCdpContinuity("navigation_started")
                 pullToRefreshPageOptOut[webView] = false
                 maybeWarmupNativeLocation(pageUrl)
                 HighPerformanceSessionController.onNavigationStarted(webView, pageUrl)
@@ -2868,6 +2925,7 @@ open class WebViewActivity : ComponentActivity() {
                 HighPerformanceSessionController.prepareJavascriptHeartbeat(webView)?.let { token ->
                     HighPerformancePageRuntime.activate(webView, token)
                 }
+                if (activityStopped) scheduleExperimentalCdpContinuity()
             },
             onPageFinishedInActivity = { webView, pageUrl ->
                 updatePullToRefreshPagePolicy(webView, pageUrl)
@@ -2875,11 +2933,13 @@ open class WebViewActivity : ComponentActivity() {
                 HighPerformanceSessionController.prepareJavascriptHeartbeat(webView)?.let { token ->
                     HighPerformancePageRuntime.activate(webView, token)
                 }
+                if (activityStopped) scheduleExperimentalCdpContinuity()
                 tabList.firstOrNull { it.webView === webView }?.let { currentTab ->
                     recordHighPerformanceRecoverySuccess(currentTab, webView, pageUrl)
                 }
             },
             onRendererProcessGoneInActivity = { webView, detail ->
+                cancelExperimentalCdpContinuity("renderer_gone")
                 handleHighPerformanceRendererGone(webView, detail)
             },
             onError = { error ->

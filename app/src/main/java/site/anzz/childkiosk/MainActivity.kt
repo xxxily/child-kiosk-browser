@@ -445,6 +445,12 @@ class MainActivity : ComponentActivity() {
                 normalSystemBars = isNormalSystemUiMode()
             )
         )
+        WebViewDebuggingPolicyBridge.publish(
+            this,
+            WebViewDebuggingPolicy(
+                chromeInspectEnabled = KioskPrefs.isChromeInspectEnabled(this)
+            )
+        )
 
         if (KioskPrefs.isLimitFlagSecureEnabled(this)) {
             window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)

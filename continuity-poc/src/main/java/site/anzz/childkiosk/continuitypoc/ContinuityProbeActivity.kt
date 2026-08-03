@@ -22,6 +22,7 @@ class ContinuityProbeActivity : Activity() {
     private lateinit var webView: WebView
     private var debuggingEnabled = false
     private var automaticCdpEdgeEnabled = false
+    private var temporaryCdpDebuggingEnabled = false
 
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -29,6 +30,8 @@ class ContinuityProbeActivity : Activity() {
         val session = intent.getStringExtra(EXTRA_SESSION).orEmpty()
         debuggingEnabled = intent.getBooleanExtra(EXTRA_DEBUGGING, false)
         automaticCdpEdgeEnabled = intent.getBooleanExtra(EXTRA_AUTOMATIC_CDP_EDGE, false)
+        temporaryCdpDebuggingEnabled =
+            intent.getBooleanExtra(EXTRA_TEMPORARY_CDP_DEBUGGING, false) && !debuggingEnabled
         ProbeLog.beginSession(this, session)
         ProbeLog.append(
             this,
@@ -36,6 +39,7 @@ class ContinuityProbeActivity : Activity() {
             mapOf(
                 "debugging" to debuggingEnabled,
                 "automaticCdpEdge" to automaticCdpEdgeEnabled,
+                "temporaryCdpDebugging" to temporaryCdpDebuggingEnabled,
                 "savedState" to (savedInstanceState != null)
             )
         )
@@ -102,6 +106,12 @@ class ContinuityProbeActivity : Activity() {
 
     override fun onStart() {
         InAppCdpLifecycleController.cancel()
+        if (temporaryCdpDebuggingEnabled) {
+            InAppCdpLifecycleController.disableDebugging(
+                applicationContext,
+                reason = "activity_start"
+            )
+        }
         super.onStart()
         logLifecycle("activity_start")
     }
@@ -119,10 +129,28 @@ class ContinuityProbeActivity : Activity() {
     override fun onStop() {
         logLifecycle("activity_stop")
         super.onStop()
-        if (automaticCdpEdgeEnabled && debuggingEnabled) {
-            InAppCdpLifecycleController.schedule(applicationContext)
-        } else if (automaticCdpEdgeEnabled) {
-            ProbeLog.append(this, "in_app_cdp_edge_skipped", mapOf("reason" to "debugging_disabled"))
+        when {
+            automaticCdpEdgeEnabled && debuggingEnabled -> {
+                InAppCdpLifecycleController.schedule(
+                    context = applicationContext,
+                    disableDebuggingAfterEdge = false
+                )
+            }
+            automaticCdpEdgeEnabled && temporaryCdpDebuggingEnabled -> {
+                if (InAppCdpLifecycleController.enableDebugging(applicationContext)) {
+                    InAppCdpLifecycleController.schedule(
+                        context = applicationContext,
+                        disableDebuggingAfterEdge = true
+                    )
+                }
+            }
+            automaticCdpEdgeEnabled -> {
+                ProbeLog.append(
+                    this,
+                    "in_app_cdp_edge_skipped",
+                    mapOf("reason" to "debugging_disabled")
+                )
+            }
         }
     }
 
@@ -133,6 +161,12 @@ class ContinuityProbeActivity : Activity() {
 
     override fun onDestroy() {
         InAppCdpLifecycleController.cancel()
+        if (temporaryCdpDebuggingEnabled) {
+            InAppCdpLifecycleController.disableDebugging(
+                applicationContext,
+                reason = "activity_destroy"
+            )
+        }
         ProbeLog.append(this, "activity_destroy")
         stopService(Intent(this, ContinuityForegroundService::class.java))
         if (::webView.isInitialized) {
@@ -170,6 +204,7 @@ class ContinuityProbeActivity : Activity() {
         const val EXTRA_SESSION = "session"
         const val EXTRA_DEBUGGING = "debugging"
         const val EXTRA_AUTOMATIC_CDP_EDGE = "automatic_cdp_edge"
+        const val EXTRA_TEMPORARY_CDP_DEBUGGING = "temporary_cdp_debugging"
         private const val MAX_JS_PAYLOAD_LENGTH = 4_096
     }
 }
