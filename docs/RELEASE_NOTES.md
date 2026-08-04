@@ -1,3 +1,21 @@
+## Child Kiosk Browser v0.4.25
+
+### 本轮核心变化
+
+* **诊断不再被未激活的隐藏旧标签误导**：动态添加可信规则后，后台旧标签若尚未产生任何心跳、可见性或 load ID 证据，会显示等待激活，不再把另一个正常低频运行的会话错误汇总为“降级运行”。
+* **切回旧标签自动重试**：选中该标签时自动轮换诊断 token 并重新注入当前文档；诊断新增 pending/retried 事件，便于区分“从未激活”与“运行后真正中断”。
+* **避免根地址重复标签**：`https://example.com` 与 `https://example.com/`、主机大小写和默认端口现在复用现有标签；不同路径、查询参数或 fragment 仍会保持独立。
+* **Xiaomi Android 13 实测闭环**：WebView 150 上 HOME、息屏和强制 Light Doze 均保持同 PID/session/load ID、无页面重载；hidden 主线程约 60 秒一次、Worker 继续运行，能力边界仍是后台低频连续性而非前台级调度。
+
+### 验证建议
+
+1. 从 v0.4.24 增量安装，确认高性能配置、可信规则和应用数据保留。
+2. 同一站点存在旧隐藏标签时，整体状态应由已观测的活动标签决定；旧标签显示等待首个心跳，切换过去后出现 `js_heartbeat_activation_retried` 并恢复页面证据。
+3. 分别从已保存网站和外部链接打开根地址，确认有无尾斜杠不会新增重复标签。
+4. 后台或息屏 3-5 分钟，继续核对同 PID/load ID、`HIDDEN_LOW_FREQUENCY_CONTINUITY`、FGS/WakeLock 和 CDP socket 关闭事件。
+
+---
+
 ## Child Kiosk Browser v0.4.24
 
 ### 本轮核心变化

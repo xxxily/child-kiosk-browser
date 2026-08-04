@@ -8,6 +8,20 @@
 
 暂无未发布变更。
 
+## [0.4.25] - 2026-08-04
+
+### Fixed - 修复
+
+- **隐藏旧标签不再误降级整体状态**：动态新增高性能规则时，`View.GONE` 且从未产生心跳、可见性采样或 load ID 的旧标签保持“等待首个心跳”，不再把另一个已验证的 `HIDDEN_LOW_FREQUENCY_CONTINUITY` 会话拉成 `DEGRADED`。
+- **标签重新可见时自动补建诊断**：未观测隐藏标签被选中时会轮换心跳 token 并重新 bootstrap 当前文档，新增 `js_heartbeat_hidden_activation_pending` / `js_heartbeat_activation_retried` 事件；已经产生过页面证据的会话后续失去心跳仍按真实中断处理。
+- **根 URL 去重**：外部入口和已保存网站复用 HTTP(S) 根地址有无尾斜杠、主机大小写和默认端口等价的现有标签，避免 `https://host` 与 `https://host/` 创建重复 WebView；路径、查询和 fragment 差异仍保持独立。
+
+### Tests - 测试与研究
+
+- 新增隐藏待激活会话复合状态、标签显式激活 token 轮换和 URL 身份单测。
+- 完成 Xiaomi M2105K81C / Android 13 / WebView 150 的 HOME、息屏和强制 Light Doze 采样：同 PID/session/load ID、无重载，hidden 主线程约 60 秒、Worker 继续；MIUI 拒绝 shell 强制 Deep Doze 并停在 `INACTIVE`。
+- 更新后台持续运行研究报告和 Xiaomi 专项运行手册，记录 CDP 短租约恢复、socket 关闭和设备能力边界。
+
 ## [0.4.24] - 2026-08-03
 
 ### Added - 新增
@@ -1519,7 +1533,8 @@
 - 调研报告 `docs/android_kiosk_research_report.md`
 - 需求规格 `docs/child_kiosk_browser_requirements.md`
 
-[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.4.24...HEAD
+[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.4.25...HEAD
+[0.4.25]: https://github.com/xxxily/child-kiosk-browser/compare/v0.4.24...v0.4.25
 [0.4.24]: https://github.com/xxxily/child-kiosk-browser/compare/v0.4.23...v0.4.24
 [0.0.28]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.27...v0.0.28
 [0.0.27]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.26...v0.0.27
