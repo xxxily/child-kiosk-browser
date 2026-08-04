@@ -6,6 +6,8 @@
 
 > **深研更新（2026-08-03）**：本文的“唯一恢复路径”结论是针对公开、受支持的 Android WebView API。隔离 PoC 已在 OnePlus 6 / Android 10 / WebView 150 上验证 DevTools/CDP `frozen → active` 能解除或阻止完全冻结，并可由 APK 同 UID 自己操作；同一页面/renderer 已存活 7.45 小时且通过前台恢复和 IME。但主线程 timer/fetch 在 hidden 约 5 分钟后仍降为约 60 秒一次，2 小时 WakeLock 到期后又出现 CPU suspend 间隙，所以它不是前台级持续运行。生产实现已在 v0.4.23 候选中加入默认关闭、可信 Origin 限定、短租约和风险确认的实验性低频续行；Android 16 设备闭环仍需现场验证，不能把它表述成前台级保证。详见 [background_continuity_deep_research.md](background_continuity_deep_research.md)。
 
+> **设备闭环更新（2026-08-04）**：生产 v0.4.24 已在 OnePlus PHB110 / Android 16 和 Xiaomi M2105K81C / Android 13（均为 Google WebView 150.0.7871.181）完成现场验证。HOME 与电源键息屏都保持同一 PID、session、load ID，无页面重载；实验性 CDP 边缘触发成功且临时调试 socket 每次约 0.54 秒后关闭。两个设备的真实页面都进入 hidden，主线程随后约 60 秒运行一次，Dedicated Worker 保持约 5 秒采样，因此稳定分类为 `LOW_FREQUENCY_RESPONSIVE` / `HIDDEN_LOW_FREQUENCY_CONTINUITY`，不是前台级运行。Xiaomi 强制 Light Doze `IDLE` 约 3 分钟仍保持该结果；MIUI 拒绝 shell 强制 Deep Doze，状态停在 `INACTIVE`。详见 [xiaomi_android13_background_continuity.md](runbooks/xiaomi_android13_background_continuity.md)。
+
 ---
 
 ## 1. 背景与目标
@@ -129,7 +131,7 @@
 | 页面冻结状态可观测（freeze 信号、STALE、unfreeze_ineffective） | ✅ 稳定（诊断） |
 | **后台/息屏页面前台级持续运行（公开 API）** | ❌ **平台限制，公开应用层无解** |
 | 无安全 Keyguard 的纯息屏（Android 10 / OnePlus 6） | ⚠️ 约 19 分钟页面保持 visible 且 main/Worker/fetch 保持前台 cadence；关闭 debugging/CDP 复核通过；强依赖设备策略，Android 16 未验证 |
-| CDP 避免完全 freeze（Android 10 + M150 隔离 PoC） | ⚠️ 可行；同 UID 可自控，页面/renderer 7.45 小时存活且 IME 通过，但 hidden main/fetch 约 5 分钟后约 60 秒节流，Android 16 未验证 |
+| CDP 避免完全 freeze（生产 v0.4.24 + M150） | ⚠️ Android 10 PoC、Android 13 Xiaomi、Android 16 OnePlus 均已验证同 UID 可自控且不重载；hidden 主线程仍约 60 秒节流，Worker 较高频，不能当作前台级运行 |
 | PiP（切后台场景） | ⚠️ 理论可行，未实施（息屏无效） |
 | 页面侧 freeze/resume 适配（站点配合） | ✅ 可行，业务连续性最优（**不等于完全正常运行**，冻结期间站点仍暂停） |
 
@@ -166,6 +168,7 @@
 | **v0.4.21** | **回退 Overlay v2，最终基线** | ✅ 页面不丢、冻结+前台恢复 |
 | **v0.4.22** | **真实 Page Visibility 观测 + 无安全 Keyguard 条件化路径** | ✅ Android 10 已验证；Android 16/OEM 需逐机复测 |
 | **v0.4.23** | **默认关闭的实验性 CDP 低频续行** | ⚠️ 仅可信 Origin、短租约、明确风险确认；避免完全 freeze 但不保证前台级调度 |
+| **v0.4.24** | **后台低频心跳分类 + 脱敏导出 + 详细诊断** | ✅ OnePlus Android 16 与 Xiaomi Android 13 均确认 hidden 主线程约 60 秒、Worker 继续，保持同 PID/load ID 且无重载 |
 
 ---
 

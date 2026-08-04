@@ -103,10 +103,13 @@ internal fun classifyJavascriptHeartbeat(
     lastMainHeartbeatAt: Long?,
     lastWorkerHeartbeatAt: Long? = null,
     backgrounded: Boolean = false,
+    visible: Boolean = true,
     staleAfterMs: Long = HIGH_PERFORMANCE_JS_HEARTBEAT_STALE_AFTER_MS
 ): HighPerformanceJavascriptState = when {
     installedAt == null || installedAt <= 0L -> HighPerformanceJavascriptState.UNKNOWN
     lastMainHeartbeatAt == null && now - installedAt in 0L..staleAfterMs ->
+        HighPerformanceJavascriptState.AWAITING_FIRST_HEARTBEAT
+    !visible && lastMainHeartbeatAt == null && lastWorkerHeartbeatAt == null ->
         HighPerformanceJavascriptState.AWAITING_FIRST_HEARTBEAT
     lastMainHeartbeatAt != null && lastMainHeartbeatAt > 0L &&
         now - lastMainHeartbeatAt in 0L..staleAfterMs ->
@@ -118,6 +121,12 @@ internal fun classifyJavascriptHeartbeat(
     else -> HighPerformanceJavascriptState.STALE
 }
 
+internal fun contributesToHighPerformanceComposite(session: HighPerformanceSessionStatus): Boolean =
+    session.visible ||
+        session.lastJsHeartbeatAt != null ||
+        session.lastVisibilityProbeAt != null ||
+        session.pageLoadId != null
+
 internal fun refreshHeartbeatDerivedState(
     status: HighPerformanceRuntimeStatus,
     now: Long
@@ -128,7 +137,8 @@ internal fun refreshHeartbeatDerivedState(
             installedAt = session.jsHeartbeatInstalledAt,
             lastMainHeartbeatAt = session.lastMainJsHeartbeatAt,
             lastWorkerHeartbeatAt = session.lastWorkerJsHeartbeatAt,
-            backgrounded = session.activityState == HighPerformanceActivityState.STOPPED
+            backgrounded = session.activityState == HighPerformanceActivityState.STOPPED,
+            visible = session.visible
         )
         session.copy(
             javascriptState = javascriptState,
@@ -140,26 +150,30 @@ internal fun refreshHeartbeatDerivedState(
             )
         )
     }
+    val assessedSessions = sessions.filter(::contributesToHighPerformanceComposite)
     val canReclassifyActiveRuntime = status.compositeState == HighPerformanceCompositeState.ACTIVE ||
         status.compositeState == HighPerformanceCompositeState.BACKGROUND_THROTTLED
     val compositeState = when {
+        canReclassifyActiveRuntime && assessedSessions.isEmpty() ->
+            HighPerformanceCompositeState.READY
         canReclassifyActiveRuntime &&
-            sessions.any { it.javascriptState == HighPerformanceJavascriptState.STALE } ->
+            assessedSessions.any { it.javascriptState == HighPerformanceJavascriptState.STALE } ->
             HighPerformanceCompositeState.DEGRADED
-        canReclassifyActiveRuntime && sessions.any {
+        canReclassifyActiveRuntime && assessedSessions.any {
             it.javascriptState == HighPerformanceJavascriptState.LOW_FREQUENCY_RESPONSIVE ||
                 it.continuityState == HighPerformanceContinuityState.HIDDEN_LOW_FREQUENCY_CONTINUITY
-        } && sessions.none {
+        } && assessedSessions.none {
             it.continuityState == HighPerformanceContinuityState.HIDDEN_DEGRADED
         } -> HighPerformanceCompositeState.BACKGROUND_THROTTLED
-        canReclassifyActiveRuntime && sessions.any {
+        canReclassifyActiveRuntime && assessedSessions.any {
             it.continuityState == HighPerformanceContinuityState.HIDDEN_DEGRADED
         } -> HighPerformanceCompositeState.DEGRADED
         status.compositeState == HighPerformanceCompositeState.BACKGROUND_THROTTLED &&
-            sessions.all { it.javascriptState == HighPerformanceJavascriptState.RESPONSIVE } &&
-            sessions.none { it.continuityState == HighPerformanceContinuityState.HIDDEN_DEGRADED } ->
+            assessedSessions.isNotEmpty() &&
+            assessedSessions.all { it.javascriptState == HighPerformanceJavascriptState.RESPONSIVE } &&
+            assessedSessions.none { it.continuityState == HighPerformanceContinuityState.HIDDEN_DEGRADED } ->
             HighPerformanceCompositeState.ACTIVE
-        status.compositeState == HighPerformanceCompositeState.ACTIVE && sessions.any {
+        status.compositeState == HighPerformanceCompositeState.ACTIVE && assessedSessions.any {
             it.javascriptState != HighPerformanceJavascriptState.RESPONSIVE ||
                 it.continuityState == HighPerformanceContinuityState.HIDDEN_DEGRADED
         } -> HighPerformanceCompositeState.DEGRADED

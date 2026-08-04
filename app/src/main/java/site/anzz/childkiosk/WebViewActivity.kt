@@ -80,6 +80,7 @@ import site.anzz.childkiosk.data.SystemConfigEntity
 import site.anzz.childkiosk.data.WebAppEntity
 import site.anzz.childkiosk.ui.AddEditWebAppDialog
 import site.anzz.childkiosk.ui.browser.BrowserTab
+import site.anzz.childkiosk.ui.browser.findBrowserTabByUrl
 import site.anzz.childkiosk.ui.browser.FloatingControlAction
 import site.anzz.childkiosk.ui.browser.FloatingControlActionStyle
 import site.anzz.childkiosk.ui.browser.FloatingControlSection
@@ -2080,7 +2081,7 @@ open class WebViewActivity : ComponentActivity() {
             withContext(Dispatchers.Main) {
                 if (webApp != null) {
                     launchedWebAppId = webApp.id
-                    val existing = tabList.firstOrNull { it.url == webApp.url }
+                    val existing = tabList.findBrowserTabByUrl(webApp.url)
                     if (existing != null) {
                         switchToTab(
                             existing.id,
@@ -2095,7 +2096,7 @@ open class WebViewActivity : ComponentActivity() {
                     }
                 } else if (!customUrl.isNullOrBlank()) {
                     launchedWebAppId = null
-                    val existing = tabList.firstOrNull { it.url == customUrl }
+                    val existing = tabList.findBrowserTabByUrl(customUrl)
                     if (existing != null) {
                         switchToTab(
                             existing.id,

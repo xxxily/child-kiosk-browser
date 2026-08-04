@@ -83,6 +83,16 @@ Do not diagnose this by reading `SharedPreferences` in `:webview`; cross-process
 
 If the Room version advanced but publication failed, retry from the detail-page refresh action. Until a successful publish occurs, the runtime intentionally stays disabled at the newer version instead of falling back to an older enabled file.
 
+An already-open background tab may be `View.GONE` when a new rule is published. Some WebView/OEM
+combinations accept the document-start listener but do not execute the current-document bootstrap
+until that tab becomes visible. A hidden tab with no heartbeat, visibility sample, or load ID is an
+unobserved pending tab, not proof of a stopped renderer. It must remain “waiting for first
+heartbeat”, must not downgrade a separately verified active tab, and must rotate the heartbeat
+token and retry bootstrap when selected. Once a tab has produced any page evidence, later heartbeat
+loss remains a real degraded signal and must not be ignored. Use
+`js_heartbeat_hidden_activation_pending` and `js_heartbeat_activation_retried` to distinguish this
+case from `js_heartbeat_stale`.
+
 ### Switching to background immediately destroys the page
 
 Check `dumpsys activity activities` and the `activity_destroyed task_*` diagnostic. If `MainActivity(singleTask)` and the normal-mode WebView share one task, Launcher/HOME re-entry clears the WebView above Main and destroys its DOM/JS heap. This is a task-stack failure, not a JavaScript throttling failure.
@@ -186,6 +196,10 @@ adb shell dumpsys battery reset
 ```
 
 Record the Android version, WebView provider/version, device/OEM, notification permission, battery-optimization state, Device Owner state, and test duration with every result.
+
+For the Xiaomi Android 13 / MIUI device result, including the ROM-specific inability to force Deep
+Doze through `dumpsys deviceidle`, see
+[xiaomi_android13_background_continuity.md](xiaomi_android13_background_continuity.md).
 
 ### FGS and WakeLock stay healthy but a site timer still stops
 

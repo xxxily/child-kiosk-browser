@@ -312,9 +312,24 @@ internal object HighPerformanceSessionController {
 
     fun onVisibilityChanged(webView: WebView, visible: Boolean) {
         ensureMainThread()
-        find(webView)?.let {
-            it.visible = visible
-            publishStatus()
+        find(webView)?.let { managed ->
+            val becameVisible = visible && !managed.visible
+            managed.visible = visible
+            val session = managed.session
+            if (becameVisible && session != null && session.lastJsHeartbeatAt == null) {
+                resetJavascriptHeartbeat(session)
+                prepareJavascriptHeartbeat(webView)?.let { token ->
+                    HighPerformanceDiagnostics.record(
+                        type = "js_heartbeat_activation_retried",
+                        originOrUrl = session.origin,
+                        sessionId = session.tokenId,
+                        reason = "tab_became_visible"
+                    )
+                    HighPerformancePageRuntime.bootstrapCurrentDocument(webView, token)
+                }
+            } else {
+                publishStatus()
+            }
         }
     }
 
@@ -613,6 +628,15 @@ internal object HighPerformanceSessionController {
                 originOrUrl = session.origin,
                 sessionId = session.tokenId
             )
+            if (find(webView)?.visible == false) {
+                HighPerformanceDiagnostics.record(
+                    type = "js_heartbeat_hidden_activation_pending",
+                    result = "waiting",
+                    originOrUrl = session.origin,
+                    sessionId = session.tokenId,
+                    reason = "tab_not_visible"
+                )
+            }
             publishStatus()
         }
         return session.jsHeartbeatToken
@@ -645,7 +669,8 @@ internal object HighPerformanceSessionController {
             installedAt = session.jsHeartbeatInstalledAt,
             lastMainHeartbeatAt = session.lastMainJsHeartbeatAt,
             lastWorkerHeartbeatAt = session.lastWorkerJsHeartbeatAt,
-            backgrounded = find(webView)?.activityState == HighPerformanceActivityState.STOPPED
+            backgrounded = find(webView)?.activityState == HighPerformanceActivityState.STOPPED,
+            visible = find(webView)?.visible != false
         )
         when (source) {
             HighPerformanceProbeType.INIT -> session.lastJsHeartbeatAt = now
@@ -672,7 +697,8 @@ internal object HighPerformanceSessionController {
             installedAt = session.jsHeartbeatInstalledAt,
             lastMainHeartbeatAt = session.lastMainJsHeartbeatAt,
             lastWorkerHeartbeatAt = session.lastWorkerJsHeartbeatAt,
-            backgrounded = find(webView)?.activityState == HighPerformanceActivityState.STOPPED
+            backgrounded = find(webView)?.activityState == HighPerformanceActivityState.STOPPED,
+            visible = find(webView)?.visible != false
         )
         val stateChanged = newState != wasState
         if (source == HighPerformanceProbeType.WORKER_ERROR) {
@@ -935,7 +961,8 @@ internal object HighPerformanceSessionController {
             installedAt = session.jsHeartbeatInstalledAt,
             lastMainHeartbeatAt = session.lastMainJsHeartbeatAt,
             lastWorkerHeartbeatAt = session.lastWorkerJsHeartbeatAt,
-            backgrounded = find(webView)?.activityState == HighPerformanceActivityState.STOPPED
+            backgrounded = find(webView)?.activityState == HighPerformanceActivityState.STOPPED,
+            visible = find(webView)?.visible != false
         )
     }
 
@@ -1224,7 +1251,8 @@ internal object HighPerformanceSessionController {
                 installedAt = session.jsHeartbeatInstalledAt,
                 lastMainHeartbeatAt = session.lastMainJsHeartbeatAt,
                 lastWorkerHeartbeatAt = session.lastWorkerJsHeartbeatAt,
-                backgrounded = managed.activityState == HighPerformanceActivityState.STOPPED
+                backgrounded = managed.activityState == HighPerformanceActivityState.STOPPED,
+                visible = managed.visible
             ).also { state ->
                 if (state == HighPerformanceJavascriptState.STALE &&
                     session.lastReportedJavascriptState != HighPerformanceJavascriptState.STALE
@@ -1376,6 +1404,8 @@ internal object HighPerformanceSessionController {
         if (!runtimeSnapshot.enabled) return HighPerformanceCompositeState.DISABLED
         if (runtimeSnapshot.enabledRules.isEmpty()) return HighPerformanceCompositeState.NO_RULES
         if (sessions.isNotEmpty()) {
+            val assessedSessions = sessions.filter(::contributesToHighPerformanceComposite)
+            if (assessedSessions.isEmpty()) return HighPerformanceCompositeState.READY
             return highPerformanceCompositeStateForActiveSessions(
                 resourceProtectionReady =
                     sessions.all {
@@ -1385,8 +1415,8 @@ internal object HighPerformanceSessionController {
                 wakeLockSnapshot.state == HighPerformanceWakeLockState.HELD &&
                 system.notificationsVisible &&
                     system.ignoringBatteryOptimizations,
-                javascriptStates = sessions.map(HighPerformanceSessionStatus::javascriptState),
-                continuityStates = sessions.map(HighPerformanceSessionStatus::continuityState)
+                javascriptStates = assessedSessions.map(HighPerformanceSessionStatus::javascriptState),
+                continuityStates = assessedSessions.map(HighPerformanceSessionStatus::continuityState)
             )
         }
         if (lastInterruptionAt != null &&

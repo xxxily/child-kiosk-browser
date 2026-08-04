@@ -9,6 +9,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -250,6 +251,25 @@ class HighPerformanceSessionControllerTest {
             "https://other.example/app"
         )
         assertNull(HighPerformanceSessionController.continuityCandidate(OWNER_ID))
+    }
+
+    @Test
+    fun showingAnUnobservedHiddenTabRetriesWithANewHeartbeatToken() {
+        HighPerformanceSessionController.applySnapshot(
+            trustedSnapshot(experimentalCdpContinuityEnabled = true, configVersion = 2),
+            source = "test_experimental_enabled"
+        )
+        val initialToken = HighPerformanceSessionController.continuityCandidate(OWNER_ID)
+            ?.heartbeatToken
+        requireNotNull(initialToken)
+
+        HighPerformanceSessionController.onVisibilityChanged(webView, visible = false)
+        HighPerformanceSessionController.onVisibilityChanged(webView, visible = true)
+
+        val retriedToken = HighPerformanceSessionController.continuityCandidate(OWNER_ID)
+            ?.heartbeatToken
+        assertNotNull(retriedToken)
+        assertNotEquals(initialToken, retriedToken)
     }
 
     private fun trustedSnapshot(

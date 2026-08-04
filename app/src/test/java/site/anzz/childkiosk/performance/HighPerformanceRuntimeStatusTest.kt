@@ -66,6 +66,17 @@ class HighPerformanceRuntimeStatusTest {
             )
         )
         assertEquals(
+            HighPerformanceJavascriptState.AWAITING_FIRST_HEARTBEAT,
+            classifyJavascriptHeartbeat(
+                now = 100_000L,
+                installedAt = installedAt,
+                lastMainHeartbeatAt = null,
+                lastWorkerHeartbeatAt = null,
+                backgrounded = true,
+                visible = false
+            )
+        )
+        assertEquals(
             HighPerformanceJavascriptState.STALE,
             classifyJavascriptHeartbeat(
                 now = 1_000L,
@@ -316,6 +327,50 @@ class HighPerformanceRuntimeStatusTest {
         assertEquals(HighPerformanceJavascriptState.RESPONSIVE, refreshed.sessions.single().javascriptState)
         assertEquals(HighPerformanceContinuityState.HIDDEN_DEGRADED, refreshed.sessions.single().continuityState)
         assertEquals(HighPerformanceCompositeState.DEGRADED, refreshed.compositeState)
+    }
+
+    @Test
+    fun unobservedHiddenTabDoesNotDowngradeVerifiedBackgroundContinuity() {
+        val persisted = runtimeStatus(
+            compositeState = HighPerformanceCompositeState.BACKGROUND_THROTTLED,
+            sessionState = HighPerformanceJavascriptState.LOW_FREQUENCY_RESPONSIVE,
+            installedAt = 1_000L,
+            lastMainAt = 10_000L
+        ).let { status ->
+            val verified = status.sessions.single().copy(
+                visible = true,
+                lastWorkerJsHeartbeatAt = 39_000L,
+                documentHidden = true,
+                documentVisibilityState = "hidden",
+                lastVisibilityProbeAt = 39_000L,
+                continuityState = HighPerformanceContinuityState.HIDDEN_LOW_FREQUENCY_CONTINUITY
+            )
+            val pendingHidden = verified.copy(
+                tokenId = "pending-session",
+                tabId = "pending-tab",
+                jsHeartbeatInstalledAt = 1_000L,
+                lastJsHeartbeatAt = null,
+                lastMainJsHeartbeatAt = null,
+                lastWorkerJsHeartbeatAt = null,
+                javascriptState = HighPerformanceJavascriptState.STALE,
+                visible = false,
+                documentHidden = null,
+                documentVisibilityState = null,
+                lastVisibilityProbeAt = null,
+                pageLoadId = null,
+                continuityState = HighPerformanceContinuityState.STALE
+            )
+            status.copy(sessions = listOf(verified, pendingHidden))
+        }
+
+        val refreshed = refreshHeartbeatDerivedState(persisted, now = 40_000L)
+
+        assertEquals(
+            HighPerformanceJavascriptState.AWAITING_FIRST_HEARTBEAT,
+            refreshed.sessions[1].javascriptState
+        )
+        assertEquals(HighPerformanceContinuityState.UNKNOWN, refreshed.sessions[1].continuityState)
+        assertEquals(HighPerformanceCompositeState.BACKGROUND_THROTTLED, refreshed.compositeState)
     }
 
     private fun runtimeStatus(
