@@ -30,6 +30,27 @@ execution and must not be generalized to every Xiaomi/MIUI release.
 - Returning through the FGS notification preserved PID, session, load ID, and page state without a
   reload.
 
+## No-secure-lock screen-off sample
+
+After the device PIN/password was removed, MIUI reported `secure=false` and `deviceLocked=0` while
+the screen was on. Screen-off still displayed a non-secure Keyguard shell (`showing=true`), but it
+did not require authentication and the device returned directly to the existing page.
+
+Enhanced release `0.4.26 (101)` showed a two-stage hidden-page cadence in this state:
+
+- for roughly the first minute after `KEYCODE_SLEEP`, both the main-thread and Dedicated Worker
+  diagnostic heartbeats continued near five seconds;
+- after that grace period, the main-thread timer settled back to roughly one callback per minute,
+  while the Worker continued near five seconds;
+- the same PID `13383`, session `f8fd42c6-9a61-4521-8382-81b7ab5cb5bb`, and load ID
+  `1785818978014` survived the full screen-off and Light Doze sample;
+- FGS, partial WakeLock, notification, and battery exemption remained active; no DevTools socket or
+  new native crash was present.
+
+Do not interpret the initial five-second main-thread cadence as foreground-equivalent continuous
+execution. Sample for longer than 90 seconds before classifying screen-off timer behavior, and use
+the Worker/main-thread split plus the unchanged load ID to distinguish throttling from page loss.
+
 ## Doze result
 
 After simulating battery unplug and sending `KEYCODE_SLEEP`, MIUI accepted forced Light Doze and
