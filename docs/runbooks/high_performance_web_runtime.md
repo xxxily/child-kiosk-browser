@@ -2,6 +2,11 @@
 
 ## Purpose and product boundary
 
+For the current phase conclusion, measured capability matrix, failed-route history, and architecture
+recommendation, start with
+[background_continuity_phase_summary_2026-08-04.md](../background_continuity_phase_summary_2026-08-04.md).
+This runbook remains the operational troubleshooting and regression reference.
+
 High-performance runtime protects only parent-approved top-level HTTP/HTTPS Origins. It combines a foreground service in `:webview`, a bounded partial CPU WakeLock, and a non-waived renderer-priority request. It improves survival probability; it does not guarantee uninterrupted JavaScript, timers, network sockets, renderer memory, or foreground-equivalent Chromium scheduling.
 
 For the source-level investigation of experimental CDP, virtual-time, audio, custom-Provider, and visual-screen-off options, see [background_continuity_deep_research.md](../background_continuity_deep_research.md). Since v0.4.23, an explicitly opt-in CDP continuity edge exists in the production module, but it remains disabled by default and is not part of the baseline guarantee.
@@ -248,8 +253,10 @@ stops ~60 seconds after switching to background or screen-off. The diagnostic st
 `js_heartbeat_stale reason=main_timer_missing`; everything resumes on the next foreground
 `reason=resume`/`js_heartbeat_responsive`.
 
-**Root cause**: Chromium freezes a hidden page (Page Lifecycle `freeze`) about 60 seconds after the
-window becomes invisible. A frozen page suspends every timer, worker, and network task. Do not infer
+**Root cause**: Chromium can freeze a hidden page (Page Lifecycle `freeze`) about 60 seconds after the
+window becomes invisible. A fully frozen page can suspend timers, workers, and network tasks; a
+continued diagnostic Worker heartbeat proves only that this specific probe still receives bounded
+background scheduling, not that all site work is healthy. Do not infer
 hidden solely from `Activity.onStop()`: on one Android 10 device with secure Keyguard removed, a
 power-button screen-off stopped the Activity but left `document.visibilityState=visible`; main,
 Worker, and fetch kept foreground cadence for about 19 minutes. A second run with WebView debugging
@@ -267,10 +274,11 @@ keep-alive (v0.4.19/v0.4.20, `TYPE_APPLICATION_OVERLAY` 1x1 with
 `FLAG_SHOW_WHEN_LOCKED`, with the SYSTEM_ALERT_WINDOW declaration and forced re-compositing) was
 also a verified failure on OnePlus/Android 16: the window move destroyed the page (white screen /
 forced reload, same as v0.4.13) even though the overlay attached and no freeze occurred. **Do not
-reintroduce any of these three paths.** On the tested platform and current supported production
-baseline, the page remains frozen until the next foreground transition. Experimental CDP, virtual
-time, audio, and custom-Provider paths are tracked separately in the deep-research document and do
-not change this baseline. Remaining product options are page-side freeze/resume handling on the site
+reintroduce any of these three paths.** With supported public WebView APIs, the tested page recovered
+only on the next real foreground transition. Experimental CDP, virtual time, audio, and
+custom-Provider paths are tracked separately in the deep-research document; CDP is an explicit,
+default-off exception rather than part of the baseline guarantee. Remaining product options are
+page-side freeze/resume handling on the site
 (recommended — the protected site is parent-owned), PiP for background-only (screen-off still
 freezes, kiosk/Lock Task behavior unverified), or accepting process-alive + foreground-restore
 semantics. An isolated Android 10 / WebView 150 PoC later demonstrated an experimental exception:
@@ -282,16 +290,22 @@ multi-minute/hour-scale scheduling gaps, so it proves survival rather than unint
 JavaScript. While naturally hidden, the page's main timer/fetch still degraded to roughly
 one-minute cadence after about five minutes while a Dedicated Worker remained near one-second
 cadence whenever the CPU was awake. Treat this as **experimental “no full freeze”, not
-foreground-level JavaScript continuity**; it is not enabled in the production app. Foreground
-recovery and IME passed on Android 10. A mandatory `document.hidden` gate was also added after
+foreground-level JavaScript continuity**. Since v0.4.23 it is available as a default-off guarded
+production experiment with explicit acknowledgement, trusted-Origin/token matching, and a short
+debugging lease. Foreground recovery and IME passed on Android 10. A mandatory `document.hidden`
+gate was also added after
 proving that sending CDP `frozen` during a pure screen-off that remained naturally visible could
-poison visibility after wake. Android 16, navigation, renderer-rebuild, renewable-WakeLock
-long-duration execution, and security validation remain open.
+poison visibility after wake. Android 16 and Xiaomi Android 13 have since verified the short edge,
+target matching, socket close, and hidden low-frequency steady state. Navigation/renderer rebuild,
+renewable-WakeLock hour/overnight business execution, Deep Doze/thermal behavior, Provider upgrades,
+and the broader deployment threat model remain open.
 
-Since v0.4.22, production uses an observation-only page runtime. It reads the native
+Since v0.4.22, the production page probe uses an observation-only runtime. It reads the native
 `Document.prototype.hidden` / `visibilityState` getters, reports a stable per-document load ID, and
 does not override Page Visibility properties, suppress lifecycle events, toggle `View.visibility`,
-call `WebView.onResume()` as a background unfreeze attempt, or enable CDP. The runtime classifies:
+or call `WebView.onResume()` as a background unfreeze attempt. The separate v0.4.23 CDP controller
+can run only when its guarded experiment is explicitly enabled; it does not falsify the reported
+visibility state. The runtime classifies:
 
 - `SCREEN_OFF_VISIBLE_CONTINUITY`: screen non-interactive, Activity stopped, real document visible,
   and main-thread heartbeat responsive;
@@ -343,11 +357,12 @@ was frozen. If all three stop, inspect process death, WakeLock renewal, Doze, an
 - Android 9, 12, 13, and 14; at least one AOSP-like device and two relevant OEM device families.
 - Text/password/number/textarea fields summon the IME in normal and child mode, including normal
   -> child -> normal on the same live page and on a protected page.
-- A protected page keeps its JS timers and network activity during 5+ minutes of background and
-  5+ minutes of screen-off (wake lock held): freeze signals are answered by an immediate unfreeze
-  (`webview_unfrozen`), the main heartbeat stays `RESPONSIVE`, and returning to the foreground
-  resumes native rendering with working IME input on the same live document (no reload, no white
-  screen).
+- A protected page survives 5+ minutes of background and 5+ minutes of screen-off with the same
+  PID/session/load ID where the target device permits it. Record real `document.hidden`, main and
+  Worker cadence separately: `HIDDEN_LOW_FREQUENCY_CONTINUITY` / `BACKGROUND_THROTTLED` is an
+  acceptable measured outcome, while foreground-equivalent timers and network activity are not a
+  baseline acceptance requirement. Returning to foreground must restore native rendering and IME
+  on the same live document without a reload or white screen.
 - An unprotected page still receives the real freeze/visibility callbacks and background
   throttling behavior is unchanged.
 

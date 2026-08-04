@@ -77,6 +77,7 @@ app/
 docs/
 ├── child_kiosk_browser_requirements.md   # 产品需求规格
 ├── android_kiosk_research_report.md      # 技术调研报告
+├── background_continuity_phase_summary_2026-08-04.md # WebView 后台/息屏连续性阶段总结
 ├── webview_rendering_consistency.md      # WebView 渲染一致性复盘
 ├── webview_debugging_runbook.md          # logcat + Chrome Inspect 调试手册
 ├── webview_development_guidelines.md     # WebView 开发注意事项
@@ -341,6 +342,7 @@ git push origin main --tags
 
 - Issue: <https://github.com/xxxily/child-kiosk-browser/issues>
 - 调研背景：[`docs/android_kiosk_research_report.md`](docs/android_kiosk_research_report.md)
+- WebView 后台/息屏连续性阶段总结：[`docs/background_continuity_phase_summary_2026-08-04.md`](docs/background_continuity_phase_summary_2026-08-04.md)
 - 需求规格：[`docs/child_kiosk_browser_requirements.md`](docs/child_kiosk_browser_requirements.md)
 
 ---

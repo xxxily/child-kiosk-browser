@@ -4,8 +4,13 @@
 > Chromium 证据版本：`150.0.7871.181`  
 > 历史生产基线：OnePlus PHB110 · Android 16 (API 36) · Google WebView 150  
 > CDP 隔离 PoC：OnePlus 6 (ONEPLUS A6000) · Android 10 (API 29, user/release-keys) · Google WebView 150  
-> 研究状态：源码结论及 Android 10 / M150 的 CDP A–H4、7.45 小时页面/renderer 存活、前台恢复和 IME 已完成；Android 16 已完成正式 Release 隔离 PoC 的临时 debugging 暴露、`frozen → active` 和 socket 关闭短时验证，生产 v0.4.23 路径、长时不间断业务调度、导航/renderer 重建、音频和自定义 Provider 仍待补齐
+> 研究状态：源码结论、Android 10 / M150 的 CDP A–H4 与 7.45 小时页面/renderer 存活、Android 16 生产实验、Xiaomi Android 13 正式包、短租约 socket 关闭和 hidden 低频稳态均已完成；仍待验证的是小时级业务连续性、导航/renderer 重建、Deep Doze/热控、Provider 升级与虚拟时间语义
 > 关联基线：[background_continuity_research_report.md](background_continuity_research_report.md)、[high_performance_web_runtime.md](runbooks/high_performance_web_runtime.md)
+
+> **阶段更新（2026-08-04）**：Android 16 生产实验、Xiaomi Android 13 正式包、低频状态分类、
+> Light Doze、socket 关闭和 v0.4.26 恢复崩溃修复已经完成闭环。最新能力边界和工程经验见
+> [background_continuity_phase_summary_2026-08-04.md](background_continuity_phase_summary_2026-08-04.md)。
+> 本文继续作为 Chromium 源码、PoC 和候选路线的技术依据；其中较早的“仍待验证”状态以阶段总结为准。
 
 ## 结论摘要
 
@@ -27,16 +32,16 @@ PoC 还确认：非 debuggable APK 可以由同 UID 直接连接 `webview_devtoo
 - 开启 WebView debugging 会允许 ADB/shell 检查和修改页面，官方明确把它标为生产安全风险。
 - `frozen` 会在 Chromium 内部调用 `WasHidden()`。只有 CDP 实测 `document.hidden === true` 后才能发送；纯电源键息屏在某些无安全锁屏场景下仍可能保持 `visible`，误发会把页面可见性留在 `hidden`。
 - 即使解除冻结，页面仍然是 `hidden`。本次实测在约 5 分钟后，主线程 1 秒 timer 和 15 秒 fetch 都退化到约 60 秒一次；Dedicated Worker 仍约 1 秒。
-- Android 10 + M150 已验证同一页面/renderer 存活 7.45 小时并通过 IME；但 PoC 的 2 小时 WakeLock 租约到期后出现多分钟 CPU suspend 间隙，因此这只能证明长时存活，不能证明 7.45 小时不间断 JavaScript。Android 16、导航和 renderer 重建仍未闭环。
+- Android 10 + M150 已验证同一页面/renderer 存活 7.45 小时并通过 IME；但 PoC 的 2 小时 WakeLock 租约到期后出现多分钟 CPU suspend 间隙，因此这只能证明长时存活，不能证明 7.45 小时不间断 JavaScript。Android 16 的生产短时 edge、socket 关闭和 hidden 低频稳态已经闭环；导航、renderer 重建和小时级业务连续性仍未闭环。
 
 如果产品必须在自有设备上实现真正的前台级执行，优先级如下：
 
 | 目标 | 最现实的路线 | 适用边界 |
 | --- | --- | --- |
-| 真实电源键息屏并保持前台级页面调度 | 受管设备禁用安全 Keyguard，WebView 留在同一顶层窗口，FGS + 可续期 partial WakeLock/Wi-Fi lock；以 `document.hidden` 实测为准 | Android 10 / OnePlus 6 已连续验证约 19 分钟，并以 debugging/CDP 全关闭复核；OEM/Android 差异大，Android 16 未验证 |
+| 真实电源键息屏并保持前台级页面调度 | 受管设备禁用安全 Keyguard，WebView 留在同一顶层窗口，FGS + 可续期 partial WakeLock/Wi-Fi lock；以 `document.hidden` 实测为准 | Android 10 / OnePlus 6 已连续验证约 19 分钟，并以 debugging/CDP 全关闭复核；Android 13 Xiaomi 与 Android 16 OnePlus 均未复现，属于设备例外而非通用方案 |
 | 视觉上像息屏，但设备仍可持续运行 | 同一 Activity/同一窗口保持可见，`FLAG_KEEP_SCREEN_ON` + 最低亮度 + 原生黑色遮罩 | 受管 Kiosk；不是真正的电源键息屏 |
 | 关键业务不丢数据 | FGS/原生网络层/服务端承载状态，WebView 只负责 UI | 最推荐；需要修改业务架构 |
-| 让 hidden 页面不再被完全 freeze | CDP `frozen → active` | Android 10 + M150 PoC 已成功；仍受约 60 秒主线程节流，不进生产默认路径 |
+| 让 hidden 页面不再被完全 freeze | CDP `frozen → active` | Android 10 PoC、Android 13 Xiaomi 与 Android 16 OnePlus 均已验证短时 edge；仍受约 60 秒主线程节流，生产实验默认关闭 |
 | 所有网页获得前台级调度 | 自建 WebView Provider 或 OEM/AOSP 镜像，修改 Chromium 调度策略 | 必须控制系统镜像和更新链路 |
 | 用普通 APK 在任意 user 设备实现 | 没有受支持的通用方案 | 不应继续投入可见性伪造、跨窗口搬移或 `onResume()` 组合拳 |
 
@@ -48,7 +53,7 @@ PoC 还确认：非 debuggable APK 可以由同 UID 直接连接 `webview_devtoo
 - Chromium 内部的 `SetPageFrozen(false)`、真实 audible 状态，以及 DevTools/CDP 都可以触发其他解冻路径；这些路径没有稳定的 Android App API 契约。
 - 原报告对可见性伪造、`WebView.onResume()` 和 detach/attach overlay 的否定结论仍然有效，不能因为发现 CDP 而重新尝试这些路线。
 
-原报告保留了 Android 16 历史版本的实证记录；本文补充源码级机制、Android 10 + M150 的 CDP 真机结果和正式落地边界。两个设备结论不能互相替代：Android 16 上 CDP 仍需复测。
+原报告保留了 Android 16 历史版本的实证记录；本文补充源码级机制、Android 10 + M150 的 CDP 真机结果和正式落地边界。后续 Android 16 生产实验已经完成短时 edge、可信 target、socket 关闭和低频稳态复测，但不同设备结论仍不能互相替代。
 
 ## 2. M150 的真实冻结链路
 
@@ -368,16 +373,16 @@ AOSP/OEM 可以配置 provider 列表；含 GMS/Play Store 的生产镜像通常
 
 ## 9. 推荐执行顺序
 
-### P0：补齐 CDP 的跨版本与长时边界
+### P0：补齐长时、恢复与极端系统状态边界
 
-Android 10 + M150 已完成 A–H4：`active` 单独无效、`frozen → active` 有效、同 UID 本地控制有效、自然 hidden 门禁有效，且已经确认约 5 分钟后主线程/fetch 进入约 60 秒节流；同一页面/renderer 7.45 小时存活和 IME 也已通过，无安全 Keyguard 的纯息屏路径还完成了 debugging/CDP 全关闭复核。下一步不再重复这些短时对照，而是补齐：
+Android 10 + M150 已完成 A–H4：`active` 单独无效、`frozen → active` 有效、同 UID 本地控制有效、自然 hidden 门禁有效，且已经确认约 5 分钟后主线程/fetch 进入约 60 秒节流；同一页面/renderer 7.45 小时存活和 IME 也已通过，无安全 Keyguard 的纯息屏路径还完成了 debugging/CDP 全关闭复核。Android 16 生产实验和 Xiaomi Android 13 正式包也已完成可信 Origin/token 匹配、短租约 socket 关闭、HOME/息屏/Light Doze 与 hidden 低频稳态闭环。下一步不再重复这些短时对照，而是补齐：
 
-1. Android 16 + M150 同样矩阵，确认历史生产设备是否一致；
-2. Android 16 正式生产 v0.4.23 的可信 Origin/token 匹配、临时 socket 关闭和七分钟以上真机闭环；
-3. 可续期 WakeLock 下的 1 小时/过夜业务延迟、Doze、断网/恢复和热控场景；
-4. 导航和 renderer 重建无副作用；
-5. WebView provider 升级后的回归测试；
-6. debugging 开启后的威胁模型和可接受部署范围。
+1. 可续期 WakeLock 下的 1 小时/过夜业务延迟、断网/恢复和功耗曲线；
+2. Deep Doze、低电量、热控和极端内存压力场景；
+3. 导航、标签切换、renderer 重建或 crash 后的无副作用恢复；
+4. WebView provider 升级后的功能与短租约安全回归；
+5. debugging 临时暴露的完整威胁模型和可接受部署范围；
+6. 虚拟时间在 WebView target 上的具体语义和价值判断。
 
 ### P1：同时建立内核上限
 
@@ -405,17 +410,17 @@ Android 10 + M150 已完成 A–H4：`active` 单独无效、`frozen → active`
 
 | 维度 | 最低覆盖 |
 | --- | --- |
-| 设备 | 已有 OnePlus 6；还需历史 OnePlus/Android 16、AOSP emulator、至少一个 Samsung 或 Pixel |
-| Android | 已测 Android 10；还需 Android 14/15/16 |
+| 设备 | 已有 OnePlus 6、OnePlus PHB110、Xiaomi M2105K81C；还需 AOSP emulator、至少一个 Samsung 或 Pixel |
+| Android | 已测 Android 10/13/16；还需 Android 14/15 |
 | WebView | 已测 M150 stable；后续每次 provider 更新 |
-| 状态 | Activity hidden、HOME/切换 App、锁屏、短按电源、Doze |
+| 状态 | Activity hidden、HOME/切换 App、锁屏、短按电源、Light Doze；仍需可控 Deep Doze |
 | 时长 | 10 分钟、1 小时、过夜 |
 | 页面 | 普通 timer、Dedicated Worker、WebSocket、fetch、Web Audio、IME |
 | 网络 | Wi‑Fi、移动网络、断网/恢复、VPN/代理 |
 | 资源 | FGS/WakeLock、renderer crash、内存压力、低电量、温度 |
 | 安全 | ADB/Inspect 开关、`FLAG_SECURE`、儿童退出/Lock Task |
 
-“成功”至少需要同时满足：无意外 reload、DOM/会话不丢、main+worker 心跳持续、业务事件无重复/丢失、回前台 IME 正常、功耗和温度在产品预算内。只有 native 心跳持续不能算成功。
+“成功”至少需要同时满足：无意外 reload、DOM/会话不丢、main/Worker 在所声明的频率边界内仍有证据、业务事件满足明确的延迟与补偿要求、回前台 IME 正常、功耗和温度在产品预算内。hidden 主线程约 60 秒一次可以证明低频连续性，但不能作为前台级业务成功；只有 native 心跳持续更不能算成功。
 
 ## 11. 证据与参考资料
 
@@ -444,8 +449,8 @@ Android 10 + M150 已完成 A–H4：`active` 单独无效、`frozen → active`
 
 - **源码确认**：上述 M150 文件和单元测试直接支持的行为。
 - **设备已证伪**：原报告在 OnePlus / Android 16 / WebView 150 上记录的公开 API/overlay 行为。
-- **设备已验证**：OnePlus 6 / Android 10 / WebView 150 上，`active` 单独无效、`frozen → active` 有效、同 UID abstract socket 控制有效、自然 hidden 门禁有效、页面/renderer 7.45 小时存活、前台/IME 恢复、hidden 约 5 分钟后的主线程/fetch 60 秒节流，以及无安全锁屏纯息屏约 19 分钟保持 visible/前台 cadence；后者已用 debugging/CDP 全关闭的 H4 独立复核。
-- **仍待验证**：Android 16 上的 CDP、可续期 WakeLock 下的长时不间断业务调度、导航/renderer 重建，以及虚拟时间在 WebView target 上的具体语义。
+- **设备已验证**：OnePlus 6 / Android 10 / WebView 150 上，`active` 单独无效、`frozen → active` 有效、同 UID abstract socket 控制有效、自然 hidden 门禁有效、页面/renderer 7.45 小时存活、前台/IME 恢复、hidden 约 5 分钟后的主线程/fetch 60 秒节流，以及无安全锁屏纯息屏约 19 分钟保持 visible/前台 cadence；后者已用 debugging/CDP 全关闭的 H4 独立复核。OnePlus PHB110 / Android 16 与 Xiaomi M2105K81C / Android 13 的生产样本还验证了短时 edge、精确 target、socket 关闭、同 PID/session/load ID 和 hidden 低频稳态。
+- **仍待验证**：可续期 WakeLock 下的小时级/过夜业务连续性、导航/renderer 重建、Deep Doze/热控、WebView Provider 升级，以及虚拟时间在 WebView target 上的具体语义。
 - **产品建议**：根据安全、维护和架构边界给出的落地排序，不是 Chromium API 保证。
 
 ## 12. 本项目的生产接入判断
@@ -464,7 +469,7 @@ Android 10 + M150 已完成 A–H4：`active` 单独无效、`frozen → active`
 3. 保持现有 FGS + 可续期 partial WakeLock；是否增加 Wi-Fi lock 必须用真实业务网络在目标设备上单独 A/B 验证，不能因为 PoC 使用了它就直接增加生产权限。
 4. 让受保护页面持续上报真实 `document.hidden`、main/Worker cadence、业务请求时间戳和每次 load ID。
 5. 息屏后若页面持续 `visible` 且 cadence 达标，则标记为 `SCREEN_OFF_VISIBLE_CONTINUITY`；这是 H3/H4 已验证的主路径，不需要 WebView debugging。
-6. 若页面自然变为 `hidden`，立即降级为“页面存活但调度不保证”，不要伪造 visible。实验分支可以在确认 hidden 后使用 CDP edge；正式版本在 Android 16、安全和 renderer/navigation 闭环前不应自动开启 debugging。
+6. 若页面自然变为 `hidden`，立即降级为“页面存活但调度不保证”，不要伪造 visible。v0.4.23 起正式版本可在用户明确启用实验开关后、确认 hidden 且匹配可信 Origin/token 时使用一次短租约 CDP edge；它必须保持默认关闭，不能升级为通用自动策略。
 7. 唤醒后必须核对同一 load ID、无新增 page load、IME 可用和业务事件无丢失/重复；任一失败都应把该设备/WebView 版本标成不兼容。
 
 建议的状态判定如下：
@@ -477,11 +482,11 @@ screen off / Activity stopped
         │
         └─ document.hidden=true
                → hidden 页面能力边界
-                  ├─ 生产默认：DEGRADED，回前台恢复
-                  └─ 隔离实验：visibility gate 后 CDP frozen→active
+                  ├─ 生产默认：按证据分类为 LOW_FREQUENCY_CONTINUITY 或 DEGRADED
+                  └─ 默认关闭的受控实验：visibility gate 后 CDP frozen→active
 ```
 
-在 Android 16 目标设备完成同样的 no-debug H4 验证之前，不应把 Android 10 的结果升级为通用产品承诺。
+后续 Android 13 Xiaomi 与 Android 16 OnePlus 都在移除安全锁屏后进入真实 hidden，已经证明 Android 10 的 no-Keyguard natural-visible 结果只能作为设备能力例外，不能升级为通用产品承诺。
 
 ### 12.1 v0.4.22 生产接入与 Android 10 自测结果
 
@@ -504,8 +509,9 @@ debuggable 诊断构建和真实 `PersistentWebViewActivity -> FrameLayout -> We
 CDP，且 `chrome_inspect_enabled=false`。真正 non-debug release APK 的去混杂证据来自隔离
 PoC 的 H4：该轮同时关闭 WebView debugging 和自动 CDP，仍复现自然 visible 息屏连续运行。
 
-该结果验证了生产状态机能识别 Android 10 设备上的自然息屏连续运行能力；Android 16 仍须
-按相同流程复测，若真实页面变 hidden，正式版本会显示 `HIDDEN_DEGRADED` 而不会伪造可见性。
+该结果验证了生产状态机能识别 Android 10 设备上的自然息屏连续运行能力。后续 Android 16
+和 Android 13 复测均进入真实 hidden；正式版本会根据 Worker 证据显示
+`HIDDEN_LOW_FREQUENCY_CONTINUITY` 或 `HIDDEN_DEGRADED`，而不会伪造可见性。
 
 ### 12.2 Android 16 临时暴露 PoC 与 v0.4.23 实验接入
 
@@ -519,5 +525,24 @@ ADB 在 Doze 中离线，因此该次只能证明 Android 16 上短时 edge 与�
 
 v0.4.23 因此加入默认关闭的生产实验开关，并额外收紧为：仅当前可信 Origin、随机心跳
 token 精确 target 匹配、真实 `document.hidden` 门禁、单次 edge、8 秒租约、5 秒强制关闭、
-恢复最新 Chrome Inspect 偏好和 socket 关闭诊断。该接入仍属于高风险实验能力，生产 Release
-真机七分钟以上、导航/renderer/IME 和 OEM 回归未完成前不得升级为通用承诺。
+恢复最新 Chrome Inspect 偏好和 socket 关闭诊断。在 v0.4.23 当时，生产 Release 长于七分钟、
+OEM 和恢复回归尚未完成；后续闭环见 12.3。该接入始终属于高风险实验能力，导航/renderer
+重建和小时级业务连续性未完成前更不能升级为通用承诺。
+
+### 12.3 v0.4.24～v0.4.26 生产闭环
+
+后续生产验证把能力边界进一步收敛为“页面存活 + hidden 低频连续性”：
+
+- OnePlus PHB110 / Android 16 和 Xiaomi M2105K81C / Android 13 的 WebView 150 样本都保持
+  同 PID/session/load ID，无页面重载；hidden 稳态主线程约 60 秒、Dedicated Worker 约 5 秒。
+- v0.4.24 因此增加 `LOW_FREQUENCY_RESPONSIVE`、`BACKGROUND_THROTTLED`、
+  `HIDDEN_LOW_FREQUENCY_CONTINUITY`、详细日志和 Release 脱敏导出，不再把低频误报成完全中断。
+- v0.4.25 排除了从未产生页面证据的隐藏旧标签对综合状态的干扰，并修正根 URL 重复标签。
+- v0.4.26 修复 Xiaomi 在 HOME 后外部再入时，重复拆装 document-start ScriptHandler / WebMessage
+  listener 与窗口重新挂接竞争导致的 `libwebviewchromium.so` `SIGSEGV`。配置现在按语义幂等，
+  只有可信 Origin 范围变化才重装页面 runtime。
+- 移除 Xiaomi 安全锁屏后，最初约一分钟主线程仍接近 5 秒，但随后回落到约 60 秒；说明
+  Android 10 的自然 visible 结果是设备例外，而不是取消 Keyguard 后的通用行为。
+
+这些结果不改变本文的核心判断：CDP edge 可以降低完全 freeze 概率，但不能提供前台级调度；
+需要秒级可靠连续性的业务仍应迁移到 Android 原生服务或服务端。

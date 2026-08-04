@@ -1,10 +1,15 @@
 # Android WebView 后台/息屏持续运行技术探索报告
 
+> **阶段收敛说明（2026-08-04）**：本报告主要保留 v0.4.13～v0.4.21 的历史探索和失败证据。
+> v0.4.22～v0.4.26 的生产收敛、Android 13/16 正式包验证、最终产品边界、诊断方法和工程经验，
+> 统一见 [background_continuity_phase_summary_2026-08-04.md](background_continuity_phase_summary_2026-08-04.md)。
+> 若本文较早的“待验证”或设备例外表述与阶段总结冲突，以阶段总结和最新专项 runbook 为准。
+
 > 探索周期：v0.4.13 ~ v0.4.21（2026-07-31 ~ 2026-08-01）
 > 测试环境：OnePlus PHB110 · Android 16 (API 36) · Google WebView 150.0.7871.181
 > 原始结论：**三条技术路线均已实证证伪**，当时基线为 v0.4.21；2026-08-03 的后续结论见下方“深研更新”。
 
-> **深研更新（2026-08-03）**：本文的“唯一恢复路径”结论是针对公开、受支持的 Android WebView API。隔离 PoC 已在 OnePlus 6 / Android 10 / WebView 150 上验证 DevTools/CDP `frozen → active` 能解除或阻止完全冻结，并可由 APK 同 UID 自己操作；同一页面/renderer 已存活 7.45 小时且通过前台恢复和 IME。但主线程 timer/fetch 在 hidden 约 5 分钟后仍降为约 60 秒一次，2 小时 WakeLock 到期后又出现 CPU suspend 间隙，所以它不是前台级持续运行。生产实现已在 v0.4.23 候选中加入默认关闭、可信 Origin 限定、短租约和风险确认的实验性低频续行；Android 16 设备闭环仍需现场验证，不能把它表述成前台级保证。详见 [background_continuity_deep_research.md](background_continuity_deep_research.md)。
+> **深研更新（2026-08-03，当日状态）**：本文的“唯一恢复路径”结论是针对公开、受支持的 Android WebView API。隔离 PoC 已在 OnePlus 6 / Android 10 / WebView 150 上验证 DevTools/CDP `frozen → active` 能解除或阻止完全冻结，并可由 APK 同 UID 自己操作；同一页面/renderer 已存活 7.45 小时且通过前台恢复和 IME。但主线程 timer/fetch 在 hidden 约 5 分钟后仍降为约 60 秒一次，2 小时 WakeLock 到期后又出现 CPU suspend 间隙，所以它不是前台级持续运行。生产实现已在 v0.4.23 候选中加入默认关闭、可信 Origin 限定、短租约和风险确认的实验性低频续行；当日尚未完成的 Android 16 设备闭环已在下方 2026-08-04 更新中补齐，且仍不能把它表述成前台级保证。详见 [background_continuity_deep_research.md](background_continuity_deep_research.md)。
 
 > **设备闭环更新（2026-08-04）**：生产 v0.4.24 已在 OnePlus PHB110 / Android 16 和 Xiaomi M2105K81C / Android 13（均为 Google WebView 150.0.7871.181）完成现场验证。HOME 与电源键息屏都保持同一 PID、session、load ID，无页面重载；实验性 CDP 边缘触发成功且临时调试 socket 每次约 0.54 秒后关闭。两个设备的真实页面都进入 hidden，主线程随后约 60 秒运行一次，Dedicated Worker 保持约 5 秒采样，因此稳定分类为 `LOW_FREQUENCY_RESPONSIVE` / `HIDDEN_LOW_FREQUENCY_CONTINUITY`，不是前台级运行。Xiaomi 强制 Light Doze `IDLE` 约 3 分钟仍保持该结果；MIUI 拒绝 shell 强制 Deep Doze，状态停在 `INACTIVE`。详见 [xiaomi_android13_background_continuity.md](runbooks/xiaomi_android13_background_continuity.md)。
 
@@ -16,7 +21,7 @@
 
 **技术约束**：真实网页必须运行在 `WebViewActivity -> FrameLayout -> WebView` 原生路径；不能破坏儿童 Kiosk 安全沙箱；不能破坏网页输入法（IME）；不能移动 WebView 导致页面丢失。
 
-**结论先行**：在 Android 16 + WebView 150 上，**"页面在后台/息屏保持前台级运行"无法通过公开、受支持的应用层 API 实现**。已实证证伪三条生产路线（可见性伪造、`WebView.onResume()` 解冻、物理悬浮窗）；当前稳定能力边界为"进程与资源存活 + 回前台自动恢复"。Android 10 的 CDP PoC 把 hidden 页能力推进到“避免完全 freeze、Worker 继续运行”，但没有消除主线程节流，且安全/兼容性没有公开 API 保证。另有一条受管设备条件化结果：移除安全 Keyguard 后，纯电源键息屏没有让页面 hidden，实机约 19 分钟保持前台 cadence，且关闭 debugging/CDP 后复核仍通过；它仍需在 Android 16/OEM 目标设备逐机验证，不能当作通用 Android 契约。
+**结论先行**：在 Android 16 + WebView 150 上，**"页面在后台/息屏保持前台级运行"无法通过公开、受支持的应用层 API 实现**。已实证证伪三条生产路线（可见性伪造、`WebView.onResume()` 解冻、物理悬浮窗）。v0.4.23 起的受控 CDP 实验可以降低完全 freeze 的概率，但没有消除 hidden 主线程节流；Android 13 Xiaomi 与 Android 16 OnePlus 的正式包样本都收敛为主线程约 60 秒、Dedicated Worker 约 5 秒的低频连续性。Android 10 的无安全 Keyguard 自然 visible 结果是设备例外，不能推广为 Android 契约。
 
 ---
 
@@ -130,7 +135,7 @@
 | 回前台自动恢复（页面续行、心跳恢复） | ✅ 稳定（基线） |
 | 页面冻结状态可观测（freeze 信号、STALE、unfreeze_ineffective） | ✅ 稳定（诊断） |
 | **后台/息屏页面前台级持续运行（公开 API）** | ❌ **平台限制，公开应用层无解** |
-| 无安全 Keyguard 的纯息屏（Android 10 / OnePlus 6） | ⚠️ 约 19 分钟页面保持 visible 且 main/Worker/fetch 保持前台 cadence；关闭 debugging/CDP 复核通过；强依赖设备策略，Android 16 未验证 |
+| 无安全 Keyguard 的纯息屏（Android 10 / OnePlus 6） | ⚠️ 约 19 分钟页面保持 visible 且 main/Worker/fetch 保持前台 cadence；关闭 debugging/CDP 复核通过；Android 13 Xiaomi 与 Android 16 OnePlus 未复现为通用能力 |
 | CDP 避免完全 freeze（生产 v0.4.24 + M150） | ⚠️ Android 10 PoC、Android 13 Xiaomi、Android 16 OnePlus 均已验证同 UID 可自控且不重载；hidden 主线程仍约 60 秒节流，Worker 较高频，不能当作前台级运行 |
 | PiP（切后台场景） | ⚠️ 理论可行，未实施（息屏无效） |
 | 页面侧 freeze/resume 适配（站点配合） | ✅ 可行，业务连续性最优（**不等于完全正常运行**，冻结期间站点仍暂停） |
@@ -141,7 +146,7 @@
 
 ## 7. 后续方向候选（待规划，勿直接实施）
 
-1. **CDP 跨版本/完整性补测**：先在 Android 16 复现 Android 10 结果，再覆盖可续期 WakeLock 下的长时业务延迟、导航、renderer crash、Doze/热控和安全边界；在完成前保持隔离 PoC，不接生产开关。
+1. **CDP 长时与完整性补测**：Android 16 短时 edge、生产开关和 socket 关闭已验证；后续重点覆盖小时级业务延迟、导航、renderer crash、Deep Doze/热控、WebView 升级和安全租约回归，继续保持默认关闭和精确可信 Origin。
 2. **PiP 专项试验**：仅切后台场景；需先验证 Lock Task 兼容性；接受"息屏仍冻结"。
 3. **站点侧 Page Lifecycle 适配**（推荐底线能力）：站点监听 `freeze`/`resume`，冻结时保存状态、恢复后续传重连——把"感知中断"降到最低。
 4. **业务迁移**：关键定时/上报逻辑从网页迁到服务端或 Android 原生层（FGS/native network/outbox；不要把 WorkManager 当持续亚秒调度器）——架构级改动。
@@ -169,6 +174,8 @@
 | **v0.4.22** | **真实 Page Visibility 观测 + 无安全 Keyguard 条件化路径** | ✅ Android 10 已验证；Android 16/OEM 需逐机复测 |
 | **v0.4.23** | **默认关闭的实验性 CDP 低频续行** | ⚠️ 仅可信 Origin、短租约、明确风险确认；避免完全 freeze 但不保证前台级调度 |
 | **v0.4.24** | **后台低频心跳分类 + 脱敏导出 + 详细诊断** | ✅ OnePlus Android 16 与 Xiaomi Android 13 均确认 hidden 主线程约 60 秒、Worker 继续，保持同 PID/load ID 且无重载 |
+| **v0.4.25** | **隐藏待激活会话修正 + 根 URL 去重** | ✅ 避免未观测旧标签误降级，切回时补建探针 |
+| **v0.4.26** | **配置幂等化 + Xiaomi 恢复崩溃修复** | ✅ 五轮 HOME → 外部再入保持同 PID/session/load ID，无重载、无 native crash |
 
 ---
 
@@ -206,5 +213,6 @@ adb shell ps -A | grep childkiosk                             # 进程存活
 ## 10. 附：相关代码与文档索引
 
 - 运行手册：`docs/runbooks/high_performance_web_runtime.md`（含本报告结论的"不要重试"警告）
+- 阶段总结：`docs/background_continuity_phase_summary_2026-08-04.md`（当前最终结论与知识入口）
 - 核心代码：`app/src/main/java/site/anzz/childkiosk/performance/`（SessionController、ForegroundService、WakeLockController、PageRuntime、ProcessState、RuntimeStatus 等）
-- 版本历史：`docs/CHANGELOG.md`（v0.4.13–v0.4.21）
+- 版本历史：`docs/CHANGELOG.md`（v0.4.13–v0.4.26）

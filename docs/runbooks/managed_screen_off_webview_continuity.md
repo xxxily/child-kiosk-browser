@@ -8,6 +8,10 @@ where the secure Keyguard has been removed or disabled. It does not use WebView 
 The app never promises this behavior on every Android/OEM combination. It measures the target
 device and reports degradation when Chromium makes the document hidden or stops the main heartbeat.
 
+Current phase conclusion: OnePlus 6 / Android 10 demonstrated this natural-visible exception, but
+Xiaomi Android 13 and OnePlus Android 16 did not establish it as a general no-Keyguard behavior.
+See [background_continuity_phase_summary_2026-08-04.md](../background_continuity_phase_summary_2026-08-04.md).
+
 ## Required conditions
 
 - Use the production `WebViewActivity -> FrameLayout -> WebView` host.
@@ -27,7 +31,10 @@ screen off + Activity STOPPED
         |       -> SCREEN_OFF_VISIBLE_CONTINUITY
         |
         +-- document.hidden=true
-        |       -> HIDDEN_DEGRADED
+        |       +-- Worker evidence remains recent
+        |       |       -> HIDDEN_LOW_FREQUENCY_CONTINUITY / BACKGROUND_THROTTLED
+        |       +-- no bounded Worker evidence
+        |               -> HIDDEN_DEGRADED or STALE
         |
         +-- main heartbeat stale
                 -> STALE
@@ -53,8 +60,12 @@ screen off + Activity STOPPED
 
 ## Failure interpretation
 
-- `HIDDEN_DEGRADED`: the OEM/WebView does not support the natural-visible path. Do not reintroduce
-  visibility overrides, View visibility toggles, overlay moves or automatic CDP.
+- `HIDDEN_LOW_FREQUENCY_CONTINUITY`: the OEM/WebView does not support the natural-visible path, but
+  bounded Worker evidence still proves low-frequency scheduling. This is not foreground-equivalent
+  execution.
+- `HIDDEN_DEGRADED`: the OEM/WebView does not support the natural-visible path and there is not
+  enough Worker evidence to claim low-frequency continuity. Do not reintroduce visibility
+  overrides, View visibility toggles, overlay moves or automatic CDP.
 - `STALE` with native heartbeat alive: Blink scheduling froze or throttled the page.
 - PID/load ID changed: process/renderer/page continuity failed even if the UI recovered.
 - Keyguard showing/secure: remove the credential or correct Device Owner policy before retesting.
@@ -65,5 +76,6 @@ OnePlus 6 / Android 10 / Google WebView `150.0.7871.181` passed a seven-minute s
 debuggable diagnostic build of the production app module, signed with the release certificate. It
 kept the same PID and load ID, a real visible document, healthy FGS/WakeLock state, and advancing
 main/Worker heartbeats without a CDP connection. The isolated H4 PoC separately reproduced the
-no-Keyguard path with a true non-debug release APK and debugging/CDP disabled. Android 16 remains a
-required target-device verification.
+no-Keyguard path with a true non-debug release APK and debugging/CDP disabled. Later Android 13
+Xiaomi and Android 16 OnePlus samples entered real hidden state instead; treat the Android 10 result
+as a target-device capability exception, not an expected outcome after removing credentials.

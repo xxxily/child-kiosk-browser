@@ -6,7 +6,10 @@
 
 ## [Unreleased]
 
-暂无未发布变更。
+### Documentation - 文档
+
+- 新增 Android WebView 后台 / 息屏连续性阶段总结，统一沉淀 v0.4.3～v0.4.26 的最终能力边界、探索与失败路线、优化演进、Android 10/13/16 设备证据、诊断方法、工程约束和下一阶段原生/服务端架构建议。
+- 同步校正 README、研究报告、深度研究、需求文档和运行手册中的历史待验证口径，明确当前高性能模式只承诺页面存活、hidden 低频连续性与前台恢复，不承诺前台等价执行。
 
 ## [0.4.26] - 2026-08-04
 
@@ -1547,7 +1550,8 @@
 - 调研报告 `docs/android_kiosk_research_report.md`
 - 需求规格 `docs/child_kiosk_browser_requirements.md`
 
-[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.4.25...HEAD
+[Unreleased]: https://github.com/xxxily/child-kiosk-browser/compare/v0.4.26...HEAD
+[0.4.26]: https://github.com/xxxily/child-kiosk-browser/compare/v0.4.25...v0.4.26
 [0.4.25]: https://github.com/xxxily/child-kiosk-browser/compare/v0.4.24...v0.4.25
 [0.4.24]: https://github.com/xxxily/child-kiosk-browser/compare/v0.4.23...v0.4.24
 [0.0.28]: https://github.com/xxxily/child-kiosk-browser/compare/v0.0.27...v0.0.28
