@@ -204,6 +204,18 @@ class HighPerformanceSessionControllerTest {
     }
 
     @Test
+    fun publicationFailureCanDisableTheSameConfigVersion() {
+        val stopped = HighPerformanceSessionController.stopAllFromPublishedSignal(
+            configVersion = 1,
+            source = HIGH_PERFORMANCE_PUBLICATION_FAILED_REASON
+        )
+
+        assertTrue(stopped)
+        assertFalse(HighPerformanceSessionController.currentRuntimeSnapshot().enabled)
+        assertEquals(0, HighPerformanceSessionController.debugStateForTests().activeSessionCount)
+    }
+
+    @Test
     fun controlOnlySnapshotChangeDoesNotReinstallPageRuntime() {
         HighPerformanceDiagnostics.clear()
 

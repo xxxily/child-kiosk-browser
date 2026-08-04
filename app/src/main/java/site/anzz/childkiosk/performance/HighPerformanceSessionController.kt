@@ -398,9 +398,15 @@ internal object HighPerformanceSessionController {
     fun applySnapshot(snapshot: HighPerformanceRuntimeSnapshot, source: String): Boolean {
         ensureMainThread()
         val current = runtimeSnapshot
+        val authoritativeFailClosedReplacement =
+            source == HIGH_PERFORMANCE_PUBLICATION_FAILED_REASON &&
+                snapshot.configVersion == current.configVersion &&
+                current.enabled &&
+                !snapshot.enabled
         if (snapshot.configVersion < current.configVersion ||
             (snapshot.configVersion == current.configVersion &&
-                !sameHighPerformanceRuntimeConfiguration(current, snapshot))
+                !sameHighPerformanceRuntimeConfiguration(current, snapshot) &&
+                !authoritativeFailClosedReplacement)
         ) {
             HighPerformanceDiagnostics.record(
                 type = "config_snapshot_rejected",
@@ -413,7 +419,7 @@ internal object HighPerformanceSessionController {
             )
             return false
         }
-        if (snapshot.configVersion == current.configVersion) {
+        if (snapshot.configVersion == current.configVersion && !authoritativeFailClosedReplacement) {
             HighPerformanceDiagnostics.record(
                 type = "config_snapshot_unchanged",
                 result = "ignored",

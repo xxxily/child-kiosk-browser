@@ -64,8 +64,10 @@ foreground view.
   changes; CDP timing, verbose diagnostics, WakeLock lease, and other controller-only changes must
   not churn native WebView listener state. An equal-version identical snapshot is ignored, while
   equal-version conflicting content is rejected because every real writer mutation increments
-  `configVersion`. Disabling or removing a rule still deactivates the current document immediately;
-  changing rules must not rely on a future Activity restart or a stale launch Intent.
+  `configVersion`. The sole exception is the authenticated package-local `publication_failed`
+  fail-closed path, which may replace the current version with its disabled tombstone. Disabling or
+  removing a rule still deactivates the current document immediately; changing rules must not rely
+  on a future Activity restart or a stale launch Intent.
 - Notification Stop suppression is tracked per logical tab across frozen-tab and renderer reconstruction. A confirmed user action may re-authorize only that tab; it must not silently re-enable other stopped tabs or script-created popups.
 - A health-time-limit latch is owner-scoped. Ordinary navigation cannot clear it; only successful parent authorization may resume that Activity, and it must not resume another Activity or override a concurrent global Stop.
 - The ordinary background-WebView cap may freeze ordinary tabs only. Protected tabs stay alive even when retaining them temporarily exceeds the normal cap; the runtime records one degraded warning until the owner returns within the cap.
