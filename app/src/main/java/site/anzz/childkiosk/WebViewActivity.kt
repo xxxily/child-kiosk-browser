@@ -620,6 +620,9 @@ open class WebViewActivity : ComponentActivity() {
         WebViewHostRuntime.register(this)?.finishForHostReplacement()
         recordTaskLifecycle("activity_created", intent)
         HighPerformanceSessionController.initialize(this, runtimeConfig.highPerformanceSnapshot)
+        runtimeConfig = runtimeConfig.copy(
+            highPerformanceSnapshot = HighPerformanceSessionController.currentRuntimeSnapshot()
+        )
         HighPerformanceRuntimeBridge.setSnapshotAppliedListener(this) { snapshot ->
             runtimeConfig = runtimeConfig.copy(highPerformanceSnapshot = snapshot)
             if (!snapshot.enabled || !snapshot.experimentalCdpContinuityEnabled) {
@@ -2018,14 +2021,15 @@ open class WebViewActivity : ComponentActivity() {
             this,
             launchedConfig.highPerformanceSnapshot.configVersion
         )
-        runtimeConfig = launchedConfig.copy(highPerformanceSnapshot = publishedSnapshot)
-        if (!publishedSnapshot.enabled || !publishedSnapshot.experimentalCdpContinuityEnabled) {
-            cancelExperimentalCdpContinuity("new_intent_config_disabled")
-        }
         HighPerformanceSessionController.applySnapshot(
             publishedSnapshot,
             source = "activity_new_intent"
         )
+        val effectiveSnapshot = HighPerformanceSessionController.currentRuntimeSnapshot()
+        runtimeConfig = launchedConfig.copy(highPerformanceSnapshot = effectiveSnapshot)
+        if (!effectiveSnapshot.enabled || !effectiveSnapshot.experimentalCdpContinuityEnabled) {
+            cancelExperimentalCdpContinuity("new_intent_config_disabled")
+        }
         prepareFilterRuntimeThenHandle(intent)
     }
 

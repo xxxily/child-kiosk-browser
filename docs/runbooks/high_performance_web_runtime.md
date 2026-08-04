@@ -59,9 +59,13 @@ foreground view.
   main-thread and Dedicated Worker heartbeats to the current protected session; the token is never
   persisted. A responsive probe proves only that the injected diagnostic timer was scheduled, not
   that every site timer, socket, fetch, or business task stayed continuous.
-- Runtime configuration broadcasts reconfigure every managed WebView and update the live Activity
-  snapshot. Disabling or removing a rule deactivates the current document immediately; changing
-  rules must not rely on a future Activity restart or a stale launch Intent.
+- Runtime configuration broadcasts update the controller and live Activity snapshot immediately.
+  The page ScriptHandler/WebMessage listener is reinstalled only when the enabled Origin scope
+  changes; CDP timing, verbose diagnostics, WakeLock lease, and other controller-only changes must
+  not churn native WebView listener state. An equal-version identical snapshot is ignored, while
+  equal-version conflicting content is rejected because every real writer mutation increments
+  `configVersion`. Disabling or removing a rule still deactivates the current document immediately;
+  changing rules must not rely on a future Activity restart or a stale launch Intent.
 - Notification Stop suppression is tracked per logical tab across frozen-tab and renderer reconstruction. A confirmed user action may re-authorize only that tab; it must not silently re-enable other stopped tabs or script-created popups.
 - A health-time-limit latch is owner-scoped. Ordinary navigation cannot clear it; only successful parent authorization may resume that Activity, and it must not resume another Activity or override a concurrent global Stop.
 - The ordinary background-WebView cap may freeze ordinary tabs only. Protected tabs stay alive even when retaining them temporarily exceeds the normal cap; the runtime records one degraded warning until the owner returns within the cap.
@@ -102,6 +106,20 @@ Normal mode must resolve to `PersistentWebViewActivity` with the dedicated `.web
 The high-performance notification must resume the exact live WebView host. It must never target `MainActivity(singleTask)`: in the same-task kiosk topology that would clear every Activity above Main and destroy the page. The floating browser Home action follows the same split: normal-mode `PersistentWebViewActivity` brings Main's task forward without finishing the WebView task, while same-task `WebViewActivity` finishes back to Main as an explicit user exit. If the protection mode changes while the other host is still alive, the new host checkpoints the tabs and removes the old host before restoring them; two hosts must not share the process-local tab/controller state concurrently.
 
 Do not fix this by changing Main to `singleTop`, skipping `super.onStop()`, or clearing `Application.ActivityLifecycleCallbacks`. Those approaches break HOME singleton or lifecycle contracts without preserving both task topologies.
+
+### Reopening the same background tab crashes in `libwebviewchromium.so`
+
+On Xiaomi Android 13 with WebView 150, repeatedly applying an unchanged high-performance snapshot
+from `Activity.onNewIntent()` can race MIUI's window reattachment with removal/recreation of the
+document-start ScriptHandler and WebMessage listener. The signature is a null dereference at
+`fault addr 0x18`, preceded by `activity_new_intent` and configuration-listener registrations.
+
+Confirm that the incoming snapshot has the same `configVersion` and effective configuration. It
+must produce `config_snapshot_unchanged/ignored`, not a new `page_runtime_configured` event. If the
+same version carries different content, treat it as a writer/publication contract violation and
+keep the previously accepted controller snapshot. See
+`docs/runbooks/xiaomi_android13_background_continuity.md` for the exact device evidence and
+regression sequence.
 
 ### A protected tab increases memory usage above the ordinary cap
 

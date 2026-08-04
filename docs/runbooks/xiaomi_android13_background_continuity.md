@@ -3,7 +3,8 @@
 ## Scope
 
 This runbook records the 2026-08-04 production validation on Xiaomi `M2105K81C`, Android 13
-(SDK 33), Google WebView `150.0.7871.181`, and Child Kiosk Browser enhanced release `0.4.24 (99)`.
+(SDK 33), Google WebView `150.0.7871.181`, and Child Kiosk Browser enhanced releases
+`0.4.24 (99)` through `0.4.26 (101)`.
 The tested trusted Origin was `https://map.anzz.site` with high-performance mode, experimental CDP
 continuity, balanced timing, verbose diagnostics, notification permission, and battery exemption
 enabled.
@@ -68,6 +69,63 @@ The runtime fix is:
 
 Expected diagnostics are `js_heartbeat_hidden_activation_pending` followed by
 `js_heartbeat_activation_retried` when the tab is selected.
+
+## Existing-host native crash on repeated external open
+
+Enhanced release `0.4.25 (100)` consistently reproduced a WebView native crash when an external
+`ACTION_VIEW` resumed an existing background `PersistentWebViewActivity` for the same tab. Both the
+exact URL and the normalized root-URL variant reproduced it:
+
+```text
+signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x18
+Cause: null pointer dereference
+libwebviewchromium.so #00 pc 0x3abab8c
+BuildId: a3a1ae52ee233d93d2a14e4190f6d8d4057f132a
+```
+
+The stable pre-crash sequence was:
+
+1. the existing page remained alive in the background with the same session and load ID;
+2. `activity_new_intent` was recorded;
+3. WebView/MIUI registered configuration listeners while the existing host was being brought back;
+4. the process crashed about 300 ms later in `libwebviewchromium.so`.
+
+The application-side trigger was a redundant equal-version runtime snapshot application.
+`HighPerformanceSessionController.applySnapshot()` unconditionally removed and recreated the
+document-start script and WebMessage listener for every managed WebView, then bootstrapped the
+already-loaded document. Reconfiguring those WebView-owned native objects while MIUI was
+reattaching the background Activity window exposed the WebView 150 null dereference.
+
+The runtime fix is deliberately narrow:
+
+- ignore an equal-version snapshot when its effective configuration is unchanged, including a
+  harmless new `generatedAt` value;
+- reject an equal-version snapshot whose configuration content differs, because the main-process
+  writer contract increments `configVersion` for every real mutation;
+- apply newer CDP timing, verbose-diagnostic, WakeLock lease, and other controller-only changes
+  without touching the page ScriptHandler or WebMessage listener;
+- reinstall the page runtime only when the enabled Origin scope changes;
+- after an ignored or rejected snapshot, keep `WebViewActivity` aligned with the controller's
+  accepted snapshot instead of adopting the rejected launch copy.
+
+Regression procedure:
+
+1. clear the crash log buffer and open `https://map.anzz.site`;
+2. record WebView PID, session ID, and load ID, then press HOME;
+3. send external `ACTION_VIEW` for both `https://map.anzz.site` and
+   `https://map.anzz.site/` several times;
+4. verify the same PID/session/load ID, one logical tab/session, an unchanged page-runtime
+   configuration, and no new `data_app_native_crash` entry;
+5. repeat a short HOME and screen-off sample and verify the bounded CDP lease still restores
+   debugging state and closes the DevTools socket.
+
+Useful evidence commands:
+
+```bash
+adb logcat -b crash -c
+adb logcat -b crash -d -v threadtime
+adb shell dumpsys dropbox --print data_app_native_crash
+```
 
 ## Artifact checklist
 

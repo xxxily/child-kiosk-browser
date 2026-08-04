@@ -150,6 +150,117 @@ class HighPerformanceSessionControllerTest {
     }
 
     @Test
+    fun repeatedSnapshotDoesNotReinstallPageRuntime() {
+        HighPerformanceDiagnostics.clear()
+
+        val applied = HighPerformanceSessionController.applySnapshot(
+            trustedSnapshot(),
+            source = "test_duplicate"
+        )
+
+        assertFalse(applied)
+        assertTrue(
+            HighPerformanceDiagnostics.snapshot().any {
+                it.type == "config_snapshot_unchanged" && it.result == "ignored"
+            }
+        )
+        assertFalse(
+            HighPerformanceDiagnostics.snapshot().any { it.type == "page_runtime_configured" }
+        )
+    }
+
+    @Test
+    fun republishedSnapshotWithOnlyNewGenerationTimeIsIdempotent() {
+        HighPerformanceDiagnostics.clear()
+
+        val applied = HighPerformanceSessionController.applySnapshot(
+            trustedSnapshot().copy(generatedAt = 2),
+            source = "test_republished"
+        )
+
+        assertFalse(applied)
+        assertFalse(
+            HighPerformanceDiagnostics.snapshot().any { it.type == "page_runtime_configured" }
+        )
+    }
+
+    @Test
+    fun equalVersionWithDifferentConfigurationIsRejected() {
+        HighPerformanceDiagnostics.clear()
+
+        val applied = HighPerformanceSessionController.applySnapshot(
+            trustedSnapshot(experimentalCdpContinuityEnabled = true),
+            source = "test_conflict"
+        )
+
+        assertFalse(applied)
+        assertEquals(1L, HighPerformanceSessionController.currentRuntimeSnapshot().configVersion)
+        assertNull(HighPerformanceSessionController.continuityCandidate(OWNER_ID))
+        assertTrue(
+            HighPerformanceDiagnostics.snapshot().any {
+                it.type == "config_snapshot_rejected" && it.result == "conflict"
+            }
+        )
+    }
+
+    @Test
+    fun controlOnlySnapshotChangeDoesNotReinstallPageRuntime() {
+        HighPerformanceDiagnostics.clear()
+
+        val applied = HighPerformanceSessionController.applySnapshot(
+            trustedSnapshot(experimentalCdpContinuityEnabled = true, configVersion = 2).copy(
+                experimentalCdpTimingProfile = ExperimentalCdpTimingProfile.AGGRESSIVE,
+                verboseDiagnosticsEnabled = true
+            ),
+            source = "test_control_change"
+        )
+
+        assertTrue(applied)
+        assertNotNull(HighPerformanceSessionController.continuityCandidate(OWNER_ID))
+        assertTrue(
+            HighPerformanceDiagnostics.snapshot().any {
+                it.type == "page_runtime_reconfiguration_skipped" && it.result == "unchanged"
+            }
+        )
+        assertFalse(
+            HighPerformanceDiagnostics.snapshot().any { it.type == "page_runtime_configured" }
+        )
+    }
+
+    @Test
+    fun originScopeChangeStillReinstallsPageRuntime() {
+        HighPerformanceDiagnostics.clear()
+        val changedRules = trustedSnapshot(configVersion = 2).copy(
+            rules = listOf(
+                trustedSnapshot().rules.single(),
+                HighPerformanceRuntimeRule(
+                    id = "second",
+                    origin = "https://second.example",
+                    enabled = true,
+                    includeSubdomains = false,
+                    displayName = "Second",
+                    updatedAt = 2
+                )
+            )
+        )
+
+        val applied = HighPerformanceSessionController.applySnapshot(
+            changedRules,
+            source = "test_origin_change"
+        )
+
+        assertTrue(applied)
+        assertTrue(
+            HighPerformanceDiagnostics.snapshot().any { it.type == "page_runtime_configured" }
+        )
+        assertFalse(
+            HighPerformanceDiagnostics.snapshot().any {
+                it.type == "page_runtime_reconfiguration_skipped"
+            }
+        )
+    }
+
+    @Test
     @LooperMode(LooperMode.Mode.LEGACY)
     fun repeatedAlarmHealthChecksKeepOneHeartbeatChain() {
         val scheduler = shadowOf(Looper.getMainLooper()).scheduler

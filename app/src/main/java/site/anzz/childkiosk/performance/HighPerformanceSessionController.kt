@@ -39,6 +39,17 @@ internal fun shouldDeferForegroundServiceStart(
 internal fun shouldUninstallPageRuntimeForStop(suppressCurrentWebViews: Boolean): Boolean =
     suppressCurrentWebViews
 
+internal fun sameHighPerformanceRuntimeConfiguration(
+    first: HighPerformanceRuntimeSnapshot,
+    second: HighPerformanceRuntimeSnapshot
+): Boolean = first.copy(generatedAt = 0L) == second.copy(generatedAt = 0L)
+
+internal fun shouldReconfigureHighPerformancePageRuntime(
+    previous: HighPerformanceRuntimeSnapshot,
+    current: HighPerformanceRuntimeSnapshot
+): Boolean = HighPerformancePageRuntime.allowedOriginRules(previous) !=
+    HighPerformancePageRuntime.allowedOriginRules(current)
+
 internal fun highPerformanceCompositeStateForActiveSessions(
     resourceProtectionReady: Boolean,
     javascriptStates: List<HighPerformanceJavascriptState>,
@@ -383,18 +394,34 @@ internal object HighPerformanceSessionController {
         return candidate
     }
 
-    /** Applies only monotonically newer/equal snapshots; a lower version can never revive old rules. */
+    /** Applies only monotonically newer snapshots; a lower or conflicting equal version is rejected. */
     fun applySnapshot(snapshot: HighPerformanceRuntimeSnapshot, source: String): Boolean {
         ensureMainThread()
         val current = runtimeSnapshot
-        if (snapshot.configVersion < current.configVersion) {
+        if (snapshot.configVersion < current.configVersion ||
+            (snapshot.configVersion == current.configVersion &&
+                !sameHighPerformanceRuntimeConfiguration(current, snapshot))
+        ) {
             HighPerformanceDiagnostics.record(
                 type = "config_snapshot_rejected",
-                result = "stale",
-                reason = "version_${snapshot.configVersion}_below_${current.configVersion}"
+                result = if (snapshot.configVersion < current.configVersion) "stale" else "conflict",
+                reason = if (snapshot.configVersion < current.configVersion) {
+                    "version_${snapshot.configVersion}_below_${current.configVersion}"
+                } else {
+                    "version_${snapshot.configVersion}_content_changed"
+                }
             )
             return false
         }
+        if (snapshot.configVersion == current.configVersion) {
+            HighPerformanceDiagnostics.record(
+                type = "config_snapshot_unchanged",
+                result = "ignored",
+                reason = "${source}_version_${snapshot.configVersion}"
+            )
+            return false
+        }
+        val pageRuntimeChanged = shouldReconfigureHighPerformancePageRuntime(current, snapshot)
         val reenabled = !current.enabled && snapshot.enabled
         recordRuleSnapshotChanges(current, snapshot, source)
         runtimeSnapshot = snapshot
@@ -414,12 +441,21 @@ internal object HighPerformanceSessionController {
         )
         registrations.toList().forEach { managed ->
             evaluate(managed, managed.lastCommittedUrl, source = "config_updated")
-            managed.webView.get()?.let { webView ->
-                installPageRuntime(webView, snapshot)
-                prepareJavascriptHeartbeat(webView)?.let { token ->
-                    HighPerformancePageRuntime.bootstrapCurrentDocument(webView, token)
+            if (pageRuntimeChanged) {
+                managed.webView.get()?.let { webView ->
+                    installPageRuntime(webView, snapshot)
+                    prepareJavascriptHeartbeat(webView)?.let { token ->
+                        HighPerformancePageRuntime.bootstrapCurrentDocument(webView, token)
+                    }
                 }
             }
+        }
+        if (!pageRuntimeChanged) {
+            HighPerformanceDiagnostics.record(
+                type = "page_runtime_reconfiguration_skipped",
+                result = "unchanged",
+                reason = "${source}_version_${snapshot.configVersion}"
+            )
         }
         syncSystemResources("config_updated")
         publishStatus()
@@ -612,6 +648,11 @@ internal object HighPerformanceSessionController {
     fun isProtected(webView: WebView): Boolean {
         ensureMainThread()
         return find(webView)?.session != null
+    }
+
+    internal fun currentRuntimeSnapshot(): HighPerformanceRuntimeSnapshot {
+        ensureMainThread()
+        return runtimeSnapshot
     }
 
     fun prepareJavascriptHeartbeat(webView: WebView): String? {
