@@ -1,3 +1,20 @@
+## Child Kiosk Browser v0.4.26
+
+### 本轮核心变化
+
+* **修复 Xiaomi 上恢复后台网页的原生崩溃**：在 Android 13 / WebView 150 上，HOME 后再次从外部打开同一站点曾稳定触发 `libwebviewchromium.so` 的 `SIGSEGV`。本版本避免在 Activity 窗口重新挂接期间重复拆装 WebView 的 document-start 脚本与消息监听器。
+* **配置更新更安全、更精确**：完全相同的快照不再重复应用；CDP 时序、详细日志、WakeLock 租期等控制选项更新时不会扰动已加载页面；只有可信 Origin 范围真实变化时才重装页面 runtime。
+* **保持 fail-closed**：发现同版本内容冲突时继续使用上一次已接受配置，但运行时发布失败的受控禁用墓碑仍能立即停止高性能会话，安全边界不因幂等优化而削弱。
+* **Xiaomi 正式包闭环**：正式签名测试包保留数据升级后，交替执行五轮同 URL/尾斜杠 URL 的 HOME → 外部再入，WebView PID、session 和 load ID 全程不变，无重载、无 native crash；息屏后 DevTools socket 仍关闭。
+
+### 验证建议
+
+1. 从 v0.4.25 增量安装，确认高性能总开关、可信规则、实验时序和详细诊断设置保留。
+2. 打开可信站点后按 HOME，再通过外部链接反复打开相同 URL（含有无尾斜杠）；应复用同一标签且不崩溃、不重载。
+3. 后台/息屏采样继续核对同 PID/session/load ID、FGS/WakeLock、真实 `document.hidden` 和 DevTools socket 关闭。
+
+---
+
 ## Child Kiosk Browser v0.4.25
 
 ### 本轮核心变化

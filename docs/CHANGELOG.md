@@ -8,6 +8,20 @@
 
 暂无未发布变更。
 
+## [0.4.26] - 2026-08-04
+
+### Fixed - 修复
+
+- **修复 Xiaomi 恢复后台标签时的 WebView 原生崩溃**：外部链接再次打开已存在的后台 `PersistentWebViewActivity` 时，不再对相同版本配置重复移除并创建 document-start ScriptHandler / WebMessage listener，规避 WebView 150 在 MIUI 窗口重新挂接期间触发的 `SIGSEGV` 空指针。
+- **高性能运行时快照幂等化**：相同版本且配置一致的快照直接忽略；相同版本但内容不同的普通快照拒绝采用；仅 CDP 时序、详细诊断、WakeLock 租期等控制字段变化时更新控制器，不重装页面 runtime；可信 Origin 范围变化仍即时重装并生效。
+- **保留故障安全语义**：包内 `publication_failed` 信号仍可用同版本禁用墓碑强制 fail-closed；Activity 始终以控制器实际接受的快照为准，避免采用被拒绝的启动 Intent 副本。
+
+### Tests - 测试与研究
+
+- 新增重复快照、重新发布生成时间、同版本冲突、控制字段变更、Origin 范围变更及同版本 fail-closed 墓碑单测。
+- Xiaomi M2105K81C / Android 13 / WebView 150 正式签名包保留数据升级后，交替执行五轮 `https://map.anzz.site` / 尾斜杠 URL 的 HOME → 外部再入：PID、session、load ID 均不变，无页面重载、无新增 native crash；息屏采样继续保持心跳且 DevTools socket 关闭。
+- 更新高性能运行时与 Xiaomi 专项 runbook，固化崩溃签名、根因、规避规则和回归命令。
+
 ## [0.4.25] - 2026-08-04
 
 ### Fixed - 修复
