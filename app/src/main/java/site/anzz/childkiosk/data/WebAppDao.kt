@@ -31,6 +31,9 @@ interface WebAppDao {
     @Update
     suspend fun updateWebApp(webApp: WebAppEntity)
 
+    @Query("UPDATE web_apps SET site_icon_path = :siteIconPath WHERE id = :id")
+    suspend fun updateSiteIconPath(id: Int, siteIconPath: String?)
+
     @Delete
     suspend fun deleteWebApp(webApp: WebAppEntity)
 

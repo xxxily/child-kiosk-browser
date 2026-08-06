@@ -100,6 +100,7 @@ import site.anzz.childkiosk.util.NativeLocationResult
 import site.anzz.childkiosk.util.SystemUiHelper
 import site.anzz.childkiosk.util.TimeLimiter
 import site.anzz.childkiosk.util.WebAppIconCache
+import site.anzz.childkiosk.util.WebAppSiteIconUpdater
 import site.anzz.childkiosk.util.WebViewRuntime
 import site.anzz.childkiosk.util.WebViewRuntimeConfig
 import site.anzz.childkiosk.util.WebViewPool
@@ -126,6 +127,7 @@ import site.anzz.childkiosk.util.filter.WebViewFilterInjector
 import site.anzz.childkiosk.util.filter.WebViewFilterRuntime
 import site.anzz.childkiosk.util.filter.WebViewFilterRuntimeStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -417,8 +419,7 @@ open class WebViewActivity : ComponentActivity() {
     private var activityStopped = false
     private var navigationRootHost = ""
     private var launchedWebAppId: Int? = null
-    private var lastRecordedHistoryUrl: String = ""
-    private var lastRecordedHistoryAtMs: Long = 0L
+    private val scheduledSiteIconRefreshes = ConcurrentHashMap.newKeySet<Int>()
     @Volatile
     private lateinit var runtimeConfig: WebViewRuntimeConfig
     private lateinit var webViewFilterRuntime: WebViewFilterRuntime
@@ -539,6 +540,18 @@ open class WebViewActivity : ComponentActivity() {
             null
         }
         callback.onReceiveValue(uris ?: emptyArray())
+    }
+
+    private val browserHistoryLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val url = BrowserHistoryActivity.selectedUrl(result.data)
+            if (url.isNotBlank()) {
+                loadUrlFromFloatingControls(url)
+            }
+        }
+        applySystemUiMode()
     }
 
     private val locationPermissionLauncher = registerForActivityResult(
@@ -2085,6 +2098,7 @@ open class WebViewActivity : ComponentActivity() {
             withContext(Dispatchers.Main) {
                 if (webApp != null) {
                     launchedWebAppId = webApp.id
+                    scheduleWebsiteIconRefresh(webApp)
                     val existing = tabList.findBrowserTabByUrl(webApp.url)
                     if (existing != null) {
                         switchToTab(
@@ -3234,6 +3248,14 @@ open class WebViewActivity : ComponentActivity() {
                 onForceRefresh = { showForceRefreshDialog() },
                 onStopLoading = { stopLoadingFromFloatingControls() },
                 onBookmarkCurrentPage = { bookmarkCurrentPageFromFloatingControls() },
+                onOpenHistory = {
+                    browserHistoryLauncher.launch(
+                        BrowserHistoryActivity.createIntent(
+                            this@WebViewActivity,
+                            runtimeConfig.normalSystemBars
+                        )
+                    )
+                },
                 onPanelExpandedChanged = {
                     applySystemUiMode()
                 },
@@ -3267,6 +3289,7 @@ open class WebViewActivity : ComponentActivity() {
                     }
                 },
                 onOpenWebApp = { webApp ->
+                    scheduleWebsiteIconRefresh(webApp)
                     createNewTab(
                         webApp.url,
                         focus = true,
@@ -3855,12 +3878,6 @@ open class WebViewActivity : ComponentActivity() {
         val normalizedUrl = normalizeWhitelistWebUrl(pageUrl)
         if (normalizedUrl.isBlank()) return
         val now = System.currentTimeMillis()
-        if (normalizedUrl == lastRecordedHistoryUrl && now - lastRecordedHistoryAtMs < 30_000L) {
-            return
-        }
-        lastRecordedHistoryUrl = normalizedUrl
-        lastRecordedHistoryAtMs = now
-
         val host = WebViewRuntime.hostOf(normalizedUrl).lowercase(Locale.US)
         val cleanTitle = bookmarkTitleForCurrentPage(
             currentTitle = pageTitle.orEmpty(),
@@ -3870,18 +3887,42 @@ open class WebViewActivity : ComponentActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching {
                 val dao = AppDatabase.getInstance(this@WebViewActivity).browserHistoryDao()
-                dao.insert(
+                dao.recordVisit(
                     BrowserHistoryEntity(
                         title = cleanTitle,
                         url = normalizedUrl,
                         host = host,
                         visitedAt = now,
                         webAppId = webAppId
-                    )
+                    ),
+                    duplicateWindowMs = HISTORY_DUPLICATE_WINDOW_MS
                 )
                 dao.deleteOlderThan(now - HISTORY_RETENTION_MS)
             }.onFailure { error ->
                 Log.w("ChildKioskWebView", "Failed to record browser history", error)
+            }
+        }
+    }
+
+    private fun scheduleWebsiteIconRefresh(webApp: WebAppEntity) {
+        if (!WebAppSiteIconUpdater.shouldAutoDiscoverSiteIcon(webApp)) return
+        if (WebAppIconCache.resolveCachedFile(this, webApp.siteIconPath) != null) return
+        val webAppId = webApp.id
+        if (webAppId <= 0 || !scheduledSiteIconRefreshes.add(webAppId)) return
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                delay(SITE_ICON_REFRESH_DELAY_MS)
+                WebAppSiteIconUpdater.refreshAfterOpen(this@WebViewActivity, webAppId)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.w(
+                    "ChildKioskWebView",
+                    "Failed to refresh website icon after app open: appId=$webAppId",
+                    error
+                )
+            } finally {
+                scheduledSiteIconRefreshes.remove(webAppId)
             }
         }
     }
@@ -4503,6 +4544,8 @@ open class WebViewActivity : ComponentActivity() {
             "ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART"
         const val EXTRA_RESUME_EXISTING_HOST = "RESUME_EXISTING_WEBVIEW_HOST"
         private const val HISTORY_RETENTION_MS = 90L * 24L * 60L * 60L * 1000L
+        private const val HISTORY_DUPLICATE_WINDOW_MS = 30_000L
+        private const val SITE_ICON_REFRESH_DELAY_MS = 2_000L
         private const val HIGH_PERFORMANCE_RECOVERY_TIMEOUT_MS = 30_000L
         private const val POPUP_TARGET_TIMEOUT_MS = 10_000L
         private const val SYSTEM_UI_RECOVERY_DELAY_MS = 3_000L

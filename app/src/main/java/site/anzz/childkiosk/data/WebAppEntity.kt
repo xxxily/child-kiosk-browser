@@ -10,6 +10,7 @@ data class WebAppEntity(
     @ColumnInfo(name = "title") val title: String,
     @ColumnInfo(name = "url") val url: String,
     @ColumnInfo(name = "icon_path") val iconPath: String?,
+    @ColumnInfo(name = "site_icon_path") val siteIconPath: String? = null,
     @ColumnInfo(name = "is_preset") val isPreset: Boolean = false,
     @ColumnInfo(name = "is_enabled") val isEnabled: Boolean = true,
     @ColumnInfo(name = "category", defaultValue = "OTHER") val category: String = CATEGORY_OTHER,

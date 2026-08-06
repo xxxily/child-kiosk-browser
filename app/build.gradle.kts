@@ -147,6 +147,7 @@ dependencies {
 
     // Coil Image Loader
     implementation(libs.coil.compose)
+    implementation(libs.coil.svg)
 
     add("enhancedImplementation", libs.amap.location)
 

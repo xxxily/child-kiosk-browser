@@ -3003,7 +3003,15 @@ fun AdminConsoleScreen(
                         )
                     } else {
                         db.webAppDao().updateWebApp(
-                            appToEdit.copy(title = title, url = url, iconPath = frozenIcon, category = category)
+                            appToEdit.copy(
+                                title = title,
+                                url = url,
+                                iconPath = frozenIcon,
+                                siteIconPath = appToEdit.siteIconPath.takeIf {
+                                    normalizeHistoryUrl(appToEdit.url) == normalizeHistoryUrl(url)
+                                },
+                                category = category
+                            )
                         )
                     }
                 }
@@ -4712,6 +4720,7 @@ fun WebAppCard(
     onDelete: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit
 ) {
+    val context = LocalContext.current
     val isSubscribed = app.sourceType == WebAppEntity.SOURCE_SUBSCRIPTION
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -4725,9 +4734,16 @@ fun WebAppCard(
             verticalAlignment = Alignment.Top
         ) {
             // 左边显示图标
-            val iconPath = app.iconPath ?: ""
-            val isImageIcon = WebAppIconCache.isNetworkIconUrl(iconPath) ||
-                WebAppIconCache.isCachedIconPath(iconPath)
+            val iconPath = WebAppIconCache.preferredIconPath(
+                context = context,
+                cachedSiteIconPath = app.siteIconPath,
+                fallbackIconPath = app.iconPath
+            )
+            var imageIconFailed by remember(iconPath) { mutableStateOf(false) }
+            val isImageIcon = !imageIconFailed && (
+                WebAppIconCache.isNetworkIconUrl(iconPath) ||
+                    WebAppIconCache.isCachedIconPath(iconPath)
+                )
             Box(
                 modifier = Modifier
                     .size(48.dp)
@@ -4742,7 +4758,8 @@ fun WebAppCard(
                         referer = app.url,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                        allowNetwork = !WebAppIconCache.isNetworkIconUrl(iconPath)
+                        allowNetwork = !WebAppIconCache.isNetworkIconUrl(iconPath),
+                        onError = { imageIconFailed = true }
                     )
                 } else {
                     val iconVector = getIconVector(iconPath)
@@ -4870,214 +4887,6 @@ fun WebAppCard(
             }
         }
     }
-}
-
-@Composable
-private fun BrowserHistoryScreen(
-    history: List<BrowserHistoryEntity>,
-    onOpen: (BrowserHistoryEntity) -> Unit,
-    onAddToWhitelist: (BrowserHistoryEntity) -> Unit,
-    onDelete: (BrowserHistoryEntity) -> Unit,
-    onClearAll: () -> Unit
-) {
-    var showClearConfirm by remember { mutableStateOf(false) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("最近浏览", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        Text(
-                            text = "保留最近 90 天访问记录，当前显示最近 ${history.size} 条",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    OutlinedButton(
-                        enabled = history.isNotEmpty(),
-                        onClick = { showClearConfirm = true },
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("清空", fontSize = 12.sp)
-                    }
-                }
-            }
-        }
-
-        if (history.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 220.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "暂无浏览历史",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 14.sp
-                )
-            }
-        } else {
-            history.forEach { item ->
-                BrowserHistoryCard(
-                    item = item,
-                    onOpen = { onOpen(item) },
-                    onAddToWhitelist = { onAddToWhitelist(item) },
-                    onDelete = { onDelete(item) }
-                )
-            }
-        }
-    }
-
-    if (showClearConfirm) {
-        AlertDialog(
-            onDismissRequest = { showClearConfirm = false },
-            icon = {
-                Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = null)
-            },
-            title = { Text("确认清空浏览历史？") },
-            text = {
-                Text("将删除当前保存的全部浏览历史记录，清空后无法恢复。")
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showClearConfirm = false
-                        onClearAll()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("确认清空")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showClearConfirm = false }) {
-                    Text("取消")
-                }
-            }
-        )
-    }
-}
-
-@Composable
-private fun BrowserHistoryCard(
-    item: BrowserHistoryEntity,
-    onOpen: () -> Unit,
-    onAddToWhitelist: () -> Unit,
-    onDelete: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = item.host.take(1).uppercase(Locale.getDefault()).ifBlank { "W" },
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = item.title.ifBlank { item.host },
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = item.url,
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = formatHistoryTime(item.visitedAt),
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(onClick = onOpen) {
-                    Icon(imageVector = Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("打开", fontSize = 12.sp)
-                }
-                TextButton(onClick = onAddToWhitelist) {
-                    Icon(imageVector = Icons.Default.PlaylistAdd, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("加入白名单", fontSize = 12.sp)
-                }
-                IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "删除历史",
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-        }
-    }
-}
-
-private fun formatHistoryTime(timestamp: Long): String {
-    return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
-}
-
-private fun normalizeHistoryUrl(url: String): String {
-    return runCatching {
-        val uri = Uri.parse(url.trim())
-        val scheme = uri.scheme?.lowercase(Locale.US) ?: return@runCatching ""
-        val host = uri.host?.lowercase(Locale.US) ?: return@runCatching ""
-        if (scheme != "http" && scheme != "https") return@runCatching ""
-        val port = if (uri.port >= 0) ":${uri.port}" else ""
-        val path = uri.encodedPath?.takeIf { it.isNotBlank() } ?: "/"
-        val query = uri.encodedQuery?.let { "?$it" }.orEmpty()
-        "$scheme://$host$port$path$query"
-    }.getOrDefault("")
 }
 
 private fun isValidUrl(url: String): Boolean {

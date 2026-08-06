@@ -62,6 +62,7 @@ data class FloatingBrowserControlsCallbacks(
     val onForceRefresh: () -> Unit = {},
     val onStopLoading: () -> Unit = {},
     val onBookmarkCurrentPage: () -> Unit = {},
+    val onOpenHistory: () -> Unit = {},
     val onPanelExpandedChanged: (Boolean) -> Unit = {},
     val onActionSelected: (String) -> Unit = {},
     val onNewTab: () -> Unit = {},
@@ -627,6 +628,11 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                     enabled = isCurrentPageBookmarkable()
                 ),
                 FloatingControlAction(
+                    id = ACTION_BROWSER_HISTORY,
+                    title = "历史",
+                    iconRes = R.drawable.ic_browser_history_24
+                ),
+                FloatingControlAction(
                     id = ACTION_BROWSER_BACK,
                     title = "后退",
                     iconRes = R.drawable.ic_browser_back_24,
@@ -1016,6 +1022,10 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             }
             ACTION_BROWSER_STOP -> callbacks.onStopLoading()
             ACTION_BROWSER_BOOKMARK -> callbacks.onBookmarkCurrentPage()
+            ACTION_BROWSER_HISTORY -> {
+                setPanelExpanded(expanded = false, animated = true)
+                callbacks.onOpenHistory()
+            }
             ACTION_PANEL_CLOSE -> setPanelExpanded(expanded = false, animated = true)
             else -> Unit
         }
@@ -1314,6 +1324,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         const val ACTION_BROWSER_FORCE_REFRESH = "browser.force_refresh"
         const val ACTION_BROWSER_STOP = "browser.stop"
         const val ACTION_BROWSER_BOOKMARK = "browser.bookmark"
+        const val ACTION_BROWSER_HISTORY = "browser.history"
         const val ACTION_PANEL_CLOSE = "panel.close"
         const val ACTION_BROWSER_HOME = "browser.home"
 

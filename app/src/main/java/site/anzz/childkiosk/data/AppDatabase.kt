@@ -21,7 +21,7 @@ import site.anzz.childkiosk.performance.HighPerformanceOriginRuleEntity
         HighPerformanceConfigEntity::class,
         HighPerformanceOriginRuleEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -49,7 +49,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_5_6,
                     MIGRATION_6_7,
                     MIGRATION_7_8,
-                    MIGRATION_8_9
+                    MIGRATION_8_9,
+                    MIGRATION_9_10
                 )
                 .fallbackToDestructiveMigration()
                 .addCallback(DatabaseCallback(context.applicationContext))
@@ -296,6 +297,31 @@ abstract class AppDatabase : RoomDatabase() {
                     "ALTER TABLE high_performance_configs " +
                         "ADD COLUMN verbose_diagnostics_enabled " +
                         "INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
+        internal val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE web_apps ADD COLUMN site_icon_path TEXT")
+                db.execSQL(
+                    """
+                    DELETE FROM browser_history
+                    WHERE id IN (
+                        SELECT older.id
+                        FROM browser_history AS older
+                        INNER JOIN browser_history AS newer
+                            ON newer.url = older.url
+                           AND (
+                               newer.visited_at > older.visited_at
+                               OR (
+                                   newer.visited_at = older.visited_at
+                                   AND newer.id > older.id
+                               )
+                           )
+                           AND newer.visited_at - older.visited_at <= 30000
+                    )
+                    """.trimIndent()
                 )
             }
         }

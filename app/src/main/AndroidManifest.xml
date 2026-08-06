@@ -63,6 +63,14 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".BrowserHistoryActivity"
+            android:resizeableActivity="false"
+            android:screenOrientation="unspecified"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|keyboardHidden|locale|layoutDirection"
+            android:exported="false" />
+
         <!-- Lock Task / Screen Pinning 使用同任务栈的网页宿主。 -->
         <activity
             android:name=".WebViewActivity"

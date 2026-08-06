@@ -1,5 +1,6 @@
 package site.anzz.childkiosk
 
+import android.app.Activity
 import android.app.ActivityManager
 import android.annotation.SuppressLint
 import android.app.KeyguardManager
@@ -17,6 +18,7 @@ import android.view.KeyEvent
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -57,6 +59,29 @@ class MainActivity : ComponentActivity() {
     private var filterEventReceiver: site.anzz.childkiosk.util.filter.FilterEventReceiver? = null
     private var pendingEditRequest by mutableStateOf<PendingWebAppEdit?>(null)
     private var currentScreen by mutableStateOf(SCREEN_MAIN)
+    private val browserHistoryLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val url = BrowserHistoryActivity.selectedUrl(result.data)
+            if (url.isNotBlank()) {
+                startActivity(WebViewActivityLauncher.createIntent(this).apply {
+                    putExtra(WebViewActivity.EXTRA_CUSTOM_URL, url)
+                    putExtra(WebViewActivity.EXTRA_ALLOW_HIGH_PERFORMANCE_RESOURCE_RESTART, true)
+                    putExtra(
+                        WebViewActivity.EXTRA_ORIENTATION_MODE,
+                        KioskPrefs.getOrientationMode(this@MainActivity)
+                    )
+                    KioskPrefs.putWebViewRuntimeConfig(
+                        this,
+                        this@MainActivity,
+                        isNormalSystemUiMode()
+                    )
+                })
+            }
+        }
+        applySystemUiMode()
+    }
 
     private data class PendingWebAppEdit(
         val app: WebAppEntity?,
@@ -182,6 +207,14 @@ class MainActivity : ComponentActivity() {
                                                         }
                                                         ctx.startActivity(intent)
                                                     },
+                                                    onOpenHistory = {
+                                                        browserHistoryLauncher.launch(
+                                                            BrowserHistoryActivity.createIntent(
+                                                                this@MainActivity,
+                                                                isNormalSystemUiMode()
+                                                            )
+                                                        )
+                                                    },
                                                     onNewTab = {
                                                         val intent = WebViewActivityLauncher.createIntent(ctx).apply {
                                                             putExtra(WebViewActivity.EXTRA_CUSTOM_URL, "about:blank")
@@ -291,6 +324,9 @@ class MainActivity : ComponentActivity() {
                                                     title = title,
                                                     url = url,
                                                     iconPath = frozenIcon,
+                                                    siteIconPath = existing.siteIconPath.takeIf {
+                                                        normalizeWebUrlForCompare(existing.url) == normalizeWebUrlForCompare(url)
+                                                    },
                                                     category = category,
                                                     isEnabled = true
                                                 )
@@ -298,7 +334,15 @@ class MainActivity : ComponentActivity() {
                                         }
                                     } else {
                                         db.webAppDao().updateWebApp(
-                                            existingApp.copy(title = title, url = url, iconPath = frozenIcon, category = category)
+                                            existingApp.copy(
+                                                title = title,
+                                                url = url,
+                                                iconPath = frozenIcon,
+                                                siteIconPath = existingApp.siteIconPath.takeIf {
+                                                    normalizeWebUrlForCompare(existingApp.url) == normalizeWebUrlForCompare(url)
+                                                },
+                                                category = category
+                                            )
                                         )
                                     }
                                 }

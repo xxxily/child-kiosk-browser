@@ -2,10 +2,17 @@ package site.anzz.childkiosk.util
 
 import android.content.Context
 import android.net.Uri
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 object WebAppIconCache {
     private const val CACHE_PREFIX = "cached-web-icon:"
@@ -14,6 +21,8 @@ object WebAppIconCache {
     private const val USER_AGENT =
         "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) ChildKioskBrowser/1.0 Chrome/120 Mobile Safari/537.36"
+    private val downloadLocks = ConcurrentHashMap<String, Mutex>()
+    private val downloadSemaphore = Semaphore(permits = 2)
 
     fun isCachedIconPath(iconPath: String?): Boolean {
         return iconPath?.startsWith(CACHE_PREFIX) == true
@@ -39,6 +48,17 @@ object WebAppIconCache {
         return resolveCachedFile(context, iconPath) ?: iconPath
     }
 
+    fun preferredIconPath(
+        context: Context,
+        cachedSiteIconPath: String?,
+        fallbackIconPath: String?
+    ): String {
+        val usableSiteIcon = cachedSiteIconPath
+            ?.takeIf(::isCachedIconPath)
+            ?.takeIf { resolveCachedFile(context, it) != null }
+        return usableSiteIcon ?: fallbackIconPath.orEmpty()
+    }
+
     suspend fun freezeNetworkIcon(
         context: Context,
         iconPath: String,
@@ -47,11 +67,18 @@ object WebAppIconCache {
         val trimmed = iconPath.trim()
         if (!isNetworkIconUrl(trimmed) || isCachedIconPath(trimmed)) return trimmed
         findCachedByUrl(context.applicationContext, trimmed)?.let { return cachedPathFor(it) }
-        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            findCachedByUrl(context.applicationContext, trimmed)?.let { return@withContext cachedPathFor(it) }
-            downloadAndStore(context.applicationContext, trimmed, referer)
-                ?.let { cachedPathFor(it) }
-                ?: trimmed
+        return withContext(Dispatchers.IO) {
+            val appContext = context.applicationContext
+            val lock = downloadLocks.getOrPut(HashUtils.sha256(trimmed)) { Mutex() }
+            lock.withLock {
+                findCachedByUrl(appContext, trimmed)?.let { return@withLock cachedPathFor(it) }
+                downloadSemaphore.withPermit {
+                    findCachedByUrl(appContext, trimmed)?.let { return@withPermit cachedPathFor(it) }
+                    downloadAndStore(appContext, trimmed, referer)
+                        ?.let { cachedPathFor(it) }
+                        ?: trimmed
+                }
+            }
         }
     }
 
@@ -69,7 +96,10 @@ object WebAppIconCache {
                     val type = conn.contentType.orEmpty().lowercase(Locale.US)
                     val extension = extensionFor(finalUrl, type)
                     val target = File(iconDir(context), "${HashUtils.sha256(iconUrl)}.$extension")
-                    val tmp = File(target.parentFile, "${target.name}.tmp")
+                    val tmp = File(
+                        target.parentFile,
+                        "${target.name}.${android.os.Process.myPid()}.${Thread.currentThread().id}.tmp"
+                    )
                     var total = 0L
 
                     conn.inputStream.use { input ->

@@ -13,9 +13,10 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import coil.load
 import site.anzz.childkiosk.R
 import site.anzz.childkiosk.data.WebAppEntity
-import java.io.File
+import site.anzz.childkiosk.util.WebAppIconCache
 import kotlin.math.abs
 
 /**
@@ -157,52 +158,59 @@ object WebAppSelectDialog {
                                                 gravity = Gravity.CENTER_VERTICAL
                                             }
 
-                                            var loadedBitmap: android.graphics.Bitmap? = null
-                                            if (!app.iconPath.isNullOrBlank()) {
-                                                val file = File(app.iconPath)
-                                                if (file.exists() && file.isFile) {
-                                                    loadedBitmap = runCatching {
-                                                        android.graphics.BitmapFactory.decodeFile(file.absolutePath)
-                                                    }.getOrNull()
-                                                }
-                                            }
+                                            val preferredIconPath = WebAppIconCache.preferredIconPath(
+                                                context = context,
+                                                cachedSiteIconPath = app.siteIconPath,
+                                                fallbackIconPath = app.iconPath
+                                            )
+                                            val char = app.title.trim().take(1).uppercase()
+                                            val colors = listOf(
+                                                Color.rgb(244, 67, 54),
+                                                Color.rgb(233, 30, 99),
+                                                Color.rgb(156, 39, 176),
+                                                Color.rgb(103, 58, 183),
+                                                Color.rgb(63, 81, 181),
+                                                Color.rgb(33, 150, 243),
+                                                Color.rgb(0, 150, 136),
+                                                Color.rgb(76, 175, 80),
+                                                Color.rgb(255, 152, 0),
+                                                Color.rgb(121, 85, 72)
+                                            )
+                                            val avatarColor = colors[abs(app.title.hashCode()) % colors.size]
+                                            addView(
+                                                TextView(context).apply {
+                                                    text = char
+                                                    textSize = 10f
+                                                    typeface = Typeface.DEFAULT_BOLD
+                                                    setTextColor(Color.WHITE)
+                                                    gravity = Gravity.CENTER
+                                                    background = roundedBackground(avatarColor, dp(12))
+                                                },
+                                                FrameLayout.LayoutParams(
+                                                    FrameLayout.LayoutParams.MATCH_PARENT,
+                                                    FrameLayout.LayoutParams.MATCH_PARENT
+                                                )
+                                            )
 
-                                            if (loadedBitmap != null) {
+                                            WebAppIconCache.resolveCachedFile(context, preferredIconPath)?.let { file ->
+                                                val imageView = android.widget.ImageView(context).apply {
+                                                    scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                                                    background = roundedBackground(Color.TRANSPARENT, dp(6))
+                                                    clipToOutline = true
+                                                }
                                                 addView(
-                                                    android.widget.ImageView(context).apply {
-                                                        setImageBitmap(loadedBitmap)
-                                                        scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
-                                                        background = roundedBackground(Color.TRANSPARENT, dp(6))
-                                                        clipToOutline = true
-                                                    },
-                                                    FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+                                                    imageView,
+                                                    FrameLayout.LayoutParams(
+                                                        FrameLayout.LayoutParams.MATCH_PARENT,
+                                                        FrameLayout.LayoutParams.MATCH_PARENT
+                                                    )
                                                 )
-                                            } else {
-                                                val char = app.title.trim().take(1).uppercase()
-                                                val colors = listOf(
-                                                    Color.rgb(244, 67, 54),
-                                                    Color.rgb(233, 30, 99),
-                                                    Color.rgb(156, 39, 176),
-                                                    Color.rgb(103, 58, 183),
-                                                    Color.rgb(63, 81, 181),
-                                                    Color.rgb(33, 150, 243),
-                                                    Color.rgb(0, 150, 136),
-                                                    Color.rgb(76, 175, 80),
-                                                    Color.rgb(255, 152, 0),
-                                                    Color.rgb(121, 85, 72)
-                                                )
-                                                val avatarColor = colors[abs(app.title.hashCode()) % colors.size]
-                                                addView(
-                                                    TextView(context).apply {
-                                                        text = char
-                                                        textSize = 10f
-                                                        typeface = Typeface.DEFAULT_BOLD
-                                                        setTextColor(Color.WHITE)
-                                                        gravity = Gravity.CENTER
-                                                        background = roundedBackground(avatarColor, dp(12))
-                                                    },
-                                                    FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-                                                )
+                                                imageView.load(file) {
+                                                    crossfade(false)
+                                                    listener(
+                                                        onError = { _, _ -> imageView.visibility = View.GONE }
+                                                    )
+                                                }
                                             }
                                         }
 

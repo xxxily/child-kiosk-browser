@@ -528,6 +528,7 @@ fun AppGridItem(
     onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
+    val context = LocalContext.current
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(if (isPressed) 0.92f else 1.0f, label = "scale")
@@ -588,9 +589,16 @@ fun AppGridItem(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        val iconPath = app.iconPath ?: ""
-        val isImageIcon = WebAppIconCache.isNetworkIconUrl(iconPath) ||
-            WebAppIconCache.isCachedIconPath(iconPath)
+        val iconPath = WebAppIconCache.preferredIconPath(
+            context = context,
+            cachedSiteIconPath = app.siteIconPath,
+            fallbackIconPath = app.iconPath
+        )
+        var imageIconFailed by remember(iconPath) { mutableStateOf(false) }
+        val isImageIcon = !imageIconFailed && (
+            WebAppIconCache.isNetworkIconUrl(iconPath) ||
+                WebAppIconCache.isCachedIconPath(iconPath)
+            )
         
         Box(
             modifier = Modifier
@@ -615,7 +623,8 @@ fun AppGridItem(
                     referer = app.url,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                    allowNetwork = !WebAppIconCache.isNetworkIconUrl(iconPath)
+                    allowNetwork = !WebAppIconCache.isNetworkIconUrl(iconPath),
+                    onError = { imageIconFailed = true }
                 )
             } else {
                 Icon(
