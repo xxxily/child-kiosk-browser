@@ -59,8 +59,8 @@ internal fun BrowserHistoryScreen(
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         item(key = "history_summary") {
             BrowserHistorySummaryCard(
@@ -76,12 +76,23 @@ internal fun BrowserHistoryScreen(
         } else {
             sections.forEach { section ->
                 item(key = "history_day_${section.date}") {
-                    Text(
-                        text = section.label,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 2.dp)
-                    )
+                    Row(
+                        modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = section.label,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(1.dp)
+                                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+                        )
+                    }
                 }
                 items(
                     items = section.items,

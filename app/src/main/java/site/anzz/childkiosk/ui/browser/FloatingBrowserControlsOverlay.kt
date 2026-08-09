@@ -628,11 +628,6 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                     enabled = isCurrentPageBookmarkable()
                 ),
                 FloatingControlAction(
-                    id = ACTION_BROWSER_HISTORY,
-                    title = "历史",
-                    iconRes = R.drawable.ic_browser_history_24
-                ),
-                FloatingControlAction(
                     id = ACTION_BROWSER_BACK,
                     title = "后退",
                     iconRes = R.drawable.ic_browser_back_24,
@@ -657,6 +652,11 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                     iconRes = R.drawable.ic_browser_refresh_24,
                     style = FloatingControlActionStyle.NORMAL,
                     enabled = !isHomeScreen
+                ),
+                FloatingControlAction(
+                    id = ACTION_BROWSER_HISTORY,
+                    title = "历史",
+                    iconRes = R.drawable.ic_browser_history_24
                 )
             )
         )
