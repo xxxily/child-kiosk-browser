@@ -143,7 +143,7 @@ internal fun HighPerformanceDiagnosticsDialog(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Info, contentDescription = "高性能运行诊断", tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("高性能运行诊断详情", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text("运行诊断详情", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     }
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.Default.Close, contentDescription = "关闭诊断")
@@ -159,7 +159,7 @@ internal fun HighPerformanceDiagnosticsDialog(
                 ) {
                     if (status == null) {
                         Text(
-                            "暂无 :webview 运行状态。请打开已允许的网页，然后刷新。",
+                            "暂无 :webview 状态。打开允许的网站后刷新。",
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(vertical = 16.dp)
@@ -205,7 +205,7 @@ internal fun HighPerformanceDiagnosticsDialog(
                                     .padding(12.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Text("当前活动会话 (${status.sessions.size})", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("活动会话 (${status.sessions.size})", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                 status.sessions.forEachIndexed { idx, session ->
                                     val title = session.displayName?.takeIf { it.isNotBlank() } ?: session.origin
                                     Card(
@@ -258,9 +258,9 @@ internal fun HighPerformanceDiagnosticsDialog(
                                 .padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Text("最近运行诊断事件", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("最近事件", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                             if (status.recentEvents.isEmpty()) {
-                                Text("暂无诊断事件记录", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("暂无事件", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             } else {
                                 status.recentEvents.take(30).map(HighPerformanceDiagnostics::sanitize).forEachIndexed { index, event ->
                                     HighPerformanceEventItem(index + 1, event)
@@ -285,7 +285,7 @@ internal fun HighPerformanceDiagnosticsDialog(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("原始诊断", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                Text("包含调试信息，复制按钮仍复制完整原文", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("复制时包含完整原文", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             IconButton(onClick = { rawDiagnosticsExpanded = !rawDiagnosticsExpanded }) {
                                 Icon(
@@ -374,9 +374,9 @@ internal fun HighPerformanceDiagnosticsDialog(
                     modifier = Modifier.padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Text("清空最近运行记录？", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text("清空运行记录？", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        "这只清空高性能诊断事件，不会修改可信规则或停止当前网页。",
+                        "只清空诊断事件，不改规则或停止网页。",
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -480,7 +480,7 @@ private fun HighPerformanceRecordChip(text: String) {
 }
 
 private fun diagnosticSummary(result: HighPerformanceRuntimeStatusReadResult): String {
-    val status = result.status ?: return "暂无 :webview 运行状态；打开匹配网站后再刷新。"
+    val status = result.status ?: return "暂无 :webview 状态；打开匹配网站后刷新。"
     return "${status.processName} / PID ${status.pid} / config ${status.appliedConfigVersion} / " +
         "${compositeStateLabel(status.compositeState)}${if (result.stale) "（状态已过期）" else ""}"
 }

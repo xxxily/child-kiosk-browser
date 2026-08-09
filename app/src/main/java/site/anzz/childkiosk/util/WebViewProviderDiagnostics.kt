@@ -78,19 +78,19 @@ data class WebViewProviderSnapshot(
 enum class WebViewProviderStatus(val label: String, val description: String) {
     NORMAL(
         label = "正常",
-        description = "当前 Chromium 主版本较新，未发现明显 WebView 版本风险。"
+        description = "Chromium 版本正常，未发现明显风险。"
     ),
     OUTDATED(
         label = "偏旧",
-        description = "当前 Chromium 主版本偏旧，现代网页可能出现兼容性或渲染问题。"
+        description = "Chromium 版本偏旧，可能影响网页兼容性。"
     ),
     HIGH_RISK(
         label = "高风险",
-        description = "当前 WebView/Android 组合较旧，建议优先升级 WebView、系统或更换可更新设备。"
+        description = "WebView 或 Android 较旧，建议升级。"
     ),
     UNKNOWN(
         label = "无法识别",
-        description = "无法完整读取 WebView provider 信息，请复制诊断信息并结合 logcat 排查。"
+        description = "无法读取完整 provider 信息，请复制诊断并结合 logcat 排查。"
     )
 }
 

@@ -81,7 +81,7 @@ object WebAppSelectDialog {
 
                 addView(
                     TextView(context).apply {
-                        text = "新建空白标签页"
+                        text = "新建标签页"
                         textSize = 14f
                         typeface = Typeface.DEFAULT_BOLD
                         setTextColor(Color.WHITE)

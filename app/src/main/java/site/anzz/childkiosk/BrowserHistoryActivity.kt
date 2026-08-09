@@ -74,7 +74,7 @@ class BrowserHistoryActivity : ComponentActivity() {
                     Scaffold(
                         topBar = {
                             TopAppBar(
-                                title = { Text("浏览历史记录") },
+                                title = { Text("浏览历史") },
                                 navigationIcon = {
                                     IconButton(onClick = ::finish) {
                                         Icon(
@@ -134,7 +134,7 @@ class BrowserHistoryActivity : ComponentActivity() {
                                     }
                                     Toast.makeText(
                                         this@BrowserHistoryActivity,
-                                        "浏览历史已清空",
+                                        "历史已清空",
                                         Toast.LENGTH_SHORT
                                     ).show()
                                 }

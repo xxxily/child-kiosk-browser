@@ -38,13 +38,13 @@ internal fun HighPerformanceSessionsCard(
 ) {
     val status = runtimeStatus.status?.takeUnless { runtimeStatus.stale }
     HighPerformanceCard {
-        Text("当前高性能会话", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text("当前会话", fontSize = 16.sp, fontWeight = FontWeight.Bold)
         if (status?.sessions.isNullOrEmpty()) {
             Text(
                 if (runtimeStatus.stale && runtimeStatus.status != null) {
-                    "上次运行状态已过期，当前无可确认会话。"
+                    "上次状态已过期"
                 } else {
-                    "当前没有匹配网页。"
+                    "暂无匹配网页"
                 },
                 fontSize = 12.sp,
                 lineHeight = 18.sp
@@ -88,7 +88,7 @@ internal fun HighPerformanceSessionsCard(
             enabled = !busy && !status?.sessions.isNullOrEmpty(),
             onClick = onStopAll
         ) {
-            Text("停止全部高性能运行")
+            Text("停止全部")
         }
     }
 }
@@ -232,7 +232,7 @@ private fun HighPerformanceSessionItem(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                "页面回调只表示容器最近收到导航或可见性事件，不代表网页 JavaScript 持续运行。",
+                "页面回调不代表 JavaScript 持续运行。",
                 fontSize = 10.sp,
                 lineHeight = 15.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -254,7 +254,7 @@ private fun HighPerformanceSessionItem(
                 )
             }
             Text(
-                "心跳只验证诊断脚本可调度，不代表网站自身业务定时器、联网或任务一定连续。",
+                "心跳仅表示诊断脚本可调度，不代表网站任务连续。",
                 fontSize = 10.sp,
                 lineHeight = 15.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant

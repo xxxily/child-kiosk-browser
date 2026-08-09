@@ -58,7 +58,7 @@ internal fun AmapKeyBindingInfo(
         }
 
         Text(
-            text = "把下面当前安装包实际值填到高德开放平台 Android Key 中；平台类型选择 Android。",
+            text = "在高德开放平台创建 Android Key，并填写以下值。",
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

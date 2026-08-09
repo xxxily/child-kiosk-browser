@@ -220,16 +220,12 @@ internal class HighPerformanceForegroundService : Service() {
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val countText = if (request.siteCount == 1) {
-            "正在保护 1 个可信网站"
-        } else {
-            "正在保护 ${request.siteCount} 个可信网站"
-        }
+        val countText = "${request.siteCount} 个网站运行中"
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_browser_secure_24)
-            .setContentTitle("可信网页正在高性能运行")
+            .setContentTitle("网页持续运行")
             .setContentText(countText)
-            .setStyle(NotificationCompat.BigTextStyle().bigText("$countText；灭屏后仍可能持续联网和执行网页任务"))
+            .setStyle(NotificationCompat.BigTextStyle().bigText("$countText；息屏后仍可能联网"))
             .apply { contentIntent?.let(::setContentIntent) }
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -250,7 +246,7 @@ internal class HighPerformanceForegroundService : Service() {
             "高性能网页运行",
             NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "显示家长授权的可信网页持续运行状态"
+            description = "显示授权网页的运行状态"
             setShowBadge(false)
             enableVibration(false)
             setSound(null, null)

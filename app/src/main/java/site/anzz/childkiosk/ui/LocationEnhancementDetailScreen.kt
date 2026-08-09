@@ -189,7 +189,7 @@ internal fun LocationEnhancementDetailScreen(
             runNativeLocationTest()
         } else {
             nativeLocationTesting = false
-            nativeLocationDiagnostics = "未获得系统定位权限，无法测试 LocationManager。"
+            nativeLocationDiagnostics = "缺少系统定位权限，无法测试。"
         }
     }
 
@@ -252,7 +252,7 @@ internal fun LocationEnhancementDetailScreen(
                         Text("网页定位增强", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         Text(
                             if (nativeLocationOptimizationEnabled) {
-                                "已开启，${if (BuildConfig.AMAP_LOCATION_SDK_INCLUDED) "增强版可用高德定位 SDK" else "标准版仅使用系统定位"}"
+                                "已开启 · ${if (BuildConfig.AMAP_LOCATION_SDK_INCLUDED) "系统/高德" else "系统定位"}"
                             } else {
                                 "未开启"
                             },
@@ -275,8 +275,8 @@ internal fun LocationEnhancementDetailScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("启用网页定位增强", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        Text("使用系统 LocationManager 或 enhanced 版本的高德定位 SDK 托管可信网页定位", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("启用定位增强", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("为可信网页提供系统或高德定位", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(
                         checked = nativeLocationOptimizationEnabled,
@@ -291,7 +291,7 @@ internal fun LocationEnhancementDetailScreen(
 
                 if (limitGeolocation) {
                     Text(
-                        "安全沙箱已禁用网页定位，定位增强暂不可用。",
+                        "网页定位已被安全限制禁用。",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.error
                     )
@@ -308,9 +308,9 @@ internal fun LocationEnhancementDetailScreen(
                     Text("高德定位 SDK", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Text(
                         if (BuildConfig.AMAP_LOCATION_SDK_INCLUDED) {
-                            "当前版本：enhanced，已集成高德定位 SDK ${BuildConfig.AMAP_LOCATION_SDK_VERSION}"
+                            "enhanced · 高德定位 SDK ${BuildConfig.AMAP_LOCATION_SDK_VERSION}"
                         } else {
-                            "当前版本：standard，未集成高德定位 SDK；需要高德增强定位请安装 enhanced APK"
+                            "standard · 仅系统定位；高德定位需 enhanced APK"
                         },
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -327,12 +327,12 @@ internal fun LocationEnhancementDetailScreen(
                             enabled = !limitGeolocation,
                             modifier = Modifier.fillMaxWidth(),
                             label = { Text("高德 Android SDK Key") },
-                            placeholder = { Text("用户自行在高德开放平台申请", fontSize = 12.sp) },
+                            placeholder = { Text("在高德开放平台申请", fontSize = 12.sp) },
                             singleLine = true,
                             textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
                         )
                         Text(
-                            "Key 状态：${KioskPrefs.maskedAmapLocationApiKey(context)}；修改后新打开的网站生效",
+                            "Key：${KioskPrefs.maskedAmapLocationApiKey(context)} · 新网站生效",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -350,8 +350,8 @@ internal fun LocationEnhancementDetailScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("已完成高德隐私合规确认", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                Text("确认已向监护人/使用者披露高德定位 SDK 信息采集和隐私政策", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("高德隐私合规已确认", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text("确认已披露 SDK 信息采集和隐私政策", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Switch(
                                 checked = amapLocationPrivacyAgreed,
@@ -370,8 +370,8 @@ internal fun LocationEnhancementDetailScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("启用高德定位 provider", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                Text("Key 非空且隐私确认后可用；默认只服务允许列表中的标准 Geolocation 托管站点", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("启用高德定位", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text("需填写 Key 并确认隐私，仅用于允许列表", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Switch(
                                 checked = amapLocationEnabled,
@@ -386,7 +386,7 @@ internal fun LocationEnhancementDetailScreen(
                             )
                         }
 
-                        Text("provider 策略", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("定位来源", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -419,8 +419,8 @@ internal fun LocationEnhancementDetailScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("预热原生定位缓存", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Text("页面开始加载时提前刷新当前 provider 缓存；启用托管后网页定位可优先复用近期结果", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("预热定位缓存", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("页面加载时提前获取位置，供网页复用", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(
                         checked = nativeLocationWarmupEnabled,
@@ -439,8 +439,8 @@ internal fun LocationEnhancementDetailScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("托管网页 Geolocation", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Text("开启后对允许列表站点注入标准 geolocation bridge，由系统或高德 provider 返回位置", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("托管 Geolocation", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("为允许列表注入定位桥接", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(
                         checked = nativeLocationBridgeEnabled,
@@ -455,7 +455,7 @@ internal fun LocationEnhancementDetailScreen(
 
                 if (!nativeLocationBridgeRuntimeReady) {
                     Text(
-                        "当前 WebView 内核不完整支持 document-start 注入或受控 WebMessage 通道，原生托管可能不可用；可先使用预热模式。",
+                        "当前 WebView 不完整支持所需接口，托管定位可能不可用。可使用预热模式。",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.error
                     )
@@ -559,7 +559,7 @@ internal fun LocationEnhancementDetailScreen(
                     onValueChange = { nativeLocationOriginInput = it },
                     enabled = nativeLocationOptimizationEnabled && nativeLocationBridgeEnabled && !limitGeolocation,
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("原生定位托管允许 Origin") },
+                    label = { Text("托管允许 Origin") },
                     placeholder = { Text("https://example.com", fontSize = 12.sp) },
                     singleLine = true,
                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
@@ -592,7 +592,7 @@ internal fun LocationEnhancementDetailScreen(
                 }
 
                 OriginChipGrid(
-                    title = "托管允许列表：",
+                    title = "托管允许列表",
                     origins = nativeLocationAllowedOrigins,
                     color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
                     onRemove = { item ->
@@ -604,7 +604,7 @@ internal fun LocationEnhancementDetailScreen(
                     }
                 )
 
-                Text("网页返回坐标系", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text("返回坐标系", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -628,7 +628,7 @@ internal fun LocationEnhancementDetailScreen(
                     }
                 }
                 Text(
-                    "默认按标准浏览器语义返回 WGS84；只有明确依赖高德/国内地图坐标的可信站点才加入 GCJ-02 兼容列表。",
+                    "默认返回 WGS84；仅为明确需要国内地图坐标的网站启用 GCJ-02。",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -675,7 +675,7 @@ internal fun LocationEnhancementDetailScreen(
                 }
 
                 OriginChipGrid(
-                    title = "GCJ-02 兼容列表：",
+                    title = "GCJ-02 兼容列表",
                     origins = nativeLocationGcj02AllowedOrigins,
                     color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f),
                     onRemove = { item ->
@@ -695,8 +695,8 @@ internal fun LocationEnhancementDetailScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("高德 H5 辅助定位", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            Text("仅服务使用高德 JS API 且 useNative=true 的页面；普通 navigator.geolocation 仍用上面的托管模式", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("高德 H5 定位", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("仅用于高德 JS API 的 useNative 页面", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Switch(
                             checked = amapLocationH5AssistantEnabled,
@@ -720,7 +720,7 @@ internal fun LocationEnhancementDetailScreen(
                             amapLocationH5AssistantEnabled &&
                             !limitGeolocation,
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("高德 H5 辅助定位允许 Origin") },
+                        label = { Text("高德 H5 允许 Origin") },
                         placeholder = { Text("https://example.com", fontSize = 12.sp) },
                         singleLine = true,
                         textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
@@ -753,7 +753,7 @@ internal fun LocationEnhancementDetailScreen(
                     }
 
                     OriginChipGrid(
-                        title = "高德 H5 辅助定位允许列表：",
+                        title = "高德 H5 允许列表",
                         origins = amapLocationH5AssistantAllowedOrigins,
                         color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f),
                         onRemove = { item ->
@@ -784,7 +784,7 @@ internal fun LocationEnhancementDetailScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = "最近定位记录 ${nativeLocationAuditRecords.size} 条，测试、刷新、复制和清空在详情页操作",
+                        text = "${nativeLocationAuditRecords.size} 条记录",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -799,7 +799,7 @@ internal fun LocationEnhancementDetailScreen(
                                 refreshNativeLocationDiagnostics()
                                 showNativeLocationDiagnosticsDialog = true
                             },
-                            label = { Text("查看详情") },
+                            label = { Text("详情") },
                             leadingIcon = {
                                 Icon(Icons.Default.OpenInFull, contentDescription = "查看定位诊断", modifier = Modifier.size(18.dp))
                             }

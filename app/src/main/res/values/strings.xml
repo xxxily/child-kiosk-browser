@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">儿童空间</string>
-    <string name="app_name_full">儿童防误触全屏 Kiosk 浏览器</string>
-    <string name="device_admin_label">儿童空间 设备管理器</string>
-    <string name="device_admin_description">激活后将进入企业级 Kiosk 锁定模式，确保儿童无法通过常规手段离开本应用。解除锁定时将自动撤销该权限。</string>
+    <string name="app_name_full">儿童 Kiosk 浏览器</string>
+    <string name="device_admin_label">儿童空间设备管理器</string>
+    <string name="device_admin_description">启用后锁定应用；解除锁定时会撤销此权限。</string>
 
     <!-- Toasts & messages -->
     <string name="msg_admin_enabled">设备管理员已启用</string>
     <string name="msg_admin_disabled">设备管理员已禁用</string>
     <string name="msg_provisioning_complete">配置初始化完成</string>
-    <string name="msg_kiosk_started">安全沙箱已启动，系统已完成加固锁定</string>
-    <string name="msg_kiosk_stopped">Kiosk 锁定已安全解除</string>
+    <string name="msg_kiosk_started">Kiosk 已锁定</string>
+    <string name="msg_kiosk_stopped">Kiosk 已解除</string>
     <string name="msg_kiosk_failed">Kiosk 锁定启动失败</string>
     <string name="msg_unlock_failed">解锁退出失败</string>
-    <string name="msg_open_home_failed">无法自动打开设置，请在系统中手动将本应用设为默认桌面</string>
-    <string name="msg_download_blocked">下载功能已受限制，如需下载应用请联系管理员。</string>
-    <string name="msg_adb_copied">ADB 激活脚本已复制到剪贴板</string>
+    <string name="msg_open_home_failed">无法打开设置，请手动将本应用设为默认桌面</string>
+    <string name="msg_download_blocked">下载已禁用，请联系管理员。</string>
+    <string name="msg_adb_copied">ADB 脚本已复制</string>
 </resources>

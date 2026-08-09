@@ -24,21 +24,21 @@ internal fun HighPerformanceRiskConfirmationDialog(onDismiss: () -> Unit, onConf
     var acknowledged by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("确认启用高性能持续运行") },
+        title = { Text("启用高性能运行？") },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("• 灭屏后，可信网页仍可能联网、执行 JavaScript 或处理业务。")
-                Text("• 会明显增加耗电、流量、发热和设备磨损。")
-                Text("• 活动会话会显示常驻前台服务通知。")
-                Text("• Android、厂商后台策略和 WebView 内核仍可能中断网页。")
-                Text("• 仅应为完全信任的网站开启。")
+                Text("• 息屏后网页仍可能联网和运行 JavaScript。")
+                Text("• 会增加耗电、流量和发热。")
+                Text("• 会显示常驻通知。")
+                Text("• 系统或 WebView 仍可能中断网页。")
+                Text("• 仅为可信网站开启。")
                 Row {
                     Checkbox(checked = acknowledged, onCheckedChange = { acknowledged = it })
                     Text(
-                        "我理解风险并确认仅添加可信网站",
+                        "我确认仅添加可信网站",
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -57,7 +57,7 @@ internal fun ExperimentalCdpContinuityWarningDialog(
     var acknowledged by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("启用实验性低频续行？") },
+        title = { Text("启用实验性续行？") },
         text = {
             Column(
                 modifier = Modifier
@@ -66,15 +66,15 @@ internal fun ExperimentalCdpContinuityWarningDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("• 仅对已加入高性能规则的可信 Origin 生效。")
-                Text("• 页面后台化后会短暂启用 WebView DevTools，通常约 1–2 秒，随后立即关闭并记录诊断。")
-                Text("• 在端口开放窗口内，已授权 ADB shell 可能检查或修改页面内容。")
-                Text("• 该机制使用非公开产品能力，WebView/Android 更新后可能失效或改变行为。")
-                Text("• 实测只能避免完全冻结；定时器、Worker、网络仍受后台/Doze 节流。")
+                Text("• 仅对可信 Origin 生效。")
+                Text("• 后台时短暂开放 DevTools，随后关闭。")
+                Text("• 端口开放期间，已授权 ADB 可检查或修改页面。")
+                Text("• WebView 或 Android 更新后可能失效。")
+                Text("• 不能避免定时器、Worker 和网络降频。")
                 Row {
                     Checkbox(checked = acknowledged, onCheckedChange = { acknowledged = it })
                     Text(
-                        "我理解安全风险和低频能力边界，并确认仅用于可信网站",
+                        "我确认仅用于可信网站",
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -95,11 +95,11 @@ internal fun HighPerformanceHttpWarningDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("不安全 HTTP 连接") },
+        title = { Text("HTTP 连接不安全") },
         text = {
             Column(Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState())) {
                 Text(originOrUrl)
-                Text("HTTP 内容可能被网络中的第三方篡改。仅为完全信任的局域网或明确业务站点继续。")
+                Text("内容可能被第三方篡改。仅在信任的网络或网站上继续。")
             }
         },
         confirmButton = { TextButton(onClick = onConfirm) { Text("仍然添加") } },
@@ -123,7 +123,7 @@ internal fun HighPerformanceClearDiagnosticsDialog(onDismiss: () -> Unit, onConf
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("清空最近运行记录？") },
-        text = { Text("这只清空高性能诊断事件，不会修改可信规则或停止当前网页。") },
+        text = { Text("只清空诊断事件，不改规则或停止网页。") },
         confirmButton = { TextButton(onClick = onConfirm) { Text("确认清空") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )

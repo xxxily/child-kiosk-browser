@@ -162,7 +162,7 @@ internal fun NativeLocationDiagnosticsDialog(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("原始诊断", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                Text("包含调试信息，复制按钮仍复制完整原文", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("复制时包含完整原文", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             IconButton(onClick = { rawDiagnosticsExpanded = !rawDiagnosticsExpanded }) {
                                 Icon(
@@ -251,7 +251,7 @@ internal fun NativeLocationDiagnosticsDialog(
                 ) {
                     Text("清空定位记录？", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        "清空后将无法在本机诊断中查看之前的网页定位和测试定位记录。",
+                        "清空后无法恢复。",
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

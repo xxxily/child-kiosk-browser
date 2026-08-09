@@ -144,7 +144,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
     }
 
     private val infoButton = ImageButton(context).apply {
-        contentDescription = "网站信息与权限配置"
+        contentDescription = "网站信息和权限"
         scaleType = ImageView.ScaleType.CENTER
         setPadding(dp(8), dp(8), dp(8), dp(8))
         background = roundedBackground(Color.TRANSPARENT, dp(10))
@@ -163,7 +163,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         textSize = 14f
         setTextColor(PanelTextColor)
         setHintTextColor(PanelHintColor)
-        hint = "输入网址"
+        hint = "网址"
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(4), dp(8), dp(12), dp(8))
         background = null
@@ -406,7 +406,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
         state = nextState.copy(progress = nextState.progress.coerceIn(0, 100))
         titleView.text = state.pageTitle.takeIf { it.isNotBlank() }
             ?: state.currentUrl.takeIf { it.isNotBlank() }
-            ?: "浏览控制"
+            ?: "浏览"
         if (!urlInput.hasFocus()) {
             urlInput.setText(state.currentUrl)
             urlInput.setSelection(0)
@@ -716,7 +716,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
                     gravity = Gravity.CENTER_VERTICAL
                     addView(
                         TextView(context).apply {
-                            text = "标签页 (${state.tabs.size})"
+                            text = "标签页 ${state.tabs.size}"
                             textSize = 12f
                             typeface = Typeface.DEFAULT_BOLD
                             setTextColor(PanelMutedTextColor)
@@ -959,7 +959,7 @@ class FloatingBrowserControlsOverlay @JvmOverloads constructor(
             if (action.id == ACTION_BROWSER_FORCE_REFRESH) {
                 setOnClickListener {
                     if (action.enabled) {
-                        android.widget.Toast.makeText(context, "长按“强刷”以执行强制刷新", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(context, "长按“强刷”可强制刷新", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 }
                 setOnLongClickListener {

@@ -54,9 +54,9 @@ internal fun HighPerformanceOriginRulesCard(
     var originInput by rememberSaveable { mutableStateOf("") }
     var includeSubdomains by rememberSaveable { mutableStateOf(false) }
     HighPerformanceCard {
-        Text("可信网站规则", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text("可信网站", fontSize = 16.sp, fontWeight = FontWeight.Bold)
         Text(
-            "只按顶层网页的精确 http/https Origin 匹配；子资源、iframe、data/blob 页面不会激活。",
+            "只匹配顶层网页的 http/https Origin。",
             fontSize = 11.sp
         )
         OutlinedTextField(
@@ -129,12 +129,12 @@ internal fun HighPerformanceOriginRulesCard(
             ) {
                 Icon(Icons.Default.Add, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("从已启用的 Web App 选择")
+                Text("从应用选择")
             }
         }
 
         if (rules.isEmpty()) {
-            Text("尚未配置可信 Origin。", fontSize = 12.sp)
+            Text("暂无可信 Origin", fontSize = 12.sp)
         } else {
             rules.forEach { rule ->
                 HighPerformanceRuleItem(
@@ -164,7 +164,7 @@ private fun IncludeSubdomainsControl(
         Column(Modifier.weight(1f)) {
             Text("包含子域名", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             Text(
-                "默认关闭；公共后缀、IP 和 localhost 不允许开启",
+                "公共后缀、IP 和 localhost 不支持",
                 fontSize = 10.sp,
                 lineHeight = 15.sp
             )
@@ -232,7 +232,7 @@ private fun HighPerformanceRuleItem(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("启用规则", fontSize = 11.sp)
+                            Text("启用", fontSize = 11.sp)
                             Spacer(Modifier.width(4.dp))
                             Switch(
                                 checked = rule.enabled,

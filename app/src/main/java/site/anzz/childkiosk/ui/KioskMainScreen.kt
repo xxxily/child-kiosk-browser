@@ -311,8 +311,8 @@ fun KioskMainScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = if (webApps.isEmpty()) "这里空空如也，请在配置后台添加应用！"
-                                       else "此分类下还没有应用哦，去看看其他分类吧！",
+                                text = if (webApps.isEmpty()) "暂无应用，请先添加"
+                                       else "此分类暂无应用",
                                 fontSize = 18.sp,
                                 color = if (isDarkWallpaper) Color.White.copy(alpha = 0.7f) else Color(0xFF8D6E63),
                                 textAlign = TextAlign.Center,
@@ -697,13 +697,13 @@ fun ParentMenuDialog(
                         )
                     }
                     Text(
-                        text = "配置中心",
+                        text = "管理",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "进行系统级退出或高级设置",
+                        text = "设置或退出应用",
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
@@ -738,7 +738,7 @@ fun ParentMenuDialog(
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("进入配置后台", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text("进入后台", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                     }
 
                     // 返回系统桌面 按钮
@@ -768,7 +768,7 @@ fun ParentMenuDialog(
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("返回系统桌面", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text("退出应用", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                     }
                 }
 
@@ -795,7 +795,7 @@ fun ParentMenuDialog(
                     modifier = Modifier.height(44.dp)
                 ) {
                     Text(
-                        text = "返回空间",
+                        text = "返回",
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Medium

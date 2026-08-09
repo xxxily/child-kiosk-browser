@@ -570,7 +570,7 @@ open class WebViewActivity : ComponentActivity() {
             val pendingNative = pendingNativeLocationPermissionRequest
             pendingNativeLocationPermissionRequest = null
             pendingNative?.onDenied?.invoke()
-            Toast.makeText(this, "未获得系统定位权限，网页无法获取位置", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "缺少定位权限，无法获取位置", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -594,7 +594,7 @@ open class WebViewActivity : ComponentActivity() {
                 pending.mimeType
             )
         } else {
-            Toast.makeText(this, "未获得存储权限，无法保存下载文件", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "缺少存储权限，无法保存文件", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -875,12 +875,12 @@ open class WebViewActivity : ComponentActivity() {
         val latestConfig = latestRuntimeConfig()
         if (latestConfig.limitFileChooser) {
             callback.onReceiveValue(null)
-            Toast.makeText(this, "网页文件选择功能已受限制", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "文件选择已禁用", Toast.LENGTH_SHORT).show()
             return true
         }
         if (isOriginBlacklisted(latestConfig.fileChooserBlacklist, origin)) {
             callback.onReceiveValue(null)
-            Toast.makeText(this, "已拒绝该网站选择文件", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "已拒绝文件选择", Toast.LENGTH_SHORT).show()
             return true
         }
 
@@ -889,10 +889,10 @@ open class WebViewActivity : ComponentActivity() {
 
         showCustomComposeDialog {
             BeautifulConfirmDialog(
-                title = "允许网站选择文件？",
-                message = "${displayOrigin(origin)} 正在请求打开系统文件选择器，用于上传图片、视频或其他文件。",
+                title = "允许选择文件？",
+                message = "${displayOrigin(origin)} 请求上传图片、视频或其他文件。",
                 icon = Icons.Default.Info,
-                blacklistText = "拒绝且不再提示（加入黑名单）",
+                blacklistText = "拒绝并拉黑",
                 onNegative = {
                     dismissCustomComposeDialog()
                     fileChooserCallback = null
@@ -908,7 +908,7 @@ open class WebViewActivity : ComponentActivity() {
                     callback.onReceiveValue(null)
                     if (origin.isNotBlank()) {
                         addFileChooserOriginToBlacklist(origin)
-                        Toast.makeText(this@WebViewActivity, "已将该网站加入文件选择黑名单", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@WebViewActivity, "已加入文件黑名单", Toast.LENGTH_SHORT).show()
                     }
                 },
                 onDismiss = {
@@ -943,7 +943,7 @@ open class WebViewActivity : ComponentActivity() {
         }.getOrElse {
             fileChooserCallback = null
             callback.onReceiveValue(null)
-            Toast.makeText(this, "无法打开文件选择器", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "无法打开文件选择", Toast.LENGTH_SHORT).show()
             false
         }
     }
@@ -959,7 +959,7 @@ open class WebViewActivity : ComponentActivity() {
 
         if (latestConfig.limitGeolocation) {
             callback.invoke(origin, false, false)
-            Toast.makeText(this, "网页定位功能已受限制", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "网页定位已禁用", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -977,10 +977,10 @@ open class WebViewActivity : ComponentActivity() {
 
         showCustomComposeDialog {
             BeautifulConfirmDialog(
-                title = "允许网站获取位置？",
-                message = "$siteName 正在请求获取当前设备位置。\n（这有助于提供本地化的服务或内容）",
+                title = "允许获取位置？",
+                message = "$siteName 请求获取设备位置。",
                 icon = Icons.Default.LocationOn,
-                blacklistText = "拒绝且不再提示（加入黑名单）",
+                blacklistText = "拒绝并拉黑",
                 onNegative = {
                     dismissCustomComposeDialog()
                     finishPendingGeolocationRequest(allow = false, retain = false)
@@ -998,7 +998,7 @@ open class WebViewActivity : ComponentActivity() {
                     finishPendingGeolocationRequest(allow = false, retain = false)
                     if (normalizedOrigin.isNotBlank()) {
                         addGeolocationOriginToBlacklist(normalizedOrigin)
-                        Toast.makeText(this@WebViewActivity, "已将该网址加入定位黑名单", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@WebViewActivity, "已加入定位黑名单", Toast.LENGTH_SHORT).show()
                     }
                 },
                 onDismiss = {
@@ -1031,7 +1031,7 @@ open class WebViewActivity : ComponentActivity() {
         }
         if (blockedByGlobal) {
             request.deny()
-            Toast.makeText(this, "网页摄像头或麦克风功能已受限制", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "摄像头或麦克风已禁用", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -1044,7 +1044,7 @@ open class WebViewActivity : ComponentActivity() {
         }
         if (blockedBySite) {
             request.deny()
-            Toast.makeText(this, "已拒绝该网站使用摄像头或麦克风", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "已拒绝摄像头或麦克风", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -1055,10 +1055,10 @@ open class WebViewActivity : ComponentActivity() {
 
         showCustomComposeDialog {
             BeautifulConfirmDialog(
-                title = "允许网站使用$permissionNames？",
-                message = "${displayOrigin(origin)} 正在请求使用$permissionNames。仅在确认站点可信时允许。",
+                title = "允许使用$permissionNames？",
+                message = "${displayOrigin(origin)} 请求使用$permissionNames。",
                 icon = Icons.Default.Info,
-                blacklistText = "拒绝且不再提示（加入黑名单）",
+                blacklistText = "拒绝并拉黑",
                 onNegative = {
                     dismissCustomComposeDialog()
                     cancelPendingMediaPermissionRequest()
@@ -1091,10 +1091,10 @@ open class WebViewActivity : ComponentActivity() {
 
         showCustomComposeDialog {
             BeautifulConfirmDialog(
-                title = "允许网页唤起外部应用？",
-                message = "网页正在请求打开第三方应用 (协议: $normalizedScheme://)。\n这可能会跳转至其他软件，请确认是否安全。",
+                title = "允许打开外部应用？",
+                message = "网页请求打开 $normalizedScheme://。",
                 icon = Icons.Default.Share,
-                blacklistText = "拒绝且不再提示（加入黑名单）",
+                blacklistText = "拒绝并拉黑",
                 onNegative = {
                     dismissCustomComposeDialog()
                 },
@@ -1114,7 +1114,7 @@ open class WebViewActivity : ComponentActivity() {
                     val currentList = runtimeConfig.schemeBlacklist.toMutableSet()
                     currentList.add(normalizedScheme)
                     runtimeConfig = runtimeConfig.copy(schemeBlacklist = currentList)
-                    Toast.makeText(this@WebViewActivity, "已将协议 [$normalizedScheme] 加入 Scheme 黑名单", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@WebViewActivity, "已加入 $normalizedScheme 黑名单", Toast.LENGTH_SHORT).show()
                 },
                 onDismiss = {
                     dismissCustomComposeDialog()
@@ -1134,7 +1134,7 @@ open class WebViewActivity : ComponentActivity() {
         val scheme = uri?.scheme?.lowercase()
         val isNormalMode = KioskPrefs.getProtectionMode(this) == KioskPrefs.MODE_NONE
         if (!isNormalMode && scheme != "http" && scheme != "https") {
-            Toast.makeText(this, "暂不支持此下载链接", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "不支持此下载链接", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -1198,7 +1198,7 @@ open class WebViewActivity : ComponentActivity() {
         }.onFailure { e ->
             Log.w("ChildKioskWebView", "Location permission request failed", e)
             finishPendingGeolocationRequest(allow = false, retain = false)
-            Toast.makeText(this, "无法请求系统定位权限", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "无法请求定位权限", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1220,7 +1220,7 @@ open class WebViewActivity : ComponentActivity() {
             val pending = pendingNativeLocationPermissionRequest
             pendingNativeLocationPermissionRequest = null
             pending?.onDenied?.invoke()
-            Toast.makeText(this, "无法请求系统定位权限", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "无法请求定位权限", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1230,7 +1230,7 @@ open class WebViewActivity : ComponentActivity() {
         }.onFailure { e ->
             Log.w("ChildKioskWebView", "Media permission request failed", e)
             cancelPendingMediaPermissionRequest()
-            Toast.makeText(this, "无法请求系统摄像头或麦克风权限", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "无法请求摄像头或麦克风权限", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1256,7 +1256,7 @@ open class WebViewActivity : ComponentActivity() {
             pending.request.grant(pending.resources)
         } else {
             pending.request.deny()
-            Toast.makeText(this, "未获得系统摄像头或麦克风权限，网页无法使用该功能", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "缺少摄像头或麦克风权限", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1283,7 +1283,7 @@ open class WebViewActivity : ComponentActivity() {
             if (pending.resources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {
                 addMicrophoneOriginToBlacklist(pending.origin)
             }
-            Toast.makeText(this, "已将该网站加入摄像头/麦克风黑名单", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "已加入摄像头/麦克风黑名单", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1569,16 +1569,16 @@ open class WebViewActivity : ComponentActivity() {
             return
         }
         if (latestConfig.limitGeolocation) {
-            onDenied(NativeLocationError.PERMISSION_DENIED, "网页定位功能已受限制")
+            onDenied(NativeLocationError.PERMISSION_DENIED, "网页定位已禁用")
             return
         }
         val currentOrigin = normalizePermissionOrigin(originForWebStorage(webView.url.orEmpty()).orEmpty())
         if (currentOrigin.isBlank() || currentOrigin != normalizedOrigin) {
-            onDenied(NativeLocationError.PERMISSION_DENIED, "定位请求来源与当前页面不一致")
+            onDenied(NativeLocationError.PERMISSION_DENIED, "定位请求来源不一致")
             return
         }
         if (normalizedOrigin.isBlank() || isOriginBlacklisted(latestConfig.geolocationBlacklist, normalizedOrigin)) {
-            onDenied(NativeLocationError.PERMISSION_DENIED, "该网站已被禁止获取位置")
+            onDenied(NativeLocationError.PERMISSION_DENIED, "网站定位已被禁止")
             return
         }
         if (latestConfig.nativeLocationBridgeAllowedOrigins.contains(normalizedOrigin)) {
@@ -1593,10 +1593,10 @@ open class WebViewActivity : ComponentActivity() {
         val siteName = displayOrigin(normalizedOrigin)
         showCustomComposeDialog {
             BeautifulConfirmDialog(
-                title = "允许原生定位托管？",
-                message = "$siteName 正在通过系统 LocationManager 请求位置。仅在确认站点可信时允许；允许后会加入原生定位托管允许列表。",
+                title = "允许定位托管？",
+                message = "$siteName 请求使用系统定位。允许后加入托管列表。",
                 icon = Icons.Default.LocationOn,
-                blacklistText = "拒绝且不再提示（加入黑名单）",
+                    blacklistText = "拒绝并拉黑",
                 onNegative = {
                     dismissCustomComposeDialog()
                     onDenied(NativeLocationError.PERMISSION_DENIED, "用户拒绝原生定位托管")
@@ -1609,8 +1609,8 @@ open class WebViewActivity : ComponentActivity() {
                 onBlacklist = {
                     dismissCustomComposeDialog()
                     addGeolocationOriginToBlacklist(normalizedOrigin)
-                    Toast.makeText(this@WebViewActivity, "已将该网址加入定位黑名单", Toast.LENGTH_SHORT).show()
-                    onDenied(NativeLocationError.PERMISSION_DENIED, "该网站已加入定位黑名单")
+                    Toast.makeText(this@WebViewActivity, "已加入定位黑名单", Toast.LENGTH_SHORT).show()
+                    onDenied(NativeLocationError.PERMISSION_DENIED, "网站已拉黑")
                 },
                 onDismiss = {
                     dismissCustomComposeDialog()
@@ -1946,8 +1946,8 @@ open class WebViewActivity : ComponentActivity() {
             URLUtil.guessFileName(it.url, it.contentDisposition, it.mimeType)
         } ?: "文件"
         val dialog = AlertDialog.Builder(this)
-            .setTitle("允许保存下载文件？")
-            .setMessage("需要存储权限才能将 $fileName 保存到下载目录。")
+            .setTitle("允许保存文件？")
+            .setMessage("需要存储权限才能保存 $fileName。")
             .setNegativeButton("取消") { _, _ ->
                 pendingDownloadRequest = null
             }
@@ -1976,7 +1976,7 @@ open class WebViewActivity : ComponentActivity() {
     fun enterFullscreenView(view: View?, callback: WebChromeClient.CustomViewCallback?) {
         if (latestRuntimeConfig().limitFullscreenVideo) {
             callback?.onCustomViewHidden()
-            Toast.makeText(this, "网页全屏视频已受限制", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "全屏视频已禁用", Toast.LENGTH_SHORT).show()
             return
         }
         if (view == null) {
@@ -2606,7 +2606,7 @@ open class WebViewActivity : ComponentActivity() {
                 if (rootWebView?.url == blockedUrl) hideTopProgress()
             },
             onDownloadBlocked = {
-                Toast.makeText(this, "下载功能已受限制，如需下载应用请联系管理员。", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "下载已禁用，请联系管理员", Toast.LENGTH_LONG).show()
             },
             onLoadingStateChanged = { loading ->
                 val currentTab = tabList.firstOrNull { it.webView === webViewRef }
@@ -2678,7 +2678,7 @@ open class WebViewActivity : ComponentActivity() {
             },
             onError = { error ->
                 Log.w("ChildKioskWebView", "Native WebView main frame error: $error")
-                Toast.makeText(this, "网页加载异常：$error", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "加载失败：$error", Toast.LENGTH_LONG).show()
                 val currentTab = tabList.firstOrNull { it.webView === webViewRef }
                 if (currentTab != null) {
                     recordHighPerformanceRecoveryFailure(currentTab, webViewRef, currentTab.url)
@@ -2894,7 +2894,7 @@ open class WebViewActivity : ComponentActivity() {
                 if (rootWebView?.url == blockedUrl) hideTopProgress()
             },
             onDownloadBlocked = {
-                Toast.makeText(this, "下载功能已受限制，如需下载应用请联系管理员。", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "下载已禁用，请联系管理员", Toast.LENGTH_LONG).show()
             },
             onLoadingStateChanged = { loading ->
                 val currentTab = tabList.firstOrNull { it.webView === webViewRef }
@@ -2966,7 +2966,7 @@ open class WebViewActivity : ComponentActivity() {
             },
             onError = { error ->
                 Log.w("ChildKioskWebView", "Native WebView main frame error: $error")
-                Toast.makeText(this, "网页加载异常：$error", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "加载失败：$error", Toast.LENGTH_LONG).show()
                 val currentTab = tabList.firstOrNull { it.webView === webViewRef }
                 if (currentTab != null) {
                     recordHighPerformanceRecoveryFailure(currentTab, webViewRef, currentTab.url)
@@ -3413,11 +3413,11 @@ open class WebViewActivity : ComponentActivity() {
 
         val snapshot = activePageFilterSnapshot()
         val helperText = if (snapshot.totalCount > 0) {
-            "当前页：网络 ${snapshot.networkCount} 条，元素命中 ${snapshot.cosmeticCount} 条"
+            "网络 ${snapshot.networkCount} · 元素 ${snapshot.cosmeticCount}"
         } else if (snapshot.cosmeticCandidateCount > 0) {
-            "元素隐藏候选 ${snapshot.cosmeticCandidateCount} 条，暂无实际命中"
+            "元素候选 ${snapshot.cosmeticCandidateCount}，暂无命中"
         } else {
-            "当前页面暂无过滤拦截记录"
+            "暂无过滤记录"
         }
         return listOf(
             FloatingControlSection(
@@ -3485,7 +3485,7 @@ open class WebViewActivity : ComponentActivity() {
         val rawUrl = current?.url?.trim().orEmpty().ifBlank { activeTab?.url.orEmpty() }
         val normalizedUrl = normalizeWhitelistWebUrl(rawUrl)
         if (normalizedUrl.isBlank()) {
-            Toast.makeText(this, "当前页面不能加入白名单", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "此页面不能加入白名单", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -3499,7 +3499,7 @@ open class WebViewActivity : ComponentActivity() {
             floatingControlsOverlay?.collapsePanel()
         }.onFailure { error ->
             Log.e("ChildKioskWebView", "Failed to open bookmark editor", error)
-            Toast.makeText(this, "无法打开收藏编辑界面：${error.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "无法编辑收藏：${error.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -3547,7 +3547,7 @@ open class WebViewActivity : ComponentActivity() {
                                 }
                                 withContext(Dispatchers.Main) {
                                     dismissBookmarkEditor()
-                                    Toast.makeText(this@WebViewActivity, "已收藏网站", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(this@WebViewActivity, "已收藏", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
@@ -3601,7 +3601,7 @@ open class WebViewActivity : ComponentActivity() {
     private fun loadUrlFromFloatingControls(url: String) {
         val current = rootWebView ?: return
         if (!WebViewRuntime.isWebUrl(url)) {
-            Toast.makeText(this, "仅支持打开 http/https 网站", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "仅支持 http/https", Toast.LENGTH_SHORT).show()
             return
         }
         if (runtimeConfig.limitUrlRedirect) {
@@ -3649,7 +3649,7 @@ open class WebViewActivity : ComponentActivity() {
         val current = rootWebView ?: return
         val currentUrl = current.url.orEmpty()
         if (!WebViewRuntime.isWebUrl(currentUrl)) {
-            Toast.makeText(this, "当前页面不支持强制刷新", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "此页面不支持强制刷新", Toast.LENGTH_SHORT).show()
             return
         }
         if (forceRefreshDialog?.isShowing == true) return
@@ -3657,7 +3657,7 @@ open class WebViewActivity : ComponentActivity() {
         val density = resources.displayMetrics.density
         fun dp(value: Int): Int = (value * density).toInt()
         val clearSiteDataCheckBox = CheckBox(this).apply {
-            text = "同时清理当前网站 Cookie、本地存储、会话存储等登录/本地数据"
+            text = "同时清理 Cookie、本地存储和会话数据"
             textSize = 14f
             setPadding(0, dp(8), 0, 0)
         }
@@ -3668,7 +3668,7 @@ open class WebViewActivity : ComponentActivity() {
                     setPadding(dp(20), dp(4), dp(20), dp(4))
                     addView(
                         TextView(this@WebViewActivity).apply {
-                            text = "默认只清理网页缓存并绕过缓存重新加载，不会删除登录信息、Cookie、localStorage 或 sessionStorage。"
+                            text = "默认只清理缓存，不删除登录信息和网站数据。"
                             textSize = 14f
                         }
                     )
@@ -3695,7 +3695,7 @@ open class WebViewActivity : ComponentActivity() {
         val current = rootWebView ?: return
         val currentUrl = current.url.orEmpty()
         if (!WebViewRuntime.isWebUrl(currentUrl)) {
-            Toast.makeText(this, "当前页面不支持强制刷新", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "此页面不支持强制刷新", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -3723,7 +3723,7 @@ open class WebViewActivity : ComponentActivity() {
             )
         )
         updateFloatingControlsState()
-        Toast.makeText(this, "已强制刷新当前页面", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "已强制刷新", Toast.LENGTH_SHORT).show()
     }
 
     private fun clearCurrentSiteData(webView: WebView, url: String, onDone: () -> Unit) {
@@ -3980,17 +3980,17 @@ open class WebViewActivity : ComponentActivity() {
             source = "health_time_limit"
         )
         val dialog = AlertDialog.Builder(this)
-            .setTitle("休息时间到了")
-            .setMessage("当前网页使用时间已到，请休息一下。")
+            .setTitle("使用时间已到")
+            .setMessage("请先休息。")
             .setCancelable(false)
-            .setNegativeButton("好的，去休息") { _, _ ->
+            .setNegativeButton("去休息") { _, _ ->
                 finish()
             }
-            .setPositiveButton("延长可用时间", null)
+            .setPositiveButton("延长时间", null)
             .create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                showParentVerificationDialog(config, "请完成认证后继续使用网页。") {
+                showParentVerificationDialog(config, "认证后继续。") {
                     grantExtraWebTime()
                 }
             }
@@ -4041,7 +4041,7 @@ open class WebViewActivity : ComponentActivity() {
                 AppDatabase.getInstance(this@WebViewActivity).systemConfigDao().getSystemConfig()
             }
             if (!isFinishing && !isDestroyed) {
-                showParentVerificationDialog(config, "请完成认证后退出网页。") {
+                showParentVerificationDialog(config, "认证后退出。") {
                     finish()
                 }
             }
@@ -4086,7 +4086,7 @@ open class WebViewActivity : ComponentActivity() {
         }
 
         fun showError() {
-            errorView.text = "密码错误，请重新输入"
+            errorView.text = "PIN 错误"
             errorView.visibility = View.VISIBLE
         }
 
@@ -4264,7 +4264,7 @@ open class WebViewActivity : ComponentActivity() {
         }
 
         fun showError() {
-            errorView.text = "答案错误，请再试一次"
+            errorView.text = "答案错误"
             errorView.visibility = View.VISIBLE
         }
 
@@ -4501,9 +4501,9 @@ open class WebViewActivity : ComponentActivity() {
                     }
                     if (origin.isNotBlank()) {
                         android.webkit.WebStorage.getInstance().deleteOrigin(origin)
-                        Toast.makeText(this@WebViewActivity, "已清理本站 ($host) 的本地存储和缓存", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@WebViewActivity, "已清理 $host 的网站数据", Toast.LENGTH_SHORT).show()
                     } else {
-                        Toast.makeText(this@WebViewActivity, "无法解析本站域名，清理失败", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@WebViewActivity, "无法解析网站，清理失败", Toast.LENGTH_SHORT).show()
                     }
                 },
                 onUpdateGeoBlacklist = { newSet ->
@@ -4942,7 +4942,7 @@ private fun createSecureWebView(
                     (ctx as? WebViewActivity)?.clearNativeLocationBridgeRequests(it)
                     onRendererProcessGoneInActivity(it, detail)
                 }
-                Toast.makeText(ctx, "网页渲染进程异常退出，正在尝试重构页面", Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, "网页进程已退出，正在恢复", Toast.LENGTH_SHORT).show()
                 return true
             }
         }
@@ -5201,13 +5201,13 @@ private fun enqueueDownload(
                 }
                 
                 android.media.MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), null, null)
-                Toast.makeText(context, "文件已保存至下载目录: $fileName", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "已保存到下载目录：$fileName", Toast.LENGTH_LONG).show()
             } else {
-                Toast.makeText(context, "暂不支持此数据格式的下载", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "不支持此数据格式", Toast.LENGTH_SHORT).show()
             }
         }.onFailure { e ->
             Log.e("ChildKioskWebView", "Data URL save failed", e)
-            Toast.makeText(context, "保存失败: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "保存失败：${e.localizedMessage}", Toast.LENGTH_LONG).show()
         }
         return
     }
@@ -5229,7 +5229,7 @@ private fun enqueueDownload(
         }
         val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         manager.enqueue(request)
-        Toast.makeText(context, "已开始下载：$fileName", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "开始下载：$fileName", Toast.LENGTH_SHORT).show()
     }.onFailure { e ->
         Toast.makeText(context, "无法开始下载：${e.message}", Toast.LENGTH_SHORT).show()
     }
@@ -5953,7 +5953,7 @@ private fun CurrentPageFilterDiagnosticsDialog(
                     Spacer(modifier = Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "当前页过滤记录",
+                            text = "本页过滤",
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
@@ -5997,7 +5997,7 @@ private fun CurrentPageFilterDiagnosticsDialog(
                     snapshot.cosmeticCount > snapshot.cosmeticEvents.size
                 ) {
                     Text(
-                        text = "列表显示当前页面最近 ${snapshot.networkEvents.size} 条网络拦截和前 ${snapshot.cosmeticEvents.size} 条元素隐藏命中。",
+                        text = "显示最近 ${snapshot.networkEvents.size} 条网络拦截和 ${snapshot.cosmeticEvents.size} 条元素命中。",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         lineHeight = 16.sp
@@ -6014,9 +6014,9 @@ private fun CurrentPageFilterDiagnosticsDialog(
                 ) {
                     if (snapshot.totalCount == 0) {
                         val message = if (snapshot.cosmeticCandidateCount > 0) {
-                            "当前页面暂无网络拦截，元素隐藏候选 ${snapshot.cosmeticCandidateCount} 条，但轻量探测未发现实际命中的页面元素。"
+                            "暂无网络拦截；${snapshot.cosmeticCandidateCount} 条元素候选未命中。"
                         } else {
-                            "当前页面暂无过滤拦截记录。"
+                            "暂无过滤记录"
                         }
                         Text(
                             text = message,
@@ -6042,7 +6042,7 @@ private fun CurrentPageFilterDiagnosticsDialog(
                     if (snapshot.cosmeticEvents.isNotEmpty()) {
                         FilterSectionTitle("元素隐藏命中")
                         Text(
-                            text = "以下为本页实际隐藏到 DOM 元素的选择器，最多显示前 $COSMETIC_HIT_TEST_LIMIT 条命中规则。",
+                            text = "显示前 $COSMETIC_HIT_TEST_LIMIT 条命中选择器。",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 16.sp
@@ -6368,9 +6368,9 @@ private fun SiteInfoContent(
                 val isHttps = trimmed.startsWith("https://", ignoreCase = true)
                 val isHttp = trimmed.startsWith("http://", ignoreCase = true)
                 val (icon, titleText, color, descText) = when {
-                    isHttps -> QuadrupleInfo(Icons.Default.Lock, "此连接是安全的", Color(0xFF4CAF50), "你与该网站建立的是加密 HTTPS 安全连接。")
-                    isHttp -> QuadrupleInfo(Icons.Default.Warning, "此连接不安全", Color(0xFFF44336), "你与该网站的连接未加密，请勿在此输入任何敏感隐私信息。")
-                    else -> QuadrupleInfo(Icons.Default.Info, "网站信息", MaterialTheme.colorScheme.primary, "当前页面正通过系统特殊协议进行渲染。")
+                    isHttps -> QuadrupleInfo(Icons.Default.Lock, "安全连接", Color(0xFF4CAF50), "HTTPS 连接已加密。")
+                    isHttp -> QuadrupleInfo(Icons.Default.Warning, "连接不安全", Color(0xFFF44336), "连接未加密，请勿输入敏感信息。")
+                    else -> QuadrupleInfo(Icons.Default.Info, "网站信息", MaterialTheme.colorScheme.primary, "页面使用特殊协议。")
                 }
 
                 Row(
@@ -6414,10 +6414,10 @@ private fun SiteInfoContent(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 SitePermissionSwitchRow(
-                    title = "定位权限 (Geolocation)",
-                    allowedText = "允许网页询问定位",
-                    blockedText = "彻底禁止并拉黑",
-                    globallyBlockedText = "已被管理员在沙箱中全局禁用定位功能",
+                    title = "定位",
+                    allowedText = "允许询问",
+                    blockedText = "已禁止",
+                    globallyBlockedText = "管理员已禁用定位",
                     origin = permissionOrigin,
                     isGloballyBlocked = initialLimitGeolocation,
                     blacklist = geoBlacklist,
@@ -6431,9 +6431,9 @@ private fun SiteInfoContent(
 
                 SiteAllowlistSwitchRow(
                     title = "原生定位托管",
-                    allowedText = "允许本站使用 LocationManager 托管定位",
-                    blockedText = "未加入托管允许列表",
-                    globallyBlockedText = "原生定位托管未在后台启用",
+                    allowedText = "已允许托管定位",
+                    blockedText = "未允许托管定位",
+                    globallyBlockedText = "定位托管未启用",
                     origin = permissionOrigin,
                     isGloballyBlocked = !initialNativeLocationBridgeEnabled || initialLimitGeolocation,
                     allowlist = nativeLocationAllowedOrigins,
@@ -6446,10 +6446,10 @@ private fun SiteInfoContent(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 SitePermissionSwitchRow(
-                    title = "摄像头权限",
-                    allowedText = "允许网页询问摄像头",
-                    blockedText = "彻底禁止摄像头",
-                    globallyBlockedText = "已被管理员在沙箱中全局禁用摄像头",
+                    title = "摄像头",
+                    allowedText = "允许询问",
+                    blockedText = "已禁止",
+                    globallyBlockedText = "管理员已禁用摄像头",
                     origin = permissionOrigin,
                     isGloballyBlocked = initialLimitCameraCapture,
                     blacklist = cameraBlacklist,
@@ -6462,10 +6462,10 @@ private fun SiteInfoContent(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 SitePermissionSwitchRow(
-                    title = "麦克风权限",
-                    allowedText = "允许网页询问麦克风",
-                    blockedText = "彻底禁止麦克风",
-                    globallyBlockedText = "已被管理员在沙箱中全局禁用麦克风",
+                    title = "麦克风",
+                    allowedText = "允许询问",
+                    blockedText = "已禁止",
+                    globallyBlockedText = "管理员已禁用麦克风",
                     origin = permissionOrigin,
                     isGloballyBlocked = initialLimitMicrophoneCapture,
                     blacklist = microphoneBlacklist,
@@ -6478,10 +6478,10 @@ private fun SiteInfoContent(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 SitePermissionSwitchRow(
-                    title = "文件选择/上传",
-                    allowedText = "允许网页询问文件选择",
-                    blockedText = "彻底禁止文件选择",
-                    globallyBlockedText = "已被管理员在沙箱中全局禁用文件选择",
+                    title = "文件上传",
+                    allowedText = "允许询问",
+                    blockedText = "已禁止",
+                    globallyBlockedText = "管理员已禁用文件上传",
                     origin = permissionOrigin,
                     isGloballyBlocked = initialLimitFileChooser,
                     blacklist = fileChooserBlacklist,
@@ -6494,7 +6494,7 @@ private fun SiteInfoContent(
                 Spacer(modifier = Modifier.height(20.dp))
 
                 Text(
-                    text = "外部应用跳转 (Custom Scheme)",
+                    text = "外部应用跳转",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
@@ -6502,7 +6502,7 @@ private fun SiteInfoContent(
                 Spacer(modifier = Modifier.height(6.dp))
                 if (initialLimitCustomScheme) {
                     Text(
-                        text = "⚠️ 已被管理员在沙箱中全局禁用自定义 Scheme 跳转",
+                        text = "管理员已禁用外部应用跳转",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.error,
                         fontWeight = FontWeight.SemiBold
@@ -6519,7 +6519,7 @@ private fun SiteInfoContent(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "检测到尝试调起: $currentAttemptedScheme://",
+                            text = "最近请求：$currentAttemptedScheme://",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -6547,7 +6547,7 @@ private fun SiteInfoContent(
                     }
                 } else {
                     Text(
-                        text = "此网页近期无外部应用调起请求记录",
+                        text = "暂无外部应用请求",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
@@ -6556,7 +6556,7 @@ private fun SiteInfoContent(
                 if (schemeBlacklist.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        text = "当前已拉黑的 Scheme 协议列表：",
+                        text = "Scheme 黑名单",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.primary
@@ -6632,7 +6632,7 @@ private fun SiteInfoContent(
                             contentColor = MaterialTheme.colorScheme.error
                         )
                     ) {
-                        Text("清理本站缓存与数据", fontSize = 11.sp)
+                        Text("清理网站数据", fontSize = 11.sp)
                     }
 
                     Button(
@@ -6735,7 +6735,7 @@ private fun SiteAllowlistSwitchRow(
     Spacer(modifier = Modifier.height(6.dp))
     if (isGloballyBlocked) {
         Text(
-            text = "⚠️ $globallyBlockedText",
+            text = globallyBlockedText,
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.error,
             fontWeight = FontWeight.SemiBold

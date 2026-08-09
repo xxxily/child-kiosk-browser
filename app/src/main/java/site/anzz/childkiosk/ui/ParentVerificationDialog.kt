@@ -161,7 +161,7 @@ fun MathVerificationView(
         )
 
         Text(
-            text = "请完成以下算术题：",
+            text = "请计算：",
             fontSize = 14.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -193,7 +193,7 @@ fun MathVerificationView(
 
         if (showError) {
             Text(
-                text = "答案错误，请再试一次！",
+                text = "答案错误",
                 color = MaterialTheme.colorScheme.error,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(bottom = 8.dp)
@@ -264,7 +264,7 @@ fun PinVerificationView(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = "输入 PIN 密码",
+            text = "输入 PIN",
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
@@ -293,7 +293,7 @@ fun PinVerificationView(
 
         if (showError) {
             Text(
-                text = "密码错误，请重新输入",
+                text = "PIN 错误",
                 color = MaterialTheme.colorScheme.error,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(bottom = 8.dp)

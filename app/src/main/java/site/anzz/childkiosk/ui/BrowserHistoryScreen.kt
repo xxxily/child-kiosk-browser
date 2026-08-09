@@ -104,9 +104,9 @@ internal fun BrowserHistoryScreen(
             icon = {
                 Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = null)
             },
-            title = { Text("确认清空浏览历史？") },
+            title = { Text("清空浏览历史？") },
             text = {
-                Text("将删除当前保存的全部浏览历史记录，清空后无法恢复。")
+                Text("清空后无法恢复。")
             },
             confirmButton = {
                 Button(
@@ -159,7 +159,7 @@ private fun BrowserHistorySummaryCard(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("清空全部记录")
+                        Text("清空记录")
                     }
                 }
             } else {
@@ -220,7 +220,7 @@ private fun BrowserHistorySummaryText(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "保留最近 90 天记录 · 当前 $historyCount 条",
+                text = "最近 90 天 · $historyCount 条",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -259,7 +259,7 @@ private fun BrowserHistoryEmptyState() {
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "打开网站后，最近访问的页面会按日期整理在这里。",
+                text = "打开网站后，记录会显示在这里。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center

@@ -348,7 +348,7 @@ class MainActivity : ComponentActivity() {
                                 }
                                 Toast.makeText(
                                     this@MainActivity,
-                                    if (existingApp == null) "已添加到应用白名单" else "应用已更新",
+                                    if (existingApp == null) "已加入白名单" else "应用已更新",
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 pendingEditRequest = null
@@ -626,9 +626,9 @@ class MainActivity : ComponentActivity() {
             Log.w(TAG, "已经处于 Lock Task 状态，无需重复启动: ${e.message}")
             applySystemUiMode()
         } catch (e: SecurityException) {
-            Toast.makeText(this, "权限不足，部分系统加固未生效: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "权限不足，部分限制未生效：${e.message}", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
-            Toast.makeText(this, "Kiosk 锁定启动失败: ${e.message}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Kiosk 启动失败：${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -673,7 +673,7 @@ class MainActivity : ComponentActivity() {
                 runCatching { dpm.setKeyguardDisabled(adminComponent, false) }
             }
 
-            Toast.makeText(this, "锁定已安全解除", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "锁定已解除", Toast.LENGTH_SHORT).show()
 
             val intent = Intent(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_HOME)
@@ -681,7 +681,7 @@ class MainActivity : ComponentActivity() {
             }
             startActivity(intent)
         } catch (e: Exception) {
-            Toast.makeText(this, "解锁退出失败: ${e.message}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "退出失败：${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -690,7 +690,7 @@ class MainActivity : ComponentActivity() {
             val intent = Intent(Settings.ACTION_HOME_SETTINGS)
             startActivity(intent)
         } catch (e: Exception) {
-            Toast.makeText(this, "无法自动打开设置，请手动将本应用设为默认桌面", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "无法打开设置，请手动设为默认桌面", Toast.LENGTH_LONG).show()
         }
     }
 

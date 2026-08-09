@@ -233,7 +233,7 @@ fun AdminConsoleScreen(
             }.getOrDefault(false)
         }
         if (!opened) {
-            Toast.makeText(context, "无法打开默认浏览器设置，请在系统默认应用中选择本应用", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "请在系统默认应用中选择本应用", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -266,7 +266,7 @@ fun AdminConsoleScreen(
     }
 
     val protectionLevel = remember(isDeviceOwner) {
-        if (isDeviceOwner) "企业级完全锁定 (Device Owner)" else "普通锁定"
+        if (isDeviceOwner) "Device Owner" else "普通锁定"
     }
 
     // 同步设置数据
@@ -304,21 +304,21 @@ fun AdminConsoleScreen(
             TopAppBar(
                 title = {
                     val titleText = when (currentSubPage) {
-                        "QUICK_MODE" -> "快速切换模式"
-                        "PROTECTION" -> "安全防护等级"
-                        "TIME_LIMIT" -> "健康时间限制"
-                         "VERIFICATION" -> "认证设置"
-                        "INTERFACE" -> "界面与显示配置"
-                        "WEB_FILTERING" -> "网页过滤管理"
+                        "QUICK_MODE" -> "快速模式"
+                        "PROTECTION" -> "锁定模式"
+                        "TIME_LIMIT" -> "使用时长"
+                         "VERIFICATION" -> "认证"
+                        "INTERFACE" -> "界面"
+                        "WEB_FILTERING" -> "网页过滤"
                         CAPABILITY_ENHANCEMENTS -> "能力增强"
                         CAPABILITY_LOCATION -> "网页定位增强"
-                        CAPABILITY_HIGH_PERFORMANCE -> "高性能持续运行"
-                        "SANDBOX_LIMITS" -> "安全沙箱与限制"
-                        "PERFORMANCE" -> "网页性能优化"
-                        "WEBVIEW_PROVIDER" -> "WebView 内核环境"
-                        "WHITELIST" -> "应用白名单管理"
-                        "HISTORY" -> "浏览历史记录"
-                        else -> "配置后台"
+                        CAPABILITY_HIGH_PERFORMANCE -> "持续运行"
+                        "SANDBOX_LIMITS" -> "安全限制"
+                        "PERFORMANCE" -> "网页性能"
+                        "WEBVIEW_PROVIDER" -> "WebView 内核"
+                        "WHITELIST" -> "应用白名单"
+                        "HISTORY" -> "浏览历史"
+                        else -> "管理后台"
                     }
                     Text(titleText, fontWeight = FontWeight.Bold)
                 },
@@ -368,70 +368,70 @@ fun AdminConsoleScreen(
                                 Column {
                                     AdminMenuItem(
                                         icon = Icons.Default.AutoFixHigh,
-                                        title = "快速切换模式",
+                                        title = "快速模式",
                                         summary = "当前：${quickModeLabel(quickMode)}",
                                         onClick = { currentSubPage = "QUICK_MODE" }
                                     )
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
                                         icon = Icons.Default.Lock,
-                                        title = "安全防护与锁定",
-                                        summary = if (isDeviceOwner) "企业级完全锁定已生效" else "当前处于普通锁定（可配置软锁）",
+                                        title = "锁定模式",
+                                        summary = if (isDeviceOwner) "Device Owner" else protectionModeLabel(protectionMode),
                                         onClick = { currentSubPage = "PROTECTION" }
                                     )
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
                                         icon = Icons.Default.DateRange,
-                                        title = "健康限时管理",
-                                        summary = "每次可用: ${if (timeLimit > 0) "${timeLimit}分钟" else "不限"} | 每日累计: ${if (dailyLimit > 0) "${dailyLimit}分钟" else "不限"}",
+                                        title = "使用时长",
+                                        summary = "单次 ${if (timeLimit > 0) "${timeLimit} 分钟" else "不限"} · 每日 ${if (dailyLimit > 0) "${dailyLimit} 分钟" else "不限"}",
                                         onClick = { currentSubPage = "TIME_LIMIT" }
                                     )
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
                                         icon = Icons.Default.VerifiedUser,
-                                        title = "身份认证",
-                                        summary = if (verificationMode == "MATH") "当前使用动态口算题验证" else "当前使用数字 PIN 密码验证",
+                                        title = "认证",
+                                        summary = if (verificationMode == "MATH") "口算题" else "数字 PIN",
                                         onClick = { currentSubPage = "VERIFICATION" }
                                     )
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
                                         icon = Icons.Default.Settings,
-                                        title = "界面与显示配置",
-                                        summary = "屏幕方向、首屏图标大小、隐藏标题及管理锁图标等",
+                                        title = "界面",
+                                        summary = "方向、图标、壁纸和管理入口",
                                         onClick = { currentSubPage = "INTERFACE" }
                                     )
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
                                         icon = Icons.Default.FilterAlt,
-                                        title = "网页过滤管理",
-                                        summary = "订阅 Adblock 规则、管理自定义规则、站点例外和过滤日志",
+                                        title = "网页过滤",
+                                        summary = "订阅、规则、例外和日志",
                                         onClick = { currentSubPage = "WEB_FILTERING" }
                                     )
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
                                         icon = Icons.Default.Extension,
                                         title = "能力增强",
-                                        summary = "定位增强${if (KioskPrefs.isNativeLocationOptimizationEnabled(context)) "已开启" else "未开启"}，后续增强能力统一在这里配置",
+                                        summary = "定位增强${if (KioskPrefs.isNativeLocationOptimizationEnabled(context)) "已开启" else "未开启"}",
                                         onClick = { currentSubPage = CAPABILITY_ENHANCEMENTS }
                                     )
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
                                         icon = Icons.Default.Lock,
-                                        title = "安全沙箱与限制",
-                                        summary = "系统防逃逸、物理按键控制及非过滤类网页沙箱配置",
+                                        title = "安全限制",
+                                        summary = "系统、按键和网页权限",
                                         onClick = { currentSubPage = "SANDBOX_LIMITS" }
                                     )
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
                                         icon = Icons.Default.Build,
-                                        title = "网页缓存与秒开优化",
-                                        summary = "预加载常用网站，清理网页缓存及 Cookie 数据",
+                                        title = "网页性能",
+                                        summary = "进度条、预加载和缓存",
                                         onClick = { currentSubPage = "PERFORMANCE" }
                                     )
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
                                         icon = Icons.Default.Language,
-                                        title = "WebView 内核环境",
+                                        title = "WebView 内核",
                                         summary = "${webViewSnapshot.providerSummary} | ${webViewSnapshot.status.label}",
                                         onClick = {
                                             refreshWebViewSnapshot()
@@ -441,15 +441,15 @@ fun AdminConsoleScreen(
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
                                         icon = Icons.Default.List,
-                                        title = "应用白名单管理",
-                                        summary = "管理并分类展示允许访问的应用（共 ${webApps.size} 个应用）",
+                                        title = "应用白名单",
+                                        summary = "${webApps.size} 个应用",
                                         onClick = { currentSubPage = "WHITELIST" }
                                     )
                                     Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
                                     AdminMenuItem(
                                         icon = Icons.Default.History,
-                                        title = "浏览历史记录",
-                                        summary = "查看最近访问的网站，支持恢复访问或加入白名单（共 ${browserHistory.size} 条）",
+                                        title = "浏览历史",
+                                        summary = "${browserHistory.size} 条记录",
                                         onClick = { currentSubPage = "HISTORY" }
                                     )
                                 }
@@ -476,16 +476,16 @@ fun AdminConsoleScreen(
                                             if (isNewerVersion(currentVersion, release.version)) {
                                                 showUpdateDialog = true
                                             } else {
-                                                Toast.makeText(context, "当前已是最新版本！", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, "已是最新版本", Toast.LENGTH_SHORT).show()
                                             }
                                         } else {
-                                            Toast.makeText(context, "检查更新失败，请检查网络连接！", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, "检查失败，请检查网络", Toast.LENGTH_SHORT).show()
                                         }
                                     }
                                 },
                                 onCopyUrl = {
                                     clipboardManager.setText(AnnotatedString("https://github.com/xxxily/child-kiosk-browser"))
-                                    Toast.makeText(context, "项目地址已复制到剪贴板！", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "项目地址已复制", Toast.LENGTH_SHORT).show()
                                 },
                                 onOpenUrl = {
                                     try {
@@ -515,7 +515,7 @@ fun AdminConsoleScreen(
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("返回系统桌面", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                Text("退出应用", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -563,7 +563,7 @@ fun AdminConsoleScreen(
                                 clipboardManager.setText(
                                     AnnotatedString("adb shell dpm set-device-owner site.anzz.childkiosk/.MyDeviceAdminReceiver")
                                 )
-                                Toast.makeText(context, "ADB 激活脚本已复制到剪贴板！", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "ADB 脚本已复制", Toast.LENGTH_SHORT).show()
                             },
                             onGoToHomeSettings = onGoToHomeSettings
                         )
@@ -588,11 +588,11 @@ fun AdminConsoleScreen(
                                 ) {
                                     Icon(imageVector = Icons.Default.DateRange, contentDescription = "限时", tint = MaterialTheme.colorScheme.primary)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("儿童健康使用时长限制", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("使用时长", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 // 单次使用时间限制
-                                Text("每次持续可用时长：${if (timeLimit > 0) "${timeLimit}分钟" else "不限"}", fontSize = 14.sp)
+                                Text("单次：${if (timeLimit > 0) "${timeLimit} 分钟" else "不限"}", fontSize = 14.sp)
                                 Slider(
                                     value = timeLimit.toFloat(),
                                     onValueChange = { timeLimit = it.toInt() },
@@ -607,7 +607,7 @@ fun AdminConsoleScreen(
                                 )
 
                                 // 每日累计限制
-                                Text("每日累计可用时长：${if (dailyLimit > 0) "${dailyLimit}分钟" else "不限"}", fontSize = 14.sp)
+                                Text("每日：${if (dailyLimit > 0) "${dailyLimit} 分钟" else "不限"}", fontSize = 14.sp)
                                 Slider(
                                     value = dailyLimit.toFloat(),
                                     onValueChange = { dailyLimit = it.toInt() },
@@ -644,7 +644,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Icon(imageVector = Icons.Default.VerifiedUser, contentDescription = "验证", tint = MaterialTheme.colorScheme.primary)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("身份认证配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("认证方式", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 Row(
@@ -690,7 +690,7 @@ fun AdminConsoleScreen(
                                     TextButton(onClick = { showPinSetupDialog = true }) {
                                         Icon(imageVector = Icons.Default.Settings, contentDescription = "修改")
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("修改数字 PIN 码")
+                                        Text("修改 PIN")
                                     }
                                 }
                             }
@@ -706,7 +706,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Icon(imageVector = Icons.Default.Security, contentDescription = "验证安全", tint = MaterialTheme.colorScheme.primary)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("认证限制开关", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("管理认证", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 Row(
@@ -715,8 +715,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("启用认证限制", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("若关闭，则进入后台或退出时免除验证，极大提升开发配置效率", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("进入后台和退出需认证", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("关闭后可直接进入", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = verifyAdminActions,
@@ -734,7 +734,7 @@ fun AdminConsoleScreen(
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Text(
-                                            text = "⚠️ 警告：关闭验证后，任何人多次点击管理锁图标均可直接进入配置后台或退出应用，防逃逸安全机制将失效。建议仅在开发调试配置阶段临时关闭，日常使用请务必开启！",
+                                            text = "关闭后无需认证即可进入后台或退出应用。",
                                             fontSize = 12.sp,
                                             color = MaterialTheme.colorScheme.onErrorContainer,
                                             modifier = Modifier.padding(12.dp)
@@ -825,7 +825,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Icon(imageVector = Icons.Default.Menu, contentDescription = "图标", tint = MaterialTheme.colorScheme.primary)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("首屏图标显示大小", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("主页图标大小", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 var iconSizeMode by remember { mutableStateOf(KioskPrefs.getIconSizeMode(context)) }
@@ -882,7 +882,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Icon(imageVector = Icons.Default.Palette, contentDescription = "壁纸", tint = MaterialTheme.colorScheme.primary)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("首屏壁纸与配色配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("主页壁纸与配色", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 var currentPreset by remember { mutableStateOf(KioskPrefs.getWallpaperPreset(context)) }
@@ -958,7 +958,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Icon(imageVector = Icons.Default.Settings, contentDescription = "界面配置", tint = MaterialTheme.colorScheme.primary)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("主页界面与网站退出行为配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("主页与退出", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 // 选项 1: 退出网站时需要认证
@@ -969,8 +969,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("退出网站时需要验证", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("关闭后按返回键可直接退回主页，开启则需完成认证", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("退出网站需认证", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("关闭后可直接回到主页", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = verifyOnExit,
@@ -992,8 +992,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("单击管理入口直接打开菜单", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("关闭后需要在右上角区域 2 秒内连续点击 5 次才会打开菜单", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("单击管理入口打开菜单", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("关闭后需在右上角连点 5 次", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = adminQuickOpen,
@@ -1012,8 +1012,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("隐藏右上角管理锁图标", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("隐藏后，主页右上角锁头将消失，只能通过快速盲点击该区域 5 次进入后台", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("隐藏管理锁图标", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("隐藏后只能在右上角连点 5 次进入后台", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = hideAdminIcon,
@@ -1036,7 +1036,7 @@ fun AdminConsoleScreen(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Text("管理锁图标透明度", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                            Text("管理锁透明度", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                             Text("${(adminIconAlpha * 100).toInt()}%", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                                         }
                                         Slider(
@@ -1063,7 +1063,7 @@ fun AdminConsoleScreen(
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("隐藏主页标题文字", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("隐藏主页标题", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                         Switch(
                                             checked = hideMainTitle,
                                             onCheckedChange = {
@@ -1080,7 +1080,7 @@ fun AdminConsoleScreen(
                                                 mainTitleText = it
                                                 KioskPrefs.setMainTitleText(context, it)
                                             },
-                                            label = { Text("自定义主页标题文本") },
+                                            label = { Text("主页标题") },
                                             singleLine = true,
                                             shape = RoundedCornerShape(8.dp),
                                             modifier = Modifier.fillMaxWidth()
@@ -1109,7 +1109,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Icon(imageVector = Icons.Default.Build, contentDescription = "性能配置", tint = MaterialTheme.colorScheme.primary)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("网页缓存与性能优化", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("网页性能", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 var cacheStats by remember { mutableStateOf<WebDataStats?>(null) }
@@ -1158,11 +1158,11 @@ fun AdminConsoleScreen(
                                             KioskPrefs.setLastCacheClearTime(context, System.currentTimeMillis())
                                             val released = beforeBytes?.let { (it - after.totalBytes).coerceAtLeast(0L) }
                                             lastClearSummary = if (released != null) {
-                                                "本次清理释放约 ${WebDataManager.formatBytes(released)}"
+                                                "已释放约 ${WebDataManager.formatBytes(released)}"
                                             } else {
-                                                "清理完成，当前合计 ${WebDataManager.formatBytes(after.totalBytes)}"
+                                                "清理后共 ${WebDataManager.formatBytes(after.totalBytes)}"
                                             }
-                                            Toast.makeText(context, "网页缓存和 Cookie 已清理", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, "缓存和 Cookie 已清理", Toast.LENGTH_SHORT).show()
                                         }.onFailure { e ->
                                             Toast.makeText(context, "清理失败：${e.message}", Toast.LENGTH_SHORT).show()
                                         }
@@ -1180,8 +1180,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("网页顶部进度条", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认关闭。开启后仅在网页顶部显示细进度条，不使用全屏加载遮罩", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("顶部进度条", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("加载时显示在网页顶部", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = webViewTopProgressEnabled,
@@ -1203,8 +1203,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("保留 1 个空白 WebView 热备", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认关闭。WebView 已运行在独立进程；该热备只在 WebView 进程内生效，设备内存充足且追求打开速度时再开启", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("WebView 热备", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("保留 1 个空白实例，会增加内存占用", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = webViewWarmPoolEnabled,
@@ -1225,7 +1225,7 @@ fun AdminConsoleScreen(
 
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text("WebView 渲染模式", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                    Text("默认保持系统硬件合成路径，贴近手机浏览器。通常无需调整；遇到厂商 WebView/驱动兼容问题时再对比测试", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("遇到 WebView 或驱动兼容问题时再调整", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -1278,8 +1278,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("网页后台预加载", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认关闭。会提前准备常用网页，设备内存充足且追求打开速度时再开启", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("预加载网页", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("提前加载常用网页，会增加网络和内存占用", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = webPreloadEnabled,
@@ -1306,8 +1306,8 @@ fun AdminConsoleScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text("网页缓存与本地数据", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                            Text("统计 WebView 数据目录、HTTP 缓存与代码缓存，便于清理前后对比", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("缓存与网站数据", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                            Text("包括 WebView 数据、HTTP 缓存和代码缓存", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                         TextButton(
                                             enabled = !isCacheStatsLoading && !isClearingCache,
@@ -1369,7 +1369,7 @@ fun AdminConsoleScreen(
                                         ) {
                                             Icon(imageVector = Icons.Default.Delete, contentDescription = "清理")
                                             Spacer(modifier = Modifier.width(4.dp))
-                                            Text(if (isClearingCache) "清理中" else "清理缓存与 Cookie")
+                                            Text(if (isClearingCache) "清理中" else "清理")
                                         }
                                     }
                                 }
@@ -1382,10 +1382,10 @@ fun AdminConsoleScreen(
                                         onDismissRequest = {
                                             if (!isClearingCache) showClearCacheConfirm = false
                                         },
-                                        title = { Text("确认清理网页缓存？") },
+                                        title = { Text("清理缓存和网站数据？") },
                                         text = {
                                             Text(
-                                                "当前统计缓存约 $currentCacheText。确认后会清理 WebView 缓存、本地数据和 Cookie，已登录的网站可能需要重新登录。"
+                                                "约 $currentCacheText。将清理缓存、网站数据和 Cookie，登录状态可能失效。"
                                             )
                                         },
                                         confirmButton = {
@@ -1540,7 +1540,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Icon(imageVector = Icons.Default.Lock, contentDescription = "系统加固", tint = MaterialTheme.colorScheme.primary)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("🛡️ 系统安全防逃逸限制 (需 Device Owner 激活)", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("系统限制（需 Device Owner）", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 if (!isDeviceOwner) {
@@ -1550,7 +1550,7 @@ fun AdminConsoleScreen(
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Text(
-                                            text = "⚠️ 设备当前未激活 Device Owner，以下系统级加固选项暂不生效。请使用电脑 ADB 激活企业模式后再行配置。",
+                                            text = "未激活 Device Owner，以下选项暂不生效。",
                                             fontSize = 12.sp,
                                             color = MaterialTheme.colorScheme.onErrorContainer,
                                             modifier = Modifier.padding(12.dp)
@@ -1565,8 +1565,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用安全模式启动", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("阻断通过重启设备时长按音量键进入系统「安全模式」逃逸本锁定", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用安全模式", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("阻止从安全模式绕过锁定", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitSafeBoot,
@@ -1587,8 +1587,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用系统恢复出厂设置", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("防止通过系统重置来擦除应用及管控配置", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用恢复出厂设置", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("防止清除应用和管控配置", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitFactoryReset,
@@ -1609,8 +1609,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用创建及切换多用户", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("防止通过系统访客模式或副账号体系逃离本儿童桌面", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用多用户", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("防止通过访客或其他账号绕过桌面", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitAddUser,
@@ -1631,8 +1631,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用 USB 数据及文件传输", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("阻断通过 USB 连接电脑侧载安装任意其他 APK 的途径", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用 USB 文件传输", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("防止通过电脑侧载 APK", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitUsbTransfer,
@@ -1653,8 +1653,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用系统屏幕截图与录屏", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("禁止使用系统电源键+音量键的硬性截图或录制当前屏幕", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用截图和录屏", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("阻止系统截图和录屏", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitScreenshot,
@@ -1675,8 +1675,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("完全屏蔽下拉系统状态栏", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("禁止下拉顶栏展开快捷图标，阻断通过通知和设置入口逃逸", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用下拉状态栏", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("阻止从通知和设置入口离开", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitStatusBar,
@@ -1697,8 +1697,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用系统锁屏键盘锁 (Keyguard)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("使按电源键唤醒设备时直达本主屏幕，免受系统级锁屏干扰", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用系统锁屏（Keyguard）", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("唤醒后直接显示本应用", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitKeyguard,
@@ -1718,8 +1718,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用语音助手入口", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("阻断通过系统语音助手、快捷唤醒等入口离开儿童桌面", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用语音助手", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("阻止通过语音助手离开桌面", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitVoiceAssistants,
@@ -1740,7 +1740,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("禁止安装未知来源应用", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("阻止通过浏览器下载、文件管理器或第三方渠道安装未授权 APK", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("阻止安装未授权 APK", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitUnknownSources,
@@ -1765,9 +1765,9 @@ fun AdminConsoleScreen(
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("禁用 USB 调试 (ADB)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                         val summaryText = if (isAdbDisabledByInspect) {
-                                            "已因下方启用「USB 远程调试 (Chrome Inspect)」而强制允许连接"
+                                            "因 Chrome Inspect 已开启，ADB 保持允许"
                                         } else {
-                                            "防止通过电脑连接 ADB 调试修改或强行停用、卸载本软件"
+                                            "防止通过电脑调试或卸载应用"
                                         }
                                         Text(summaryText, fontSize = 11.sp, color = if (isAdbDisabledByInspect) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
@@ -1795,7 +1795,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Icon(imageVector = Icons.Default.Build, contentDescription = "网页调试", tint = MaterialTheme.colorScheme.primary)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("🔧 网页调试与开发配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("网页调试", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 // 选项 1: USB 远程调试
@@ -1808,9 +1808,9 @@ fun AdminConsoleScreen(
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("启用 USB 远程调试 (Chrome Inspect)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                         val summaryText = if (isInspectDisabledByAdb) {
-                                            "已因上方启用「禁用 USB 调试 (ADB)」而强制关闭"
+                                            "因 ADB 已禁用"
                                         } else {
-                                            "开启后，可连接电脑在 Chrome 输入 chrome://inspect 进行深度网页审查与断点调试"
+                                            "可在 Chrome 的 chrome://inspect 中调试网页"
                                         }
                                         Text(summaryText, fontSize = 11.sp, color = if (isInspectDisabledByAdb) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
@@ -1834,8 +1834,8 @@ fun AdminConsoleScreen(
 
                                 // 选项 2: 网页内置调试面板
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text("网页内置调试面板", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                    Text("在移动端屏幕网页中直接显示控制台按钮，方便脱离电脑直接审查网页报错", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("内置调试面板", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    Text("在网页中显示控制台按钮", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -1875,7 +1875,7 @@ fun AdminConsoleScreen(
                                             horizontalArrangement = Arrangement.spacedBy(24.dp)
                                         ) {
                                             listOf(
-                                                "BOTH" to "自动兜底 (推荐)",
+                                                "BOTH" to "自动（推荐）",
                                                 "PAGE_STARTED" to "页面开始加载",
                                                 "PAGE_FINISHED" to "页面加载完成"
                                             ).forEach { (key, label) ->
@@ -1927,7 +1927,7 @@ fun AdminConsoleScreen(
                                                     },
                                                     modifier = Modifier.align(Alignment.End)
                                                 ) {
-                                                    Text("重置为默认 CDN 地址", fontSize = 12.sp)
+                                                    Text("恢复默认 CDN", fontSize = 12.sp)
                                                 }
                                             }
                                         }
@@ -1954,7 +1954,7 @@ fun AdminConsoleScreen(
                                                     },
                                                     modifier = Modifier.align(Alignment.End)
                                                 ) {
-                                                    Text("重置为默认 CDN 地址", fontSize = 12.sp)
+                                                    Text("恢复默认 CDN", fontSize = 12.sp)
                                                 }
                                             }
                                         }
@@ -1970,8 +1970,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("注入自定义开发脚本", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("允许在页面加载时注入管理员自定义编写的 JS 代码或外部 JS 链接，可与 vConsole/Eruda 共存", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("注入自定义脚本", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("加载网页时注入 JS 或外部脚本", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = customJsInjectEnabled,
@@ -1994,7 +1994,7 @@ fun AdminConsoleScreen(
                                             horizontalArrangement = Arrangement.spacedBy(24.dp)
                                         ) {
                                             listOf(
-                                                "BOTH" to "自动兜底 (推荐)",
+                                                "BOTH" to "自动（推荐）",
                                                 "PAGE_STARTED" to "页面开始加载",
                                                 "PAGE_FINISHED" to "页面加载完成"
                                             ).forEach { (key, label) ->
@@ -2024,8 +2024,8 @@ fun AdminConsoleScreen(
 
                                     // 外部 JS 链接 (URL)
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Text("自定义外部 JS 脚本链接 (URL)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("非空时将自动动态载入该外链 JS。若无需载入外部脚本请留空", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("外部 JS 链接", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("留空则不加载", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         OutlinedTextField(
                                             value = customJsInjectUrl,
                                             onValueChange = {
@@ -2042,8 +2042,8 @@ fun AdminConsoleScreen(
 
                                     // 自定义 JS 代码段
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Text("自定义注入 JavaScript 代码", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("将在设定注入时机时，作为自执行函数注入并执行。如果在上方配置了外部 JS 链接，则会等待外链脚本加载成功后 (onload) 再执行本代码段", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("JavaScript 代码", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("按上方时机注入；外部脚本会先加载", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         OutlinedTextField(
                                             value = customJsInjectCode,
                                             onValueChange = {
@@ -2054,7 +2054,7 @@ fun AdminConsoleScreen(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(140.dp),
-                                            placeholder = { Text("// 在此输入您的 Javascript 代码...", fontSize = 12.sp) },
+                                            placeholder = { Text("// 输入 JavaScript 代码", fontSize = 12.sp) },
                                             textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                                         )
                                     }
@@ -2073,7 +2073,7 @@ fun AdminConsoleScreen(
                                 ) {
                                     Icon(imageVector = Icons.Default.Settings, contentDescription = "物理与界面限制", tint = MaterialTheme.colorScheme.primary)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("📱 界面与物理按键限制", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("界面与按键", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 // 选项 1: FLAG_SECURE 防截屏/录像
@@ -2083,8 +2083,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("防止截屏显示 (FLAG_SECURE)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("将窗口标志设为安全，使系统级别的截屏或录屏输出为黑色画布", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("防止截屏（FLAG_SECURE）", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("系统截图和录屏显示为黑屏", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitFlagSecure,
@@ -2105,8 +2105,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("物理音量加减按键锁定", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("拦截并消费物理音量键，防止儿童在主页及网页误触把声音调过大或静音", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("锁定音量键", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("阻止调大、调小或静音", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitVolumeKeys,
@@ -2131,11 +2131,11 @@ fun AdminConsoleScreen(
                                 ) {
                                     Icon(imageVector = Icons.Default.Build, contentDescription = "浏览器沙箱", tint = MaterialTheme.colorScheme.primary)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("🌐 网页浏览器沙箱限制", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("网页权限", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 Text(
-                                    "默认按移动浏览器兼容基线放开网页能力，优先保证页面渲染与交互正常；如需更严格的儿童安全限制，可在这里逐项开启。",
+                                    "默认保持浏览器兼容性；需要时再逐项收紧权限。",
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -2148,8 +2148,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("注册并设置为默认浏览器", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("本应用已声明可打开 http/https 链接。点击后进入系统默认浏览器设置，系统会决定是否允许设为默认浏览器", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("设为默认浏览器", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("系统默认浏览器设置", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     OutlinedButton(
                                         onClick = { openDefaultBrowserSettings() },
@@ -2169,8 +2169,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("网页悬浮球操作入口", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("正常模式默认开启。打开后网页内可通过悬浮球输入网址、查看当前 URL、后退、前进、刷新或停止加载", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("网页悬浮球", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("提供网址、前进后退、刷新等操作", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = floatingBrowserControlsEnabled,
@@ -2191,8 +2191,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("页面顶部下拉刷新", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认关闭。开启后在网页已到顶部时继续下拉并松手刷新；全屏网页或复杂 Web 应用建议保持关闭", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("下拉刷新", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("网页到顶部后继续下拉即可刷新", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = pullToRefreshEnabled,
@@ -2214,8 +2214,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("网页广告与弹窗过滤", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认关闭以避免误拦截脚本、样式、字体等子资源；开启后会在网络拦截层阻断疑似广告与弹窗请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("广告和弹窗过滤", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("拦截疑似广告和弹窗请求，可能影响网页资源", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitAdBlock,
@@ -2236,8 +2236,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("完全禁用网页文件下载", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认允许并交给系统下载管理器处理；开启后阻断网页下载，防止儿童保存未知文件或安装包", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用网页下载", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("阻止保存未知文件或安装包", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitDownload,
@@ -2258,8 +2258,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用长按文本选择与复制", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认允许，保持阅读、复制、图片保存等浏览器交互；开启后阻断系统长按工具条", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用长按菜单", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("同时禁用文本复制和图片保存", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitLongClick,
@@ -2280,8 +2280,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("仅允许白名单域名跳转", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认允许正常跨域导航、CDN 与 OAuth 跳转；开启后把主页面跳转限制在当前域名及其子域名内", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("限制域名跳转", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("只允许当前域名及其子域名", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitUrlRedirect,
@@ -2303,8 +2303,8 @@ fun AdminConsoleScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text("禁用网页定位 (Geolocation)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                            Text("默认按浏览器能力允许网页申请定位；开启后直接拒绝网页地理位置权限，保护儿童隐私", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("禁用网页定位", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                            Text("拒绝网页定位请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                         Switch(
                                             checked = limitGeolocation,
@@ -2319,7 +2319,7 @@ fun AdminConsoleScreen(
 
                                     if (!limitGeolocation && geolocationBlacklist.isNotEmpty()) {
                                         Spacer(modifier = Modifier.height(8.dp))
-                                        Text("定位黑名单 (已彻底禁止获取位置的域名)：", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                                        Text("定位黑名单：", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
                                         Spacer(modifier = Modifier.height(6.dp))
                                         Column(
                                             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -2385,8 +2385,8 @@ fun AdminConsoleScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text("禁用自定义 Scheme 调起外部 App", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                            Text("开启后强行静默拦截所有非 Web 协议（如 weixin://, alipays:// 等）；关闭后允许询问跳转或根据黑名单过滤", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("禁用外部应用跳转", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                            Text("拦截非 Web 协议（如 weixin://）", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                         Switch(
                                             checked = limitCustomScheme,
@@ -2400,7 +2400,7 @@ fun AdminConsoleScreen(
 
                                     if (!limitCustomScheme && schemeBlacklist.isNotEmpty()) {
                                         Spacer(modifier = Modifier.height(8.dp))
-                                        Text("Scheme 协议黑名单 (已彻底拒绝调起的协议)：", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                                        Text("Scheme 黑名单：", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
                                         Spacer(modifier = Modifier.height(6.dp))
                                         Column(
                                             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -2467,8 +2467,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用网页摄像头", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认允许可信网页在用户确认后申请摄像头；开启后拒绝 WebRTC 视频、拍照、扫码等摄像头请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用摄像头", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("拒绝网页摄像头请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitCameraCapture,
@@ -2503,8 +2503,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用网页麦克风", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认允许可信网页在用户确认后申请麦克风；开启后拒绝 WebRTC 语音、录音、语音输入等请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用麦克风", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("拒绝网页麦克风请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitMicrophoneCapture,
@@ -2539,8 +2539,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用网页文件选择/上传", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认允许可信网页在用户确认后打开系统文件选择器；开启后拒绝图片、视频或文件上传入口", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用文件选择和上传", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("拒绝网页文件上传", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitFileChooser,
@@ -2575,8 +2575,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁用网页全屏视频", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认允许网页视频进入全屏播放；开启后拒绝网页自定义全屏视图，防止覆盖浏览控制", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用全屏视频", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("拒绝网页自定义全屏视图", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitFullscreenVideo,
@@ -2597,8 +2597,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("强制网页 SSL 连接安全校验", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("证书异常时直接强制安全阻断，不提供「忽略并继续访问」的逃逸入口", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("严格校验 SSL 证书", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("证书异常时直接阻断", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitSslCheck,
@@ -2619,8 +2619,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁止网页自动弹出新窗口", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认允许并在 App 内 WebView 栈承载新窗口；开启后拦截 window.open() 与 target=_blank 等新开请求", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用网页新窗口", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("拦截 window.open 和 target=_blank", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitMultiWindow,
@@ -2641,8 +2641,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("禁止网页读取本地文件系统", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("默认允许 WebView 标准 file/content 能力；开启后限制 file:// 与 content:// 访问，可能影响本地文件预览或上传", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("禁用本地文件访问", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("限制 file:// 和 content://，可能影响预览或上传", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = limitFileAccess,
@@ -2662,8 +2662,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("允许第三方 Cookie", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("提升登录、嵌入组件、跨域资源鉴权等现代网页兼容性；关闭后部分页面可能只能渲染局部内容", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("第三方 Cookie", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("关闭后部分登录和嵌入内容可能失效", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = thirdPartyCookies,
@@ -2683,8 +2683,8 @@ fun AdminConsoleScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("严格阻止 HTTPS 页面混合内容", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text("开启后 HTTPS 页面会阻止 HTTP 子资源；为兼容旧网页默认使用 WebView 兼容模式", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("阻止混合内容", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("HTTPS 页面不加载 HTTP 子资源", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(
                                         checked = strictMixedContent,
@@ -2718,8 +2718,8 @@ fun AdminConsoleScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text("使用手机浏览器 User-Agent", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                            Text("移除 WebView 专属标识；如填写自定义 UA，将优先使用自定义内容", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("手机浏览器 User-Agent", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                            Text("移除 WebView 标识；自定义 UA 优先", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                         Switch(
                                             checked = useBrowserUserAgent,
@@ -2747,7 +2747,7 @@ fun AdminConsoleScreen(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                         Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
-                                        Text("系统默认 WebView UA", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Text("默认 WebView UA", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                         Text(
                                             text = defaultUserAgent.ifBlank { "无法读取" },
                                             fontSize = 11.sp,
@@ -2782,7 +2782,7 @@ fun AdminConsoleScreen(
                                                 onSandboxLimitsChanged()
                                             }
                                         ) {
-                                            Text("清空自定义 UA", fontSize = 12.sp)
+                                        Text("清空 UA", fontSize = 12.sp)
                                         }
                                     }
                                 }
@@ -2891,7 +2891,7 @@ fun AdminConsoleScreen(
                                     .heightIn(min = 160.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("此分类下暂无应用，点击右下角按钮添加！", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("此分类暂无应用", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         } else {
                             filteredApps.forEach { app ->
@@ -3038,7 +3038,7 @@ fun AdminConsoleScreen(
                 }
                 showPinSetupDialog = false
                 verificationMode = "PIN"
-                Toast.makeText(context, "密码设置成功！已自动切换为 PIN 码模式", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "PIN 已设置", Toast.LENGTH_SHORT).show()
             }
         )
     }
@@ -3063,22 +3063,22 @@ fun QuickModeCard(
     val options = listOf(
         KioskPrefs.QUICK_MODE_NORMAL to Triple(
             "正常模式",
-            "单击打开管理菜单，无认证无软锁，网页保持浏览器兼容默认。",
+            "无认证、无软锁，保持浏览器默认行为。",
             Icons.Default.Home
         ),
         KioskPrefs.QUICK_MODE_CHILD to Triple(
             "儿童模式",
-            "隐藏管理入口，启用认证、软锁和网页/系统限制。",
+            "隐藏管理入口，启用认证、软锁和安全限制。",
             Icons.Default.ChildCare
         ),
         KioskPrefs.QUICK_MODE_DEBUG to Triple(
             "调试模式",
-            "放开限制并开启 Chrome Inspect 与内置调试面板。",
+            "放开限制，开启网页调试。",
             Icons.Default.BugReport
         ),
         KioskPrefs.QUICK_MODE_CUSTOM to Triple(
             "自定义模式",
-            "保留当前细项配置，不批量重置任何选项。",
+            "保留当前设置。",
             Icons.Default.Tune
         )
     )
@@ -3109,7 +3109,7 @@ fun QuickModeCard(
             }
 
             Text(
-                "模式只批量调整锁定、认证、沙箱和调试相关选项，不会改变屏幕方向、图标大小、标题或白名单。",
+                "只调整锁定、认证、安全和调试选项，不改界面或白名单。",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -3179,6 +3179,11 @@ private fun quickModeLabel(mode: String): String {
     }
 }
 
+private fun protectionModeLabel(mode: String): String = when (mode) {
+    KioskPrefs.MODE_SOFT_LOCK -> "屏幕固定"
+    else -> "无系统锁定"
+}
+
 @Composable
 private fun WebFilteringSettingsScreen(
     onFilteringChanged: () -> Unit
@@ -3234,7 +3239,7 @@ private fun WebFilteringSettingsScreen(
     fun resetDiagnostics() {
         FilterRepository.resetDiagnostics(context)
         diagnosticsRefreshVersion++
-        Toast.makeText(context, "已清空过滤诊断统计、最近日志和本进程缓存", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "过滤诊断已清空", Toast.LENGTH_SHORT).show()
     }
 
     Column(
@@ -3253,9 +3258,9 @@ private fun WebFilteringSettingsScreen(
                     Icon(Icons.Default.FilterAlt, contentDescription = "网页过滤", tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(8.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("网页过滤总控", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text("网页过滤", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                       Text(
-                          "支持经验证的 ABP/EasyList、uBO 与 AdGuard 安全子集；未支持语法会明确跳过。",
+                          "支持常用 ABP、uBO 和 AdGuard 规则；不支持的语法会跳过。",
                           fontSize = 11.sp,
                           color = MaterialTheme.colorScheme.onSurfaceVariant
                       )
@@ -3271,24 +3276,24 @@ private fun WebFilteringSettingsScreen(
                 }
 
                   Text(
-                      "已编译规则 ${report.enabledRuleCount}/${report.ruleCount} 条：网络 ${report.networkRuleCount}、元素隐藏 ${report.cosmeticRuleCount}、scriptlet ${report.scriptletRuleCount}；不支持语法 ${report.unsupportedRuleCount} 条。",
+                      "已编译 ${report.enabledRuleCount}/${report.ruleCount} 条：网络 ${report.networkRuleCount} · 元素 ${report.cosmeticRuleCount} · scriptlet ${report.scriptletRuleCount} · 不支持 ${report.unsupportedRuleCount}",
                       fontSize = 12.sp,
                       color = MaterialTheme.colorScheme.onSurfaceVariant
                   )
                   if (engineUiState.isLoading) {
                       LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                      Text("正在后台读取并编译过滤规则…", fontSize = 11.sp)
+                      Text("正在编译规则…", fontSize = 11.sp)
                   }
                   if (engineUiState.errorMessage.isNotBlank()) {
                       Text(
-                          "过滤引擎降级：${engineUiState.errorMessage}",
+                          "过滤引擎：${engineUiState.errorMessage}",
                           fontSize = 11.sp,
                           color = MaterialTheme.colorScheme.error
                       )
                   }
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("过滤强度", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("过滤级别", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     FilterPreset.entries.forEach { preset ->
                         FilterPresetOption(
                             selected = settings.preset == preset,
@@ -3328,14 +3333,14 @@ private fun WebFilteringSettingsScreen(
                         onValueChange = { customSubscriptionTitle = it },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        label = { Text("自定义订阅名称") }
+                        label = { Text("订阅名称") }
                     )
                     OutlinedTextField(
                         value = customSubscriptionUrl,
                         onValueChange = { customSubscriptionUrl = it },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        label = { Text("HTTPS 订阅 URL") }
+                        label = { Text("HTTPS 地址") }
                     )
                     Button(
                         onClick = {
@@ -3345,14 +3350,14 @@ private fun WebFilteringSettingsScreen(
                                 customSubscriptionTitle = ""
                                 customSubscriptionUrl = ""
                                 refresh()
-                                Toast.makeText(context, "自定义订阅已添加，可点击更新拉取规则", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "订阅已添加，可点击更新", Toast.LENGTH_SHORT).show()
                             }.onFailure {
                                 Toast.makeText(context, it.message ?: "添加失败", Toast.LENGTH_LONG).show()
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("添加自定义订阅")
+                        Text("添加订阅")
                     }
                 }
                 settings.subscriptions.forEach { subscription ->
@@ -3424,7 +3429,7 @@ private fun WebFilteringSettingsScreen(
                             FilterRepository.removeCustomSubscription(context, subscription.id)
                             refresh()
                         }) {
-                            Text("删除自定义订阅")
+                            Text("删除订阅")
                         }
                     }
                     if (subscription.lastUpdatedAt > 0L || subscription.lastError.isNotBlank()) {
@@ -3447,10 +3452,10 @@ private fun WebFilteringSettingsScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Edit, contentDescription = "自定义规则", tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(8.dp))
-                    Text("自定义 Adblock 规则", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text("自定义规则", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
                   Text(
-                      "支持经过回归验证的域名锚、例外、资源类型、party/domain、元素隐藏和安全 scriptlet 子集；WebSocket、Service Worker 与未识别扩展语法不宣称完整支持。",
+                      "支持域名、例外、资源类型、元素隐藏和部分 scriptlet 语法。",
                       fontSize = 11.sp,
                       color = MaterialTheme.colorScheme.onSurfaceVariant
                   )
@@ -3492,7 +3497,7 @@ private fun WebFilteringSettingsScreen(
                         },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("保存规则")
+                        Text("保存")
                     }
                       OutlinedButton(
                           onClick = {
@@ -3550,7 +3555,7 @@ private fun WebFilteringSettingsScreen(
                     }
                 }
                 if (settings.siteOverrides.isEmpty()) {
-                    Text("暂无站点例外。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("暂无例外", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
                     settings.siteOverrides.forEach { override ->
                         Column(
@@ -3597,7 +3602,7 @@ private fun WebFilteringSettingsScreen(
                                     )
                                     refresh()
                                 }) {
-                                    Text("临时放行15分钟")
+                                    Text("放行 15 分钟")
                                 }
                                 TextButton(onClick = {
                                     FilterRepository.removeSiteOverride(context, override.host)
@@ -3663,7 +3668,7 @@ private fun WebFilteringSettingsScreen(
                     }
                 }
                 if (events.isEmpty()) {
-                    Text("暂无拦截或例外事件。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("暂无事件", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
                     events.take(20).forEach { event ->
                         Column(
@@ -3810,7 +3815,7 @@ private fun WebFilteringSettingsScreen(
                         fontSize = 13.sp
                     )
                     Text(
-                        "清空后无法恢复。建议只在开始新一轮广告过滤测试前执行。",
+                        "清空后无法恢复。",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -3874,7 +3879,7 @@ private fun FilterPerformanceDiagnosticsCard(
                 Icon(Icons.Default.BugReport, contentDescription = "过滤性能诊断", tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("过滤性能诊断", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Text("过滤诊断", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Text(
                         "查看规则编译、命中缓存、候选规则评估和注入资源的实时快照；复制内容会脱敏 URL 查询参数。",
                         fontSize = 11.sp,
@@ -4105,7 +4110,7 @@ private fun FilterPerformanceDiagnosticsCard(
                 ) {
                     Icon(Icons.Default.ContentCopy, contentDescription = "复制诊断", modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("复制完整诊断信息")
+                    Text("复制诊断")
                 }
 
                 OutlinedButton(
@@ -4115,7 +4120,7 @@ private fun FilterPerformanceDiagnosticsCard(
                 ) {
                     Icon(Icons.Default.RestartAlt, contentDescription = "重置诊断", modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("清空统计、日志和过滤缓存")
+                    Text("清空统计和日志")
                 }
             }
         }
@@ -4261,7 +4266,7 @@ fun ProtectionLevelCard(
             ) {
                 Icon(imageVector = Icons.Default.Lock, contentDescription = "防护", tint = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("防护等级", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("锁定模式", fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
 
             if (isDeviceOwner) {
@@ -4274,7 +4279,7 @@ fun ProtectionLevelCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        "企业级完全锁定已生效（Device Owner）",
+                        "Device Owner 已启用",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF2E7D32)
@@ -4282,8 +4287,7 @@ fun ProtectionLevelCard(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "Home / 最近任务 / 返回键、状态栏、语音助手、出厂重置等逃逸路径均已封堵。" +
-                        "如需彻底解除，请通过 ADB 执行 dpm remove-active-admin。",
+                    "已限制系统导航、状态栏、语音助手和恢复出厂设置。解除需使用 ADB。",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -4292,7 +4296,7 @@ fun ProtectionLevelCard(
 
             // 非 Device Owner：可切换的软防护等级
             Text(
-                "当前设备未取得 Device Owner 权限，可在以下两种基础防护中选择：",
+                "未启用 Device Owner，可选择：",
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 8.dp)
@@ -4300,20 +4304,20 @@ fun ProtectionLevelCard(
 
             ProtectionOption(
                 selected = protectionMode == KioskPrefs.MODE_SOFT_LOCK,
-                title = "屏幕固定软锁（推荐）",
-                desc = "进入系统「屏幕固定」，拦截 Home / 最近任务键。可被长按返回+最近任务解除，首次可能弹出系统确认框。",
+                title = "屏幕固定（推荐）",
+                desc = "拦截 Home 和最近任务键，可由系统手势解除。首次可能要求确认。",
                 onClick = { onModeChange(KioskPrefs.MODE_SOFT_LOCK) }
             )
             ProtectionOption(
                 selected = protectionMode == KioskPrefs.MODE_NONE,
                 title = "无系统级锁定",
-                desc = "仅沉浸式全屏 + 认证退出，不调用屏幕固定。适合开发调试或仅需防误触的场景。",
+                desc = "仅全屏和认证退出，适合调试或防误触。",
                 onClick = { onModeChange(KioskPrefs.MODE_NONE) }
             )
 
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                "切换后需退出本应用并重新进入（或重启设备）方可生效。",
+                "重新打开应用后生效。",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -4322,14 +4326,14 @@ fun ProtectionLevelCard(
 
             // Device Owner 升级引导
             Text(
-                "想要企业级完全锁定？",
+                "启用 Device Owner",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                "在「未绑定账号、已恢复出厂」的设备上，通过电脑 ADB 执行下方脚本，可升级为不可逃逸的 Device Owner 模式：",
+                "设备需已恢复出厂且未绑定账号，再通过电脑执行：",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -4356,7 +4360,7 @@ fun ProtectionLevelCard(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("复制激活脚本", fontSize = 13.sp)
+                    Text("复制脚本", fontSize = 13.sp)
                 }
                 Button(
                     onClick = onGoToHomeSettings,
@@ -4364,7 +4368,7 @@ fun ProtectionLevelCard(
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("设为默认主屏幕", fontSize = 13.sp)
+                    Text("设为默认桌面", fontSize = 13.sp)
                 }
             }
         }
@@ -4431,7 +4435,7 @@ fun WhitelistSubscriptionCard(
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("订阅白名单", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("白名单订阅", fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
 
             OutlinedTextField(
@@ -4461,7 +4465,7 @@ fun WhitelistSubscriptionCard(
                 OutlinedTextField(
                     value = intervalHours,
                     onValueChange = onIntervalHoursChange,
-                    label = { Text("间隔(小时)") },
+                    label = { Text("间隔（小时）") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier
@@ -4500,7 +4504,7 @@ fun WhitelistSubscriptionCard(
                     shape = RoundedCornerShape(12.dp),
                     enabled = !isRefreshing
                 ) {
-                    Text("保存设置")
+                    Text("保存")
                 }
                 Button(
                     onClick = onRefresh,
@@ -4508,7 +4512,7 @@ fun WhitelistSubscriptionCard(
                     shape = RoundedCornerShape(12.dp),
                     enabled = !isRefreshing && url.isNotBlank()
                 ) {
-                    Text(if (isRefreshing) "刷新中" else "立即刷新")
+                    Text(if (isRefreshing) "刷新中" else "刷新")
                 }
             }
         }
@@ -5031,7 +5035,7 @@ fun AddEditWebAppDialog(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "设置名称、链接、分类和图标",
+                            text = "名称、链接、分类和图标",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -5076,7 +5080,7 @@ fun AddEditWebAppDialog(
 
                     if (urlInput.trim().startsWith("http://", ignoreCase = true)) {
                         Text(
-                            text = "当前添加的是未加密的 HTTP 网站。在公共网络中可能会有被监听或劫持的风险，建议使用 HTTPS。",
+                            text = "HTTP 连接未加密，可能被监听或篡改。",
                             color = Color(0xFFE65100),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
@@ -5092,7 +5096,7 @@ fun AddEditWebAppDialog(
                         )
                     }
 
-                    Text("选择应用分类：", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("分类", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier
@@ -5132,7 +5136,7 @@ fun AddEditWebAppDialog(
                         }
                     }
 
-                    Text("选择代表图标：", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("图标", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier
@@ -5233,13 +5237,13 @@ fun AddEditWebAppDialog(
                                 ) {
                                     if (isDiscoveringIcons) {
                                         CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                        Text("正在读取网站图标...", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("正在读取图标...", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     } else {
                                         Text(
                                             text = when {
                                                 discoveredIcons.isNotEmpty() && visibleDiscoveredIcons.isEmpty() ->
                                                     "读取到的图标无法显示，已自动过滤"
-                                                else -> iconDiscoveryMessage ?: "输入网址后自动读取 HTML / Manifest 图标"
+                                                else -> iconDiscoveryMessage ?: "输入网址后自动读取网站图标"
                                             },
                                             fontSize = 12.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -5272,7 +5276,7 @@ fun AddEditWebAppDialog(
                             }
 
                             if (visibleDiscoveredIcons.isNotEmpty()) {
-                                Text("网站图标候选：", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("图标候选", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                     modifier = Modifier
@@ -5462,7 +5466,7 @@ fun PinSetupDialog(
                 modifier = Modifier.padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Text("设置 4 位数字 PIN 码", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("设置 4 位 PIN", fontSize = 18.sp, fontWeight = FontWeight.Bold)
 
                 OutlinedTextField(
                     value = pin1,
@@ -5472,7 +5476,7 @@ fun PinSetupDialog(
                             error = null
                         }
                     },
-                    label = { Text("输入 4 位数字密码") },
+                    label = { Text("输入 PIN") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -5486,7 +5490,7 @@ fun PinSetupDialog(
                             error = null
                         }
                     },
-                    label = { Text("再次输入以确认密码") },
+                    label = { Text("再次输入") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -5795,16 +5799,16 @@ fun AboutAndSystemCard(
             ) {
                 Icon(
                     imageVector = Icons.Default.Info,
-                    contentDescription = "关于与系统诊断",
+                    contentDescription = "关于与诊断",
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("关于与系统诊断", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("关于与诊断", fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "关于项目",
+                    text = "项目",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
@@ -5843,7 +5847,7 @@ fun AboutAndSystemCard(
 
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "系统与诊断信息",
+                    text = "系统诊断",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
@@ -5914,7 +5918,7 @@ fun WebViewProviderScreen(
                         tint = MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("WebView 内核运行环境", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text("WebView 环境", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
 
                 Row(
@@ -5975,7 +5979,7 @@ fun WebViewProviderScreen(
                         tint = MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("关键 WebView 配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text("WebView 配置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
 
                 val config = snapshot.runtimeConfig
@@ -6011,11 +6015,11 @@ fun WebViewProviderScreen(
                         tint = MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("升级与设置入口", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text("更新与设置", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
 
                 Text(
-                    "新 WebView 是否生效由 Android 系统决定。如果系统不允许切换 WebView 实现，本应用无法单独替换内核。升级或切换后请完全关闭并重新打开网页，必要时重启应用或设备。",
+                    "WebView 由 Android 系统管理。切换后请重新打开网页，必要时重启应用。",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -6028,7 +6032,7 @@ fun WebViewProviderScreen(
                     ) {
                         Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "复制诊断")
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("复制诊断信息")
+                        Text("复制诊断")
                     }
 
                     Row(
@@ -6062,7 +6066,7 @@ fun WebViewProviderScreen(
                     ) {
                         Icon(imageVector = Icons.Default.Settings, contentDescription = "系统设置")
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("打开系统 WebView 设置")
+                        Text("系统 WebView 设置")
                     }
                 }
             }
@@ -6073,7 +6077,7 @@ fun WebViewProviderScreen(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("系统默认 WebView UA", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text("默认 WebView UA", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 Text(
                     text = snapshot.defaultUserAgent.ifBlank { "无法读取" },
                     fontSize = 11.sp,
@@ -6194,7 +6198,7 @@ fun UpdateDialog(
                     true
                 }
                 if (!canInstallNow) {
-                    Toast.makeText(context, "下载完成，请先允许本应用安装更新", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "下载完成，请允许安装更新", Toast.LENGTH_LONG).show()
                 } else if (openApkInstaller(context, apk)) {
                     Toast.makeText(context, "下载完成，已打开安装器", Toast.LENGTH_SHORT).show()
                 } else {
@@ -6259,7 +6263,7 @@ fun UpdateDialog(
                         .verticalScroll(rememberScrollState())
                 ) {
                     Text(
-                        text = if (releaseInfo.changelog.isNullOrEmpty()) "暂无更新日志说明。" else releaseInfo.changelog,
+                        text = if (releaseInfo.changelog.isNullOrEmpty()) "暂无更新日志" else releaseInfo.changelog,
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onSurface
@@ -6312,7 +6316,7 @@ fun UpdateDialog(
                         }
                         if (!canInstallPackages && downloadedApk != null) {
                             Text(
-                                text = "系统未允许本应用安装未知来源应用，请授权后再安装。",
+                                text = "请先允许安装未知来源应用",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.error
                             )
@@ -6344,7 +6348,7 @@ fun UpdateDialog(
                         onClick = {
                             clipboardManager.setText(AnnotatedString(releaseInfo.downloadUrl))
                             if (KioskPrefs.isLimitDownloadEnabled(context)) {
-                                Toast.makeText(context, "下载链接已复制；当前已禁用应用内下载能力", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, "下载链接已复制；应用内下载已禁用", Toast.LENGTH_LONG).show()
                                 return@Button
                             }
                             val apk = downloadedApk
@@ -6352,7 +6356,7 @@ fun UpdateDialog(
                                 apk != null && !canInstallPackages ->
                                     openInstallUnknownAppsSettings(context)
                                 apk != null && !openApkInstaller(context, apk) ->
-                                    Toast.makeText(context, "无法打开安装器，请检查系统安装权限", Toast.LENGTH_LONG).show()
+                                    Toast.makeText(context, "无法打开安装器，请检查安装权限", Toast.LENGTH_LONG).show()
                                 !isDownloading -> startDownload()
                             }
                         },

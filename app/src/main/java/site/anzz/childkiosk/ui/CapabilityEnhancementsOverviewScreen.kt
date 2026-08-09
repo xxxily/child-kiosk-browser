@@ -69,7 +69,7 @@ internal fun CapabilityEnhancementsOverviewScreen(
             !KioskPrefs.isAmapLocationPrivacyAgreed(context))
     val locationOriginCount = KioskPrefs.getNativeLocationBridgeAllowedOrigins(context).size
     val locationStatus = when {
-        locationBlockedBySandbox -> "安全沙箱已禁用定位"
+        locationBlockedBySandbox -> "已被安全限制"
         !locationEnabled -> "未开启"
         locationConfigurationIncomplete -> "配置不完整"
         else -> "已开启"
@@ -89,9 +89,9 @@ internal fun CapabilityEnhancementsOverviewScreen(
         else -> HighPerformanceCompositeState.READY
     }
     val highPerformanceSupportingText = when {
-        highPerformanceActiveCount > 0 -> "正在保护 $highPerformanceActiveCount 个网页"
-        highPerformanceRuleCount > 0 -> "$highPerformanceRuleCount 个可信 Origin"
-        else -> "实际效果仍受 Android、设备厂商和 WebView 内核限制"
+        highPerformanceActiveCount > 0 -> "$highPerformanceActiveCount 个网页运行中"
+        highPerformanceRuleCount > 0 -> "$highPerformanceRuleCount 个 Origin"
+        else -> "效果受系统和 WebView 限制"
     }
 
     Column(
@@ -104,7 +104,7 @@ internal fun CapabilityEnhancementsOverviewScreen(
         CapabilityEnhancementCard(
             icon = Icons.Default.LocationOn,
             title = "网页定位增强",
-            summary = "为可信网页提供系统定位与 enhanced 版本的高德定位能力。",
+            summary = "为可信网页提供系统或高德定位。",
             status = locationStatus,
             supportingText = locationSupportingText,
             onClick = onOpenLocationEnhancement
@@ -112,8 +112,8 @@ internal fun CapabilityEnhancementsOverviewScreen(
 
         CapabilityEnhancementCard(
             icon = Icons.Default.Bolt,
-            title = "高性能持续运行",
-            summary = "提高家长指定网站在灭屏或后台时持续运行的可靠性。",
+            title = "高性能运行",
+            summary = "提高指定网站在后台或息屏时的运行稳定性。",
             status = compositeStateLabel(highPerformanceState),
             supportingText = highPerformanceSupportingText,
             onClick = onOpenHighPerformance

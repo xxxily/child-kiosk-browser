@@ -28,9 +28,9 @@ internal fun HighPerformanceDebugOptionsCard(
     onTimingProfileChange: (ExperimentalCdpTimingProfile) -> Unit
 ) {
     HighPerformanceCard {
-        Text("调试与兼容性选项", fontWeight = FontWeight.Bold)
+        Text("调试选项", fontWeight = FontWeight.Bold)
         Text(
-            "详细日志只输出脱敏的心跳间隔、候选筛选和 CDP 阶段，不记录页面正文、Cookie 或请求头。",
+            "日志已脱敏，不记录正文、Cookie 或请求头。",
             fontSize = 11.sp,
             lineHeight = 17.sp
         )
@@ -46,9 +46,9 @@ internal fun HighPerformanceDebugOptionsCard(
                 onCheckedChange = onVerboseDiagnosticsChange
             )
         }
-        Text("实验续行时序策略", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text("续行时序", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         Text(
-            "保守策略更适合响应慢的厂商；激进策略暴露窗口更短，但更容易错过目标。",
+            "保守模式等待更久；激进模式窗口更短。",
             fontSize = 11.sp,
             lineHeight = 17.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant

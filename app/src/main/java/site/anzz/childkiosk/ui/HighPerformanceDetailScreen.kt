@@ -96,7 +96,7 @@ internal fun HighPerformanceDetailScreen(
                     }
                     Toast.makeText(
                         context,
-                        error.message?.take(120) ?: "保存高性能设置失败",
+                        error.message?.take(120) ?: "保存失败",
                         Toast.LENGTH_LONG
                     ).show()
                 }
@@ -144,7 +144,7 @@ internal fun HighPerformanceDetailScreen(
                 activity?.startActivity(fallback)
                     ?: context.startActivity(fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }.onFailure {
-                Toast.makeText(context, "无法打开系统设置，请手动检查", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "无法打开系统设置", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -244,7 +244,7 @@ internal fun HighPerformanceDetailScreen(
                     val parsed = HighPerformanceOriginParser.parseRuleOrigin(origin)
                     PendingRule(origin, null, includeSubdomains, parsed.scheme == "http")
                 }.getOrElse { error ->
-                    Toast.makeText(context, error.message ?: "请输入完整 http/https Origin", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, error.message ?: "请输入完整 Origin", Toast.LENGTH_LONG).show()
                     return@HighPerformanceOriginRulesCard false
                 }
                 if (pending.requiresHttpConfirmation) {
@@ -262,7 +262,7 @@ internal fun HighPerformanceDetailScreen(
                     val parsed = HighPerformanceOriginParser.extractFromUrl(webApp.url)
                     PendingRule(webApp.url, webApp.title, false, parsed.scheme == "http", fromWebApp = true)
                 }.getOrElse { error ->
-                    Toast.makeText(context, error.message ?: "网站地址无法提取 Origin", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, error.message ?: "无法提取 Origin", Toast.LENGTH_LONG).show()
                     return@HighPerformanceOriginRulesCard
                 }
                 if (pending.requiresHttpConfirmation) showHttpWarning = pending
@@ -292,7 +292,7 @@ internal fun HighPerformanceDetailScreen(
                             HighPerformanceDiagnosticsExporter.export(context, runtimeStatus)
                         }
                     }.onSuccess { result ->
-                        Toast.makeText(context, "已导出脱敏诊断包：${result.displayPath}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, "诊断包已导出：${result.displayPath}", Toast.LENGTH_LONG).show()
                     }.onFailure { error ->
                         Toast.makeText(context, error.message ?: "导出诊断包失败", Toast.LENGTH_LONG).show()
                     }
@@ -369,7 +369,7 @@ internal fun HighPerformanceDetailScreen(
                             HighPerformanceDiagnosticsExporter.export(context, runtimeStatus)
                         }
                     }.onSuccess { result ->
-                        Toast.makeText(context, "已导出脱敏诊断包：${result.displayPath}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, "诊断包已导出：${result.displayPath}", Toast.LENGTH_LONG).show()
                     }.onFailure { error ->
                         Toast.makeText(context, error.message ?: "导出诊断包失败", Toast.LENGTH_LONG).show()
                     }
@@ -394,7 +394,7 @@ internal fun HighPerformanceDetailScreen(
                     }
                     Toast.makeText(
                         context,
-                        if (sent) "已清空高性能运行记录" else "清空请求发送失败",
+                        if (sent) "运行记录已清空" else "清空失败",
                         Toast.LENGTH_SHORT
                     ).show()
                     refreshRuntimeFacts()

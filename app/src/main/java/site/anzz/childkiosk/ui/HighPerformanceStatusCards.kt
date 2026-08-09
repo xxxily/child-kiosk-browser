@@ -91,7 +91,7 @@ internal fun HighPerformanceStatusSummaryCard(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
-            "提高后台持续运行可靠性，不保证系统、厂商策略或 WebView/Chromium 内核永不中断。",
+            "提高后台运行稳定性，但仍可能被系统或 WebView 中断。",
             fontSize = 12.sp,
             lineHeight = 18.sp,
             color = MaterialTheme.colorScheme.error
@@ -112,9 +112,9 @@ internal fun HighPerformanceEnableCard(
             if (compact) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column {
-                        Text("启用高性能持续运行", fontWeight = FontWeight.Bold)
+                        Text("启用高性能运行", fontWeight = FontWeight.Bold)
                         Text(
-                            "关闭后立即停止保护，但保留可信网站规则。",
+                            "关闭后停止运行，保留可信网站。",
                             fontSize = 11.sp,
                             lineHeight = 17.sp
                         )
@@ -124,7 +124,7 @@ internal fun HighPerformanceEnableCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(if (enabled) "当前已启用" else "当前未启用", fontSize = 12.sp)
+                        Text(if (enabled) "已启用" else "未启用", fontSize = 12.sp)
                         Switch(checked = enabled, enabled = !busy, onCheckedChange = onEnabledChange)
                     }
                 }
@@ -135,8 +135,8 @@ internal fun HighPerformanceEnableCard(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("启用高性能持续运行", fontWeight = FontWeight.Bold)
-                        Text("关闭后立即停止保护，但保留可信网站规则。", fontSize = 11.sp)
+                        Text("启用高性能运行", fontWeight = FontWeight.Bold)
+                        Text("关闭后停止运行，保留可信网站。", fontSize = 11.sp)
                     }
                     Switch(checked = enabled, enabled = !busy, onCheckedChange = onEnabledChange)
                 }
@@ -163,9 +163,9 @@ internal fun ExperimentalCdpContinuityCard(
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
             val compact = maxWidth < 360.dp
             val description = if (!highPerformanceEnabled) {
-                "需先启用高性能持续运行；打开后仅作用于可信 Origin。"
+            "需先启用高性能运行，仅作用于可信 Origin。"
             } else {
-                "页面进入后台后短暂开放本进程 DevTools，发送一次生命周期 edge 后立即关闭。"
+                "页面进入后台时短暂开放 DevTools，发送事件后关闭。"
             }
             if (compact) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -203,7 +203,7 @@ internal fun ExperimentalCdpContinuityCard(
             }
         }
         Text(
-            "Android 16 / WebView 150 实测可避免约 60 秒后的完全冻结，但后台定时器、Worker 与网络仍可能被节流到低频；不保证前台级持续运行。",
+            "可减少后台完全冻结，但定时器、Worker 和网络仍可能降频。",
             fontSize = 11.sp,
             lineHeight = 17.sp,
             color = MaterialTheme.colorScheme.error
