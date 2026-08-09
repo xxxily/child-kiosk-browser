@@ -3,19 +3,16 @@ package site.anzz.childkiosk.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,8 +25,9 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -145,56 +143,30 @@ private fun BrowserHistorySummaryCard(
     onClear: () -> Unit
 ) {
     Card(
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val compact = maxWidth < 430.dp
-            if (compact) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    BrowserHistorySummaryText(historyCount)
-                    OutlinedButton(
-                        enabled = historyCount > 0,
-                        onClick = onClear,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .defaultMinSize(minHeight = 48.dp),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeleteSweep,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("清空记录")
-                    }
-                }
-            } else {
-                Row(
-                    modifier = Modifier.padding(18.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    BrowserHistorySummaryText(historyCount, modifier = Modifier.weight(1f))
-                    OutlinedButton(
-                        enabled = historyCount > 0,
-                        onClick = onClear,
-                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeleteSweep,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("清空")
-                    }
-                }
+        Row(
+            modifier = Modifier.padding(start = 16.dp, top = 14.dp, end = 10.dp, bottom = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BrowserHistorySummaryText(historyCount, modifier = Modifier.weight(1f))
+            IconButton(
+                enabled = historyCount > 0,
+                onClick = onClear,
+                modifier = Modifier.size(48.dp),
+                colors = IconButtonDefaults.iconButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error,
+                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.DeleteSweep,
+                    contentDescription = "清空浏览历史",
+                    modifier = Modifier.size(22.dp)
+                )
             }
         }
     }
@@ -224,16 +196,21 @@ private fun BrowserHistorySummaryText(
                 modifier = Modifier.size(28.dp)
             )
         }
-        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
             Text(
                 text = "最近浏览",
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
             )
             Text(
                 text = "最近 90 天 · $historyCount 条",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
             )
         }
     }
