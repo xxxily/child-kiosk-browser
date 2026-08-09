@@ -6,6 +6,17 @@
 
 ## [Unreleased]
 
+## [0.4.28] - 2026-08-09
+
+### Changed - 变更
+
+- **精简中文界面文案**：统一压缩管理后台、网页权限、定位增强、浏览历史、高性能运行、网页过滤和诊断页面中的标题、说明、按钮、Toast 与通知，删除重复的注释式包装，保留必要的风险、权限和生效提示。
+
+### Tests - 测试
+
+- Standard / Enhanced `compileDebugKotlin` 编译通过。
+- Standard / Enhanced Debug 与 Release APK 构建通过。
+
 ## [0.4.27] - 2026-08-06
 
 ### Added - 新增
